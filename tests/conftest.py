@@ -39,12 +39,17 @@ def golden_rhp():
 
 @pytest.fixture
 def tiny_rhp(tmp_path):
-    """A 3-page PDF standing in for an RHP."""
+    """A 7-page PDF standing in for an RHP: one short page per core section (ingest requires them),
+    with the offer size on page 2."""
     path = tmp_path / "rhp.pdf"
     doc = fitz.open()
     pages = [
         "TABLE OF CONTENTS\nSECTION I - GENERAL",
         "THE OFFER\nTotal issue size of up to Rs. 1,250.00 crore",
+        "RISK FACTORS\nWe have one plant.",
+        "OUR BUSINESS\nWe make scooters.",
+        "RESTATED FINANCIAL INFORMATION\nRevenue grew.",
+        "OUTSTANDING LITIGATION AND MATERIAL DEVELOPMENTS\nNone.",
         "OTHER REGULATORY AND STATUTORY DISCLOSURES",
     ]
     for text in pages:
