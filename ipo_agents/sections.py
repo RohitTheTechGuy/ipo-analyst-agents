@@ -12,7 +12,9 @@ OFFER_OBJECTS_PROMPT = (
     "the offer; each object of the fresh issue with its amount, and the general corporate purposes amount "
     "separately; the anchor, QIB, non-institutional and retail portions as %; and each selling shareholder "
     "with the shares they offer and their holding after the offer. Do not extract the price band or lot "
-    "size."
+    "size. When merging parts: the same object or selling shareholder appears in both The Offer / the "
+    "offer summary and Objects of the Offer; keep one. Objects of the Offer is authoritative for the "
+    "objects and their amounts, and Capital Structure for share counts and holdings."
 )
 
 SECTIONS: dict[str, SectionSpec] = {

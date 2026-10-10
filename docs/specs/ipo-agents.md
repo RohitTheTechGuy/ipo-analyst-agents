@@ -168,3 +168,4 @@ Every weekday morning a Python job on my Mac finds the mainboard IPOs that are c
 - The system needs `brew install pango tesseract` (for WeasyPrint and OCR); neither is installed yet.
 - Manual steps for the investor before live runs: create the Telegram bot (BotFather), create the OpenAI, Groq and Tavily keys, set the OpenAI monthly spend limit, and verify the golden numbers.
 - GMP is unofficial and unregulated, and the output is not investment advice.
+- The verifier proves that a number and its unit are printed in the quoted text on the cited page. It can't prove the number means what the field says (e.g. that a quoted share count is the post-issue count). That residual risk is why the golden set is hand-checked.

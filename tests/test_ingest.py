@@ -1,7 +1,6 @@
 import hashlib
 import logging
 import re
-from functools import lru_cache
 
 import fitz
 import pytest
@@ -231,16 +230,6 @@ def test_missing_tesseract_names_the_install_step(tmp_path, monkeypatch):
 
 
 # --- golden RHPs -------------------------------------------------------------
-
-@lru_cache(maxsize=None)
-def _ingest_cached(path):
-    return ingest(path)
-
-
-@pytest.fixture
-def golden_doc(golden_rhp):
-    return lambda slug: _ingest_cached(golden_rhp(slug))
-
 
 # Hand-checked PDF page indices (1-based) where each section's heading first appears, read from
 # each RHP's table of contents and confirmed by opening the page. Printed page = PDF page - offset

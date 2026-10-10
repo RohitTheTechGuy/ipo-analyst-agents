@@ -43,7 +43,7 @@ def build_graph(adapters: Adapters, config: Config):
             if not chunks:
                 return {}
             output, failed = run_section(spec, chunks, adapters.llm, config.default_max_tokens)
-            return {"findings": {spec.group: output}, "unverified": failed}
+            return {"findings": {spec.group: output} if output is not None else {}, "unverified": failed}
         return node
 
     def sentiment_node(state: AnalysisState):
@@ -75,7 +75,7 @@ def analyse_rhp(ipo: Ipo, rhp_pdf: Path, adapters: Adapters, config: Config) -> 
         status="complete",
         verdict=None,  # set by the synthesizer (ticket 20)
         sentiment=state.get("sentiment"),
-        unverified_fields=state.get("unverified", []),
+        unverified_fields=sorted(state.get("unverified", [])),
         **{spec.report_field: state.get("findings", {}).get(group) for group, spec in SECTIONS.items()},
         rhp_sha256=state["doc"].sha256,
     )

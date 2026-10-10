@@ -37,6 +37,21 @@ def golden_rhp():
     return _get
 
 
+@pytest.fixture(scope="session")
+def golden_doc(golden_rhp):
+    """Returns a function: company slug -> its golden RHP ingested once per session (~5s each)."""
+    from ipo_agents.ingestion import ingest
+
+    cache = {}
+
+    def _get(slug: str):
+        if slug not in cache:
+            cache[slug] = ingest(golden_rhp(slug))
+        return cache[slug]
+
+    return _get
+
+
 TINY_OFFER_PAGE = "THE OFFER\nTotal issue size of up to Rs. 1,250.00 crore"
 
 
