@@ -50,7 +50,7 @@ def test_single_ipo_by_symbol_analyses_only_that_ipo(adapters, config_file, tmp_
     other = make_ipo().model_copy(update={"ipo_id": "ZETA-2026-10-13", "name": "Zeta Ltd", "symbol": "ZETA"})
     adapters.exchange = FakeExchange([make_ipo(), other])
     seen_ipos = []
-    monkeypatch.setattr(cli, "run_daily", lambda today, a, c: seen_ipos.extend(a.exchange.open_ipos(today)) or _summary())
+    monkeypatch.setattr(cli, "run_daily", lambda today, a, c, **kw: seen_ipos.extend(a.exchange.open_ipos(today)) or _summary())
 
     code, _ = run(["--ipo", "zeta", "--date", "2026-10-13"], adapters, config_file, tmp_path)
 
@@ -70,7 +70,7 @@ def test_single_ipo_not_open_is_a_clear_error(adapters, config_file, tmp_path, c
 
 
 def test_a_raising_run_exits_non_zero_and_is_logged(adapters, config_file, tmp_path, monkeypatch):
-    monkeypatch.setattr(cli, "run_daily", lambda *a: (_ for _ in ()).throw(RuntimeError("boom")))
+    monkeypatch.setattr(cli, "run_daily", lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("boom")))
 
     code, _ = run(["--date", "2026-10-13"], adapters, config_file, tmp_path)
 
@@ -113,3 +113,53 @@ def _summary():
     from ipo_agents.contracts import RunSummary
 
     return RunSummary()
+
+
+def offer_llm(config, **kw):
+    from ipo_agents.contracts import Fact, OfferObjects
+    from tests.fakes import ScriptedLLM, offer_objects
+
+    return ScriptedLLM({OfferObjects: offer_objects(issue_size=Fact(
+        value=1250.0, unit="₹ crore", page=2, verbatim_quote="Total issue size of up to Rs. 1,250.00 crore"))},
+        models=config.models, **kw)
+
+
+def test_dry_run_shows_done_ipos_as_skipped_with_their_reminders_and_force_as_analysed(
+        adapters, config, config_file, tmp_path, capsys):
+    adapters.exchange = FakeExchange([make_ipo()])
+    adapters.llm = offer_llm(config)
+    run(["--date", "2026-10-13"], adapters, config_file, tmp_path)
+    capsys.readouterr()
+
+    run(["--dry-run", "--date", "2026-10-14"], adapters, config_file, tmp_path)
+    plain = capsys.readouterr().out
+    run(["--dry-run", "--ipo", "acme", "--force", "--date", "2026-10-14"], adapters, config_file, tmp_path)
+    forced = capsys.readouterr().out
+
+    assert "skip (done): ACME-2026-10-13  Acme Ltd" in plain
+    assert "remind (closes 15 Oct): ACME-2026-10-13  Acme Ltd" in plain
+    assert "analyse: ACME-2026-10-13  Acme Ltd" in forced
+    assert len(adapters.llm.calls) == 1 and len(adapters.notifier.messages) == 1
+
+
+def test_forced_rerun_prints_the_budget_left_and_analyses_again(adapters, config, config_file, tmp_path, capsys):
+    # The first read is billed 50,000 out x $12/1M = $0.60 of the $1.50 cap, leaving $0.90.
+    adapters.exchange = FakeExchange([make_ipo()])
+    adapters.llm = offer_llm(config, usage=[(0, 0, 50_000)])
+
+    run(["--ipo", "ACME", "--date", "2026-10-13"], adapters, config_file, tmp_path)
+    code, _ = run(["--ipo", "ACME", "--force", "--date", "2026-10-13"], adapters, config_file, tmp_path)
+
+    assert code == 0
+    assert ("Forced re-run of ACME-2026-10-13: $0.60 of its $1.50 budget already spent, $0.90 left"
+            in capsys.readouterr().out)
+    assert len(adapters.llm.calls) == 2
+    assert len(adapters.notifier.messages) == 2
+
+
+def test_force_without_ipo_is_refused(adapters, config_file, tmp_path):
+    with pytest.raises(SystemExit) as exit_:
+        run(["--force"], adapters, config_file, tmp_path)
+
+    assert exit_.value.code == 2
+    assert adapters.llm.calls == []
