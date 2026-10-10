@@ -24,3 +24,13 @@ def test_offer_agent_reads_the_rhp_text(tiny_rhp, adapters, config):
     analyse_rhp(make_ipo(), tiny_rhp, adapters, config)
 
     assert any("Total issue size" in c["user"] for c in llm.calls)
+
+
+def test_each_page_is_tagged_once_in_the_prompt(tiny_rhp, adapters, config):
+    llm = ScriptedLLM({OfferObjects: OfferObjects(issue_size_cr=Fact(
+        value=None, unit="₹ crore", page=None, verbatim_quote=None, not_disclosed_reason="not in pages"))}, models=config.models)
+    adapters.llm = llm
+
+    analyse_rhp(make_ipo(), tiny_rhp, adapters, config)
+
+    assert llm.calls[0]["user"].count("[page 2]") == 1
