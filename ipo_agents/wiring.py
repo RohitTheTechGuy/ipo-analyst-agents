@@ -41,7 +41,7 @@ def build_adapters(config: Config, *, discovery_only: bool = False) -> Adapters:
     if missing:
         raise MissingSecrets(f"missing required secrets in .env or the environment: {', '.join(missing)}")
     if not os.environ.get("GROQ_API_KEY"):
-        log.warning("GROQ_API_KEY not set: Groq-routed tasks need the router to fall back to Luna")
+        log.warning("GROQ_API_KEY not set: Groq-routed tasks will fail over to Luna (small extra cost)")
     search = TavilySearch() if os.environ.get("TAVILY_API_KEY") else None
     if search is None:
         log.warning("TAVILY_API_KEY not set: sentiment will be reported as unavailable")
