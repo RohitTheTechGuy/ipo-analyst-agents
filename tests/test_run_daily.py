@@ -2,14 +2,14 @@ from datetime import date
 
 from ipo_agents.contracts import Fact, OfferObjects
 from ipo_agents.runner import run_daily
-from tests.fakes import FakeExchange, ScriptedLLM
-from tests.fakes import make_ipo
+from tests.conftest import make_tiny_rhp
+from tests.fakes import FakeDownloader, FakeExchange, ScriptedLLM, make_ipo, offer_objects
 
 TODAY = date(2026, 10, 13)
 
 
 def offer_llm(config):
-    return ScriptedLLM({OfferObjects: OfferObjects(issue_size_cr=Fact(
+    return ScriptedLLM({OfferObjects: offer_objects(issue_size=Fact(
         value=1250.0, unit="₹ crore", page=2, verbatim_quote="Total issue size of up to Rs. 1,250.00 crore"))},
         models=config.models)
 
@@ -108,3 +108,32 @@ def test_rendered_report_pdf_follows_the_summary(adapters, config, rendered_pdf)
 
     assert len(adapters.notifier.messages) == 1
     assert adapters.notifier.documents == [pdf]
+
+
+def test_summary_shows_the_issue_size_and_ofs_shares_with_their_pages(adapters, config, tmp_path):
+    offer_page = "THE OFFER\nTotal issue size of up to Rs. 1,250.00 crore\nOffer for Sale of up to 84,941,997 equity shares"
+    adapters.downloader = FakeDownloader(make_tiny_rhp(tmp_path / "offer_rhp.pdf", (offer_page,)))
+    adapters.exchange = FakeExchange([make_ipo()])
+    adapters.llm = ScriptedLLM({OfferObjects: offer_objects(
+        issue_size=Fact(value=1250.0, unit="₹ crore", page=2,
+                        verbatim_quote="Total issue size of up to Rs. 1,250.00 crore"),
+        ofs_shares=Fact(value=84941997, unit="equity shares", page=2,
+                        verbatim_quote="Offer for Sale of up to 84,941,997 equity shares"))}, models=config.models)
+
+    run_daily(TODAY, adapters, config)
+
+    [msg] = adapters.notifier.messages
+    assert "Issue: ₹1,250 crore (p. 2) · OFS: 84,941,997 equity shares (p. 2)" in msg
+
+
+def test_summary_shows_undisclosed_and_unverified_facts_as_such(adapters, config):
+    adapters.exchange = FakeExchange([make_ipo()])
+    adapters.llm = ScriptedLLM({OfferObjects: offer_objects(
+        # Not on page 2 (the tiny RHP's offer page has no OFS line): could not verify.
+        ofs_shares=Fact(value=84941997, unit="equity shares", page=2,
+                        verbatim_quote="Offer for Sale of up to 84,941,997 equity shares"))}, models=config.models)
+
+    run_daily(TODAY, adapters, config)
+
+    [msg] = adapters.notifier.messages
+    assert "Issue: not disclosed · OFS: could not verify" in msg

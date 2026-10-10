@@ -37,15 +37,31 @@ def golden_rhp():
     return _get
 
 
-@pytest.fixture
-def tiny_rhp(tmp_path):
-    """A 7-page PDF standing in for an RHP: one short page per core section (ingest requires them),
-    with the offer size on page 2."""
-    path = tmp_path / "rhp.pdf"
+@pytest.fixture(scope="session")
+def golden_doc(golden_rhp):
+    """Returns a function: company slug -> its golden RHP ingested once per session (~5s each)."""
+    from ipo_agents.ingestion import ingest
+
+    cache = {}
+
+    def _get(slug: str):
+        if slug not in cache:
+            cache[slug] = ingest(golden_rhp(slug))
+        return cache[slug]
+
+    return _get
+
+
+TINY_OFFER_PAGE = "THE OFFER\nTotal issue size of up to Rs. 1,250.00 crore"
+
+
+def make_tiny_rhp(path: Path, offer_pages: tuple[str, ...] = (TINY_OFFER_PAGE,)) -> Path:
+    """A small PDF standing in for an RHP: one short page per core section (ingest requires them),
+    with the offer section from page 2 on, one page per entry of `offer_pages`."""
     doc = fitz.open()
     pages = [
         "TABLE OF CONTENTS\nSECTION I - GENERAL",
-        "THE OFFER\nTotal issue size of up to Rs. 1,250.00 crore",
+        *offer_pages,
         "RISK FACTORS\nWe have one plant.",
         "OUR BUSINESS\nWe make scooters.",
         "RESTATED FINANCIAL INFORMATION\nRevenue grew.",
@@ -56,6 +72,12 @@ def tiny_rhp(tmp_path):
         doc.new_page().insert_text((72, 72), text)
     doc.save(path)
     return path
+
+
+@pytest.fixture
+def tiny_rhp(tmp_path):
+    """A 7-page RHP with the offer size on page 2."""
+    return make_tiny_rhp(tmp_path / "rhp.pdf")
 
 
 @pytest.fixture

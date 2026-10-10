@@ -9,10 +9,11 @@ from ipo_agents.adapters import Adapters
 from ipo_agents.analysis import analyse_rhp
 from ipo_agents.budget import BudgetExceeded
 from ipo_agents.config import Config
-from ipo_agents.contracts import Report, RunSummary, Sentiment, SubscriptionStatus
+from ipo_agents.contracts import Fact, Report, RunSummary, Sentiment, SubscriptionStatus
 from ipo_agents.discovery import DiscoveryError
 from ipo_agents.notify.reminders import send_closing_reminders
 from ipo_agents.store import TERMINAL, Store
+from ipo_agents.verifier import COULD_NOT_VERIFY
 
 log = logging.getLogger(__name__)
 
@@ -40,15 +41,25 @@ def _subscription_line(sub: SubscriptionStatus) -> str:
     return f"Subscription: {sub.total.value:.1f}× total" + (f" ({', '.join(parts)})" if parts else "")
 
 
+def _fact_text(f: Fact) -> str:
+    """A fact as written on its page, e.g. "₹55,000 million (p. 19)", or why it has no value."""
+    if f.value is None:
+        return COULD_NOT_VERIFY if f.not_disclosed_reason == COULD_NOT_VERIFY else "not disclosed"
+    number = f"{f.value:,.0f}" if f.value == int(f.value) else f"{f.value:,.2f}"
+    unit = f.unit.strip()
+    # A rupee unit reads as "₹1,250 crore"; others follow the number, e.g. "84,941,997 equity shares".
+    text = f"₹{number} {unit[1:].strip()}" if unit.startswith("₹") else f"{number} {unit}"
+    return f"{text.strip()} (p. {f.page})"
+
+
 def format_summary(report: Report) -> str:
     ipo = report.ipo
     lines = [
         f"📄 {ipo.name} IPO (Mainboard)",
         f"Open: {ipo.open_date:%d %b}–{ipo.close_date:%d %b} · Band {ipo.price_band} · Lot {ipo.lot_size}",
     ]
-    if report.offer and report.offer.issue_size_cr.value is not None:
-        f = report.offer.issue_size_cr
-        lines.append(f"Issue: ₹{f.value:,.2f} cr (p. {f.page})")
+    if report.offer:
+        lines.append(f"Issue: {_fact_text(report.offer.issue_size)} · OFS: {_fact_text(report.offer.ofs_shares)}")
     if report.sentiment:
         lines.append(_sentiment_line(report.sentiment))
         if (sub := report.sentiment.subscription) and sub.total.value is not None:

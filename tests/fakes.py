@@ -8,7 +8,7 @@ from typing import Mapping
 
 from ipo_agents.adapters import SearchHit
 from ipo_agents.config import load_config
-from ipo_agents.contracts import ClaimedFact, Ipo, SubscriptionStatus
+from ipo_agents.contracts import ClaimedFact, Fact, Ipo, OfferObjects, SubscriptionStatus
 from ipo_agents.llm import LLMResult
 
 
@@ -130,3 +130,13 @@ def make_ipo() -> Ipo:
     return Ipo(ipo_id="ACME-2026-10-13", name="Acme Ltd", symbol="ACME",
                open_date=date(2026, 10, 13), close_date=date(2026, 10, 15),
                price_band="₹100–₹105", lot_size=142, rhp_url="https://example.test/rhp.pdf")
+
+
+NOT_DISCLOSED = Fact(value=None, unit="", page=None, verbatim_quote=None,
+                     not_disclosed_reason="not disclosed in provided pages")
+
+
+def offer_objects(**fields) -> OfferObjects:
+    """An OfferObjects with the given fields; every other fact not disclosed and every list empty."""
+    defaults = {name: NOT_DISCLOSED if f.annotation is Fact else [] for name, f in OfferObjects.model_fields.items()}
+    return OfferObjects(**{**defaults, **fields})

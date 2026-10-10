@@ -16,7 +16,7 @@ import httpx
 from ipo_agents.contracts import Fact, OfferObjects
 from ipo_agents.discovery import HttpRhpDownloader, default_exchange
 from ipo_agents.runner import run_daily
-from tests.fakes import ScriptedLLM
+from tests.fakes import ScriptedLLM, offer_objects
 
 FIXTURES = Path(__file__).parent / "fixtures" / "discovery"
 OPEN_DAY = date(2026, 10, 13)  # HD Fire Protect is open 13-15 Oct 2026
@@ -27,7 +27,7 @@ NSE_RHP = "https://nsearchives.nseindia.com/content/ipo/RHP_HDFIRE.zip"
 
 
 def offer_llm():
-    return ScriptedLLM({OfferObjects: OfferObjects(issue_size_cr=Fact(
+    return ScriptedLLM({OfferObjects: offer_objects(issue_size=Fact(
         value=1250.0, unit="₹ crore", page=2, verbatim_quote="Total issue size of up to Rs. 1,250.00 crore"))})
 
 

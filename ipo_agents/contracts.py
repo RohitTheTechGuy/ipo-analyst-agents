@@ -83,8 +83,37 @@ class SectionedDocument(BaseModel):
         return len(covered) / self.page_count if self.page_count else 0.0
 
 
+class SellingShareholder(BaseModel):
+    name: str
+    shares_offered: Fact
+    holding_after: Fact = Field(description="Holding after the offer, % or shares as written")
+
+
+class ProceedsObject(BaseModel):
+    """One object of the fresh issue, as named in Objects of the Offer."""
+
+    purpose: str
+    amount: Fact
+
+
 class OfferObjects(BaseModel):
-    issue_size_cr: Fact
+    """Offer & Objects section. Price band and lot size come from the exchange (Ipo), never from here."""
+
+    issue_size: Fact = Field(description="Total offer size, rupee amount")
+    fresh_issue: Fact = Field(description="Fresh issue, rupee amount")
+    ofs_amount: Fact = Field(description="Offer for sale, rupee amount")
+    ofs_shares: Fact = Field(description="Offer for sale, number of equity shares")
+    pre_issue_shares: Fact = Field(description="Equity shares outstanding before the offer")
+    post_issue_shares: Fact = Field(description="Equity shares outstanding after the offer")
+    promoter_holding_pre_pct: Fact = Field(description="Promoter (and promoter group) holding before the offer, %")
+    promoter_holding_post_pct: Fact = Field(description="Promoter (and promoter group) holding after the offer, %")
+    objects: list[ProceedsObject] = Field(description="Each use of the fresh-issue proceeds, except GCP")
+    gcp_amount: Fact = Field(description="General corporate purposes, rupee amount")
+    anchor_pct: Fact = Field(description="Anchor investor portion, % of the QIB portion")
+    qib_pct: Fact = Field(description="QIB portion, % of the offer")
+    nii_pct: Fact = Field(description="Non-institutional portion, % of the offer")
+    retail_pct: Fact = Field(description="Retail portion, % of the offer")
+    selling_shareholders: list[SellingShareholder]
 
 
 Verdict = Literal["subscribe_long_term", "subscribe_listing_gains", "neutral", "avoid"]
