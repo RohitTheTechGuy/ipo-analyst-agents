@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 
 from ipo_agents.contracts import Ipo
@@ -17,8 +18,8 @@ class ScriptedLLM:
     output_tokens: int = 200
     calls: list[dict] = field(default_factory=list)
 
-    def invoke_structured(self, *, model, system, user, schema, max_tokens):
-        self.calls.append({"model": model, "system": system, "user": user, "schema": schema, "max_tokens": max_tokens})
+    def invoke_structured(self, *, model, system, user, schema, max_tokens, task=""):
+        self.calls.append({"task": task, "model": model, "system": system, "user": user, "schema": schema, "max_tokens": max_tokens})
         return LLMResult(
             parsed=self.responses[schema],
             input_tokens=self.input_tokens,
@@ -53,3 +54,9 @@ class RecordingNotifier:
 
     def send_document(self, path, caption=""):
         self.documents.append(Path(path))
+
+
+def make_ipo() -> Ipo:
+    return Ipo(ipo_id="ACME-2026-10-13", name="Acme Ltd", symbol="ACME",
+               open_date=date(2026, 10, 13), close_date=date(2026, 10, 15),
+               price_band="₹100–₹105", lot_size=142, rhp_url="https://example.test/rhp.pdf")

@@ -52,6 +52,11 @@ def run_daily(today: date, adapters: Adapters, config: Config) -> RunSummary:
             summary.failed.append(ipo.ipo_id)
             continue
         store.mark_done(ipo.ipo_id, report.verdict, report.rhp_sha256)
-        adapters.notifier.send_message(format_summary(report))
         summary.analysed.append(ipo.ipo_id)
+        try:
+            adapters.notifier.send_message(format_summary(report))
+        except Exception:
+            log.exception("telegram send failed for %s", ipo.ipo_id)
+            summary.notify_failed.append(ipo.ipo_id)
+    store.close()
     return summary

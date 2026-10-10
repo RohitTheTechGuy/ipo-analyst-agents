@@ -41,6 +41,7 @@ def build_graph(adapters: Adapters, config: Config):
             user=_pages_text(state["doc"]),
             schema=OfferObjects,
             max_tokens=config.default_max_tokens,
+            task="offer_objects",
         )
         return {"offer": result.parsed}
 
@@ -58,7 +59,7 @@ def analyse_rhp(ipo: Ipo, rhp_pdf: Path, adapters: Adapters, config: Config) -> 
     return Report(
         ipo=ipo,
         status="complete",
-        verdict="neutral",  # placeholder until the synthesizer (ticket 20)
+        verdict=None,  # set by the synthesizer (ticket 20)
         offer=state["offer"],
         rhp_sha256=state["doc"].sha256,
     )

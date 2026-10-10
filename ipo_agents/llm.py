@@ -16,7 +16,9 @@ class LLMResult:
 
 
 class LLM(Protocol):
-    def invoke_structured(self, *, model: str, system: str, user: str, schema: type, max_tokens: int) -> LLMResult: ...
+    def invoke_structured(
+        self, *, model: str, system: str, user: str, schema: type, max_tokens: int, task: str = ""
+    ) -> LLMResult: ...
 
 
 class LangChainLLM:
@@ -37,7 +39,7 @@ class LangChainLLM:
             return ChatGroq(model=cfg.id, temperature=0, max_tokens=max_tokens)
         raise ValueError(f"unknown provider {cfg.provider!r}")
 
-    def invoke_structured(self, *, model, system, user, schema, max_tokens):
+    def invoke_structured(self, *, model, system, user, schema, max_tokens, task=""):
         chain = self._chat(model, max_tokens).with_structured_output(schema, include_raw=True)
         out = chain.invoke([("system", system), ("user", user)])
         if out["parsing_error"]:

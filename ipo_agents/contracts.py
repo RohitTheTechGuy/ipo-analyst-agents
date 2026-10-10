@@ -4,7 +4,9 @@ from __future__ import annotations
 from datetime import date
 from typing import Literal
 
-from pydantic import BaseModel, model_validator
+import math
+
+from pydantic import BaseModel, Field, model_validator
 
 
 class Fact(BaseModel):
@@ -12,7 +14,7 @@ class Fact(BaseModel):
 
     value: float | None
     unit: str
-    page: int | None
+    page: int | None = Field(ge=1)
     verbatim_quote: str | None
     not_disclosed_reason: str | None = None
 
@@ -21,6 +23,8 @@ class Fact(BaseModel):
         if self.value is None:
             if not self.not_disclosed_reason:
                 raise ValueError("a null value needs not_disclosed_reason")
+        elif not math.isfinite(self.value):
+            raise ValueError("value must be finite")
         elif self.page is None or not self.verbatim_quote:
             raise ValueError("a value needs page and verbatim_quote")
         return self
@@ -65,6 +69,7 @@ class SectionedDocument(BaseModel):
     def coverage(self) -> float:
         covered = {p for s in self.sections.values() for c in s for p in range(c.page_start, c.page_end + 1)}
         covered |= set(self.boilerplate_pages)
+        covered &= set(range(1, self.page_count + 1))
         return len(covered) / self.page_count if self.page_count else 0.0
 
 
@@ -89,3 +94,4 @@ class RunSummary(BaseModel):
     analysed: list[str] = []
     skipped: list[str] = []
     failed: list[str] = []
+    notify_failed: list[str] = []

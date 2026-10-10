@@ -35,8 +35,11 @@ class Store:
         self._db.execute(
             """INSERT INTO ipos (ipo_id, name, open_date, close_date, price_band, lot_size, rhp_url, status)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-               ON CONFLICT(ipo_id) DO UPDATE SET status = excluded.status""",
-            (ipo.ipo_id, ipo.name, ipo.open_date, ipo.close_date, ipo.price_band, ipo.lot_size, ipo.rhp_url, status),
+               ON CONFLICT(ipo_id) DO UPDATE SET
+                 name = excluded.name, open_date = excluded.open_date, close_date = excluded.close_date,
+                 price_band = excluded.price_band, lot_size = excluded.lot_size,
+                 rhp_url = COALESCE(excluded.rhp_url, ipos.rhp_url), status = excluded.status""",
+            (ipo.ipo_id, ipo.name, ipo.open_date.isoformat(), ipo.close_date.isoformat(), ipo.price_band, ipo.lot_size, ipo.rhp_url, status),
         )
         self._db.commit()
 
@@ -47,3 +50,6 @@ class Store:
             (verdict, rhp_sha256, ipo_id),
         )
         self._db.commit()
+
+    def close(self) -> None:
+        self._db.close()

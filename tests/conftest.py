@@ -1,5 +1,9 @@
+from pathlib import Path
+
 import fitz
 import pytest
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 @pytest.fixture
@@ -22,7 +26,7 @@ def tiny_rhp(tmp_path):
 def config(tmp_path):
     from ipo_agents.config import load_config
 
-    cfg = load_config("config.yaml")
+    cfg = load_config(REPO_ROOT / "config.yaml")
     return cfg.model_copy(update={"db_path": str(tmp_path / "ipo.db"), "work_dir": str(tmp_path / "work")})
 
 

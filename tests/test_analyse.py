@@ -1,15 +1,7 @@
-from datetime import date
-
 from ipo_agents.analysis import analyse_rhp
-from ipo_agents.contracts import Fact, Ipo, OfferObjects
+from ipo_agents.contracts import Fact, OfferObjects
 from ipo_agents.ingestion import ingest
-from tests.fakes import ScriptedLLM
-
-
-def make_ipo():
-    return Ipo(ipo_id="ACME-2026-10-13", name="Acme Ltd", symbol="ACME",
-               open_date=date(2026, 10, 13), close_date=date(2026, 10, 15),
-               price_band="₹100–₹105", lot_size=142, rhp_url="https://example.test/rhp.pdf")
+from tests.fakes import ScriptedLLM, make_ipo
 
 
 def test_report_carries_page_cited_offer_facts(tiny_rhp, adapters, config):
