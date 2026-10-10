@@ -1,7 +1,8 @@
 """Section agent registry: one SectionSpec (prompt + schema) per section group. The graph runs every entry."""
 from __future__ import annotations
 
-from ipo_agents.contracts import BusinessIndustry, OfferObjects, OfferPriceBasis, PromotersGovernance
+from ipo_agents.contracts import (BusinessIndustry, OfferObjects, OfferPriceBasis, OtherDisclosures,
+                                  PromotersGovernance)
 from ipo_agents.section_agent import SectionSpec
 
 OFFER_OBJECTS_PROMPT = (
@@ -58,6 +59,16 @@ OFFER_PRICE_BASIS_PROMPT = (
     "one item."
 )
 
+OTHER_DISCLOSURES_PROMPT = (
+    "You scan the pages of an Indian IPO red herring prospectus (RHP) that no other section reader covers "
+    "(general information, key regulations, offer procedure, statutory and regulatory disclosures and the "
+    "like) for anything an investor should know that is not standard boilerplate: e.g. regulatory action "
+    "or penalties, a refused or withdrawn earlier offer, a change in business, unusual terms of the offer, "
+    "or dependence on a licence. List only material items, each with its page, why it is material, and "
+    "any numbers it cites. Returning no items (nothing material) is a valid and common answer; never list "
+    "boilerplate to fill the answer. When merging parts: the same item in several parts is one item."
+)
+
 SECTIONS: dict[str, SectionSpec] = {
     spec.group: spec for spec in [
         SectionSpec(group="offer_objects", schema=OfferObjects, prompt=OFFER_OBJECTS_PROMPT, report_field="offer"),
@@ -67,5 +78,7 @@ SECTIONS: dict[str, SectionSpec] = {
                     report_field="governance"),
         SectionSpec(group="offer_price_basis", schema=OfferPriceBasis, prompt=OFFER_PRICE_BASIS_PROMPT,
                     report_field="price_basis"),
+        SectionSpec(group="other_disclosures", schema=OtherDisclosures, prompt=OTHER_DISCLOSURES_PROMPT,
+                    report_field="other"),
     ]
 }

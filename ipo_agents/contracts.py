@@ -271,6 +271,24 @@ class OfferPriceBasis(BaseModel):
     waca_secondary: Waca = Field(description="Secondary transactions (transfers) in the period the RHP reports")
 
 
+class MaterialItem(BaseModel):
+    summary: str = Field(description="What the RHP discloses, in one or two sentences")
+    page: int = Field(ge=1)
+    why_material: str = Field(description="Why an investor should know it, in one sentence")
+    figures: list[Fact] = Field(description="Any numbers the item cites; empty if none")
+
+
+class OtherDisclosures(BaseModel):
+    """Every page no other section reads (General Information, Key Regulations, Offer Procedure...)."""
+
+    items: list[MaterialItem] = Field(description="Material items only; empty when nothing is material")
+
+    @computed_field
+    @property
+    def nothing_material(self) -> bool:
+        return not self.items
+
+
 class RedFlag(BaseModel):
     """A red flag raised by Python from verified facts (never by a model)."""
 
@@ -334,6 +352,7 @@ class Report(BaseModel):
     business: BusinessIndustry | None = None
     governance: PromotersGovernance | None = None
     price_basis: OfferPriceBasis | None = None
+    other: OtherDisclosures | None = None
     sentiment: Sentiment | None = None
     unverified_fields: list[str] = []
     red_flags: list[RedFlag] = []
