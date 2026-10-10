@@ -12,3 +12,5 @@
 - [ ] A Groq 429 falls back to Luna without waiting
 
 **Spec:** `docs/specs/ipo-agents.md`
+
+**From the ticket 03 review:** `LangChainLLM` builds `ChatOpenAI` with `max_retries=0` so no retry escapes the meter. Retries for 429/5xx must live in metered code (each attempt reserves and settles through `MeteredLLM`).
