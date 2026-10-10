@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import math
 import re
+from dataclasses import dataclass
 from typing import TypeVar
 
 from pydantic import BaseModel
@@ -32,30 +33,46 @@ _UNIT_WORDS = (*_SCALES, "%", "share")
 M = TypeVar("M", bound=BaseModel)
 
 
+@dataclass(frozen=True)
+class Rejection:
+    """A Fact or Quote that failed verification: its dotted path, what the agent gave, and why."""
+
+    path: str
+    fact: Fact | Quote
+    reason: str
+
+
 def verify_facts(output: M, pages: dict[int, str], prefix: str) -> tuple[M, list[str]]:
     """Checks every Fact in `output` against `pages` (page number -> text).
 
     Returns a copy in which each failing Fact is replaced by one marked "could not verify", and the
     dotted paths of those fields (e.g. "offer_objects.objects[1].amount"), so a retry can name them.
     A Fact passes when its quote is printed on the cited page and its value is a number in that
-    quote and in the matching text on the page, in the Fact's unit (see `_grounded`).
+    quote and in the matching text on the page, in the Fact's unit (see `_why_not`).
     A Quote (text, not a number) passes when its quote is printed on the cited page; a failing one
     comes back with page and verbatim_quote set to None.
     Raises TypeError if a Fact sits in a dict, tuple or set, which this walk does not rewrite.
     """
-    failed: list[str] = []
+    checked, rejections = check_facts(output, pages, prefix)
+    return checked, [r.path for r in rejections]
+
+
+def check_facts(output: M, pages: dict[int, str], prefix: str) -> tuple[M, list[Rejection]]:
+    """`verify_facts`, but each failure also carries the rejected Fact and the reason it failed."""
+    failed: list[Rejection] = []
 
     def walk(obj, path):
         if isinstance(obj, Fact):
-            if obj.value is None or _grounded(obj, pages):
+            reason = None if obj.value is None else _why_not(obj, pages)
+            if reason is None:
                 return obj
-            failed.append(path)
+            failed.append(Rejection(path, obj, reason))
             return Fact(value=None, unit=obj.unit, page=None, verbatim_quote=None,
                         not_disclosed_reason=COULD_NOT_VERIFY)
         if isinstance(obj, Quote):
             if _quoted(obj, pages):
                 return obj
-            failed.append(path)
+            failed.append(Rejection(path, obj, "the quote is not printed on the cited page"))
             return Quote()
         if isinstance(obj, BaseModel):
             return obj.model_copy(update={name: walk(getattr(obj, name), f"{path}.{name}")
@@ -82,16 +99,26 @@ def _holds_fact(obj) -> bool:
     return False
 
 
-def _grounded(fact: Fact, pages: dict[int, str]) -> bool:
+def _why_not(fact: Fact, pages: dict[int, str]) -> str | None:
+    """None if the Fact is grounded in `pages`, else the reason it is not (worded for the retry prompt)."""
     page = pages.get(fact.page)
     if page is None:
-        return False  # a page the agent was not given
+        return f"page {fact.page} is not one of the pages given"
+    if not fact.verbatim_quote:
+        return "no verbatim_quote was given"
     quote, text = _normalise(fact.verbatim_quote), _normalise(page)
-    if len(quote) < MIN_QUOTE_CHARS or not _WORD.search(quote) or not _in_quote(fact, quote):
-        return False
+    if len(quote) < MIN_QUOTE_CHARS or not _WORD.search(quote):
+        return f"the quote is shorter than {MIN_QUOTE_CHARS} characters or has no words"
+    if not _in_quote(fact, quote):
+        return "the value is not a number printed in the quote (a row number or a year does not count)"
     # The value must also be in the page's matching text: a quote with one digit changed still scores
     # >= 90 against the page. Each place the quote matches is checked, not just the best one.
-    return any(_matches(fact, quote, span, text) for span in _occurrences(quote, text))
+    spans = _occurrences(quote, text)
+    if not spans:
+        return f"the quote is not printed on page {fact.page}"
+    if not any(_matches(fact, quote, span, text) for span in spans):
+        return f"the value in unit '{fact.unit}' does not match the text on page {fact.page}"
+    return None
 
 
 def _quoted(q: Quote, pages: dict[int, str]) -> bool:

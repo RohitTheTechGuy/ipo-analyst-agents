@@ -85,6 +85,9 @@ class SectionedDocument(BaseModel):
 
 class SellingShareholder(BaseModel):
     name: str
+    category: Literal["promoter", "investor", "other"] | None = Field(
+        default=None, description="How the RHP classes this seller: Promoter, Investor (PE/VC) or Other "
+                                  "Selling Shareholder")
     shares_offered: Fact
     holding_after: Fact = Field(description="Holding after the offer, % or shares as written")
 
@@ -167,9 +170,9 @@ class Financials(BaseModel):
     restatement: Restatement | None = Field(description="Whether restatement adjustments were made; None if not stated")
 
 
-class Flag(BaseModel):
-    """A red flag Python computed from verified facts. A flag whose inputs aren't all verified is
-    'not_computable', never guessed."""
+class FinancialCheck(BaseModel):
+    """A financial red-flag check Python computed from verified facts. A check whose inputs aren't
+    all verified is 'not_computable', never guessed."""
 
     code: str
     status: Literal["raised", "clear", "not_computable"]
@@ -213,14 +216,44 @@ class Sentiment(BaseModel):
         return [n for s in self.sources for n in s.claimed_numbers]
 
 
+class CalcInput(BaseModel):
+    """One input of a derived number: a Fact's dotted path and page, or exchange data (page None)."""
+
+    field: str  # e.g. "offer_objects.ofs_shares" or "ipo.price_band"
+    page: int | None = None
+
+
+class Derived(BaseModel):
+    """A number computed in Python (calc.py) from verified inputs; None when not computable."""
+
+    value: float | None
+    unit: str
+    inputs: list[CalcInput] = []
+    basis: str = ""  # e.g. "computed at upper band ₹105"
+    not_computable_reason: str | None = None  # e.g. "offer_objects.ofs_shares: could not verify"
+
+    @property
+    def pages(self) -> list[int]:
+        return sorted({i.page for i in self.inputs if i.page is not None})
+
+
+class Flag(BaseModel):
+    code: str  # e.g. "OFS_HEAVY"
+    severity: Literal["info", "warning", "error"]
+    message: str
+    evidence_pages: list[int] = []
+
+
 class Report(BaseModel):
     ipo: Ipo
     status: Literal["complete", "partial_budget"]
     verdict: Verdict | None
     offer: OfferObjects | None = None
     financials: Financials | None = None
-    financial_flags: list[Flag] = []
+    financial_flags: list[FinancialCheck] = []
     sentiment: Sentiment | None = None
+    calculations: dict[str, Derived] = {}  # name -> derived number (calc.py)
+    flags: list[Flag] = []  # red flags (flags.py)
     unverified_fields: list[str] = []
     rhp_sha256: str
     pdf_path: str | None = None

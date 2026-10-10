@@ -8,14 +8,14 @@ from __future__ import annotations
 
 import re
 
-from ipo_agents.contracts import Financials, FinancialPeriod, Flag
+from ipo_agents.contracts import Financials, FinancialPeriod, FinancialCheck
 
 DAYS_IN_YEAR = 365
 JUMP_MULTIPLE = 2  # latest PAT growth above this multiple of the prior average growth is a jump
 _YEAR = re.compile(r"(?<!\d)(?:19|20)\d{2}(?!\d)")
 
 
-def financial_flags(fin: Financials) -> list[Flag]:
+def financial_flags(fin: Financials) -> list[FinancialCheck]:
     years, stubs = full_years(fin.periods), [p for p in fin.periods if _is_stub(p)]
     return [
         pat_positive_cfo_negative(years),
@@ -51,7 +51,7 @@ def growth(new: float, old: float) -> float:
     return new / old - 1
 
 
-def pat_positive_cfo_negative(years: list[FinancialPeriod] | None) -> Flag:
+def pat_positive_cfo_negative(years: list[FinancialPeriod] | None) -> FinancialCheck:
     code = "pat_positive_cfo_negative"
     if not years:
         return _not_computable(code, "no full fiscal year with a readable year")
@@ -60,10 +60,10 @@ def pat_positive_cfo_negative(years: list[FinancialPeriod] | None) -> Flag:
     if pat is None or cfo is None:
         return _not_computable(code, f"{latest.label}: PAT or CFO not verified")
     detail = f"{latest.label}: PAT {pat:,.2f} vs CFO {cfo:,.2f}"
-    return Flag(code=code, status="raised" if pat > 0 and cfo < 0 else "clear", detail=detail)
+    return FinancialCheck(code=code, status="raised" if pat > 0 and cfo < 0 else "clear", detail=detail)
 
 
-def pre_ipo_profit_jump(years: list[FinancialPeriod] | None) -> Flag:
+def pre_ipo_profit_jump(years: list[FinancialPeriod] | None) -> FinancialCheck:
     """Latest full year's PAT growth vs the mean growth of up to two years before it. With the usual
     3 fiscal years that mean is the one prior year's growth. Growth off a loss or zero is undefined."""
     code = "pre_ipo_profit_jump"
@@ -79,10 +79,10 @@ def pre_ipo_profit_jump(years: list[FinancialPeriod] | None) -> Flag:
     baseline = sum(prior) / len(prior)
     detail = f"{years[-1].label}: PAT growth {latest:.1%} vs prior average {baseline:.1%}"
     raised = latest > 0 and latest > JUMP_MULTIPLE * baseline
-    return Flag(code=code, status="raised" if raised else "clear", detail=detail)
+    return FinancialCheck(code=code, status="raised" if raised else "clear", detail=detail)
 
 
-def receivable_days_rising(years: list[FinancialPeriod] | None) -> Flag:
+def receivable_days_rising(years: list[FinancialPeriod] | None) -> FinancialCheck:
     """Receivable days (receivables / revenue x 365) of the last two full years: raised when they
     rise, and by more than revenue grew."""
     code = "receivable_days_rising"
@@ -102,34 +102,34 @@ def receivable_days_rising(years: list[FinancialPeriod] | None) -> Flag:
     detail = (f"receivable days {days0:.1f} ({prev.label}) -> {days1:.1f} ({latest.label}), "
               f"{days_growth:+.1%} vs revenue {rev_growth:+.1%}")
     raised = days1 > days0 and days_growth > rev_growth
-    return Flag(code=code, status="raised" if raised else "clear", detail=detail)
+    return FinancialCheck(code=code, status="raised" if raised else "clear", detail=detail)
 
 
-def auditor_remarks(fin: Financials) -> Flag:
+def auditor_remarks(fin: Financials) -> FinancialCheck:
     code = "auditor_remarks"
     verified = [r for r in fin.auditor_remarks if r.source.page is not None]
     if verified:
         detail = "; ".join(f"{r.kind.replace('_', ' ')} (page {r.source.page}): {r.summary}" for r in verified)
-        return Flag(code=code, status="raised", detail=detail)
+        return FinancialCheck(code=code, status="raised", detail=detail)
     if fin.auditor_remarks:
         return _not_computable(code, "auditor remarks reported but none verified on their page")
-    return Flag(code=code, status="clear", detail="no qualification or emphasis of matter found")
+    return FinancialCheck(code=code, status="clear", detail="no qualification or emphasis of matter found")
 
 
-def restatement_adjustments(fin: Financials) -> Flag:
+def restatement_adjustments(fin: Financials) -> FinancialCheck:
     code = "restatement_adjustments"
     r = fin.restatement
     if r is None or r.source.page is None:
         return _not_computable(code, "restatement adjustments not stated or not verified")
     status = "raised" if r.adjusted else "clear"
-    return Flag(code=code, status=status, detail=f"restatement adjustments {'made' if r.adjusted else 'nil'} (page {r.source.page})")
+    return FinancialCheck(code=code, status=status, detail=f"restatement adjustments {'made' if r.adjusted else 'nil'} (page {r.source.page})")
 
 
-def stub_period(stubs: list[FinancialPeriod]) -> Flag:
+def stub_period(stubs: list[FinancialPeriod]) -> FinancialCheck:
     if not stubs:
-        return Flag(code="stub_period", status="clear", detail="no stub period")
+        return FinancialCheck(code="stub_period", status="clear", detail="no stub period")
     labels = ", ".join(p.label for p in stubs)
-    return Flag(code="stub_period", status="raised",
+    return FinancialCheck(code="stub_period", status="raised",
                 detail=f"{labels}: not comparable to the full year; not annualised")
 
 
@@ -138,5 +138,5 @@ def _is_stub(p: FinancialPeriod) -> bool:
     return p.kind == "stub" or "month" in p.label.casefold()
 
 
-def _not_computable(code: str, why: str) -> Flag:
-    return Flag(code=code, status="not_computable", detail=f"not computable: {why}")
+def _not_computable(code: str, why: str) -> FinancialCheck:
+    return FinancialCheck(code=code, status="not_computable", detail=f"not computable: {why}")
