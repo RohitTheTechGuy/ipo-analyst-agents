@@ -9,6 +9,7 @@ routing:
   map_extract:          luna
   offer_objects:        terra
   financials:           terra
+  offer_price_basis:    terra  # short section, dense tables (WACA, peer table); not in the plan's list
   fine_print_legal:     terra
   peer_valuation:       terra
   synthesizer:          terra

@@ -5,15 +5,20 @@ TODO: merge with calc.py (ticket 09) once both have landed.
 """
 from __future__ import annotations
 
+import re
+
 from pydantic import BaseModel
 
-from ipo_agents.contracts import BusinessIndustry, Derived, Fact, Ipo, PromotersGovernance, RedFlag
+from ipo_agents.contracts import (BusinessIndustry, Derived, Fact, Ipo, OfferPriceBasis, PromotersGovernance,
+                                  RedFlag)
 
 TOP1_CUSTOMER_LIMIT_PCT = 20.0
 TOP10_CUSTOMERS_LIMIT_PCT = 50.0
 PROMOTER_PAY_LIMIT_PCT_OF_PAT = 5.0
 MAX_AUDITOR_CHANGES = 1  # in the last three years; more is "frequent"
 MAX_KMP_CHANGES = 2
+OFFER_TO_WACA_LIMIT = 2.0  # upper band more than this multiple of a WACA: insiders bought far cheaper
+_PRICE = re.compile(r"\d[\d,]*(?:\.\d+)?")
 # Rupee scale words in a Fact's unit -> rupees.
 _RUPEE_SCALES = {"crore": 1e7, "billion": 1e9, "million": 1e6, "lakh": 1e5, "thousand": 1e3}
 
@@ -31,6 +36,11 @@ def evaluate(ipo: Ipo, findings: dict[str, BaseModel]) -> tuple[list[Derived], l
         pay = promoter_pay_vs_pat(governance, pat)
         derived.append(pay)
         flags += governance_flags(governance, pay, pat)
+    price_basis = findings.get("offer_price_basis")
+    if isinstance(price_basis, OfferPriceBasis):
+        d, f = offer_price_vs_waca(price_basis, upper_band(ipo.price_band))
+        derived += d
+        flags += f
     return derived, flags
 
 
@@ -120,6 +130,39 @@ def governance_flags(g: PromotersGovernance, pay: Derived, pat: Fact | None) -> 
 
 def _promoter_pay(g: PromotersGovernance) -> list[Fact]:
     return [r.amount for r in g.remuneration if r.is_promoter and r.amount.value is not None]
+
+
+# --- Offer Price Basis ----------------------------------------------------------
+
+def upper_band(price_band: str) -> float | None:
+    """The upper end of the exchange's price band, e.g. "₹100–₹105" -> 105.0; None if no number."""
+    prices = [float(n.replace(",", "")) for n in _PRICE.findall(price_band)]
+    return max(prices) if prices else None
+
+
+def offer_price_vs_waca(pb: OfferPriceBasis, upper: float | None) -> tuple[list[Derived], list[RedFlag]]:
+    """Upper band as a multiple of each WACA; flags any above OFFER_TO_WACA_LIMIT ("insiders bought far cheaper")."""
+    derived, over = [], []
+    for kind, w in (("primary", pb.waca_primary.waca), ("secondary", pb.waca_secondary.waca)):
+        name, unit = f"cap_price_to_waca_{kind}", "times"
+        if upper is None:
+            derived.append(Derived(name=name, value=None, unit=unit, note="not computable: no upper price band"))
+        elif w.value is None or w.value <= 0:
+            derived.append(Derived(name=name, value=None, unit=unit,
+                                   note=f"not computable: {kind} WACA not disclosed or not positive"))
+        else:
+            ratio = upper / w.value
+            derived.append(Derived(name=name, value=ratio, unit=unit,
+                                   note=f"upper band ₹{upper:g} / {kind} WACA ₹{w.value:g}"))
+            if ratio > OFFER_TO_WACA_LIMIT:
+                over.append((f"{ratio:.1f}x the {kind} WACA of ₹{w.value:g}", w))
+    flags = []
+    if over:
+        flags.append(RedFlag(section="offer_price_basis", code="offer_price_far_above_waca",
+                             message=f"Insiders bought far cheaper: upper band ₹{upper:g} is "
+                                     + " and ".join(text for text, _ in over),
+                             pages=_pages(*(f for _, f in over))))
+    return derived, flags
 
 
 # --- helpers --------------------------------------------------------------------

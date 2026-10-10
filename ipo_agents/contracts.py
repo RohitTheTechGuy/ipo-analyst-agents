@@ -215,6 +215,62 @@ class PromotersGovernance(BaseModel):
     kmp_changes: list[Cited] = Field(description="Each change in key managerial personnel in the last three years")
 
 
+class PeriodFact(BaseModel):
+    period: str = Field(description="Fiscal year or period, as written, e.g. 'Fiscal 2024'")
+    value: Fact
+
+
+class Eps(BaseModel):
+    period: str = Field(description="Fiscal year or period, as written")
+    basic: Fact = Field(description="Basic EPS, ₹")
+    diluted: Fact = Field(description="Diluted EPS, ₹")
+
+
+class IndustryPe(BaseModel):
+    highest: Fact
+    lowest: Fact
+    average: Fact
+
+
+class Peer(BaseModel):
+    """One listed peer, as the RHP's own comparison table states it (feeds peer valuation)."""
+
+    name: str
+    pe: Fact = Field(description="P/E, times")
+    eps: Fact = Field(description="Basic EPS, ₹")
+    ronw_pct: Fact = Field(description="Return on net worth, %")
+    nav_per_share: Fact = Field(description="Net asset value per share, ₹")
+    revenue: Fact = Field(description="Revenue from operations or total income, as the table labels it")
+
+
+class Kpi(BaseModel):
+    name: str = Field(description="KPI name as written")
+    values: list[PeriodFact]
+
+
+class Waca(BaseModel):
+    """Weighted average cost of acquisition of one kind of recent share transaction."""
+
+    waca: Fact = Field(description="WACA, ₹ per share")
+    floor_price_times: Fact = Field(description="Floor price as a multiple of this WACA, if printed (often [●])")
+    cap_price_times: Fact = Field(description="Cap price as a multiple of this WACA, if printed (often [●])")
+
+
+class OfferPriceBasis(BaseModel):
+    """Basis for Offer Price section."""
+
+    eps: list[Eps] = Field(description="Basic and diluted EPS per period")
+    nav_per_share: list[PeriodFact] = Field(description="Net asset value per equity share, ₹, per period")
+    ronw_pct: list[PeriodFact] = Field(description="Return on net worth, %, per period")
+    pe_at_floor: Fact = Field(description="P/E at the floor price on latest fiscal basic EPS (often [●])")
+    pe_at_cap: Fact = Field(description="P/E at the cap price on latest fiscal basic EPS (often [●])")
+    industry_pe: IndustryPe = Field(description="Industry (peer group) P/E: highest, lowest, average")
+    peers: list[Peer] = Field(description="Listed peers in the RHP's comparison table, not the company itself")
+    kpis: list[Kpi] = Field(description="Key performance indicators the section discloses")
+    waca_primary: Waca = Field(description="Primary issuances (new shares) in the period the RHP reports")
+    waca_secondary: Waca = Field(description="Secondary transactions (transfers) in the period the RHP reports")
+
+
 class RedFlag(BaseModel):
     """A red flag raised by Python from verified facts (never by a model)."""
 
@@ -277,6 +333,7 @@ class Report(BaseModel):
     offer: OfferObjects | None = None
     business: BusinessIndustry | None = None
     governance: PromotersGovernance | None = None
+    price_basis: OfferPriceBasis | None = None
     sentiment: Sentiment | None = None
     unverified_fields: list[str] = []
     red_flags: list[RedFlag] = []

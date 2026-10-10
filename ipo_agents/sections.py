@@ -1,7 +1,7 @@
 """Section agent registry: one SectionSpec (prompt + schema) per section group. The graph runs every entry."""
 from __future__ import annotations
 
-from ipo_agents.contracts import BusinessIndustry, OfferObjects, PromotersGovernance
+from ipo_agents.contracts import BusinessIndustry, OfferObjects, OfferPriceBasis, PromotersGovernance
 from ipo_agents.section_agent import SectionSpec
 
 OFFER_OBJECTS_PROMPT = (
@@ -45,6 +45,19 @@ PROMOTERS_GOVERNANCE_PROMPT = (
     "group companies; the same person, company or change in several parts is one item."
 )
 
+OFFER_PRICE_BASIS_PROMPT = (
+    "You extract the Basis for Offer Price section of an Indian IPO red herring prospectus (RHP). Extract "
+    "basic and diluted EPS, NAV per share and return on net worth (RoNW) for each period shown; the P/E at "
+    "the floor and cap price (usually [●]); the industry P/E (highest, lowest, average); the comparison "
+    "with listed peers exactly as the RHP's table states it, one item per listed peer and not the company "
+    "itself, with its P/E, basic EPS, RoNW, NAV per share and revenue or total income; each key performance "
+    "indicator (KPI) with its value per period; and the weighted average cost of acquisition (WACA) of "
+    "primary issuances and of secondary transactions, each with the floor and cap price as a multiple of it "
+    "if printed. Where the RHP gives WACA for several look-back periods, take the latest one it compares "
+    "with the floor and cap price. When merging parts: the same peer, KPI or period in several parts is "
+    "one item."
+)
+
 SECTIONS: dict[str, SectionSpec] = {
     spec.group: spec for spec in [
         SectionSpec(group="offer_objects", schema=OfferObjects, prompt=OFFER_OBJECTS_PROMPT, report_field="offer"),
@@ -52,5 +65,7 @@ SECTIONS: dict[str, SectionSpec] = {
                     report_field="business"),
         SectionSpec(group="promoters_governance", schema=PromotersGovernance, prompt=PROMOTERS_GOVERNANCE_PROMPT,
                     report_field="governance"),
+        SectionSpec(group="offer_price_basis", schema=OfferPriceBasis, prompt=OFFER_PRICE_BASIS_PROMPT,
+                    report_field="price_basis"),
     ]
 }
