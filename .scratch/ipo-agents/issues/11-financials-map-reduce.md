@@ -12,3 +12,5 @@
 - [ ] Ratios are computed in Python
 
 **Spec:** `docs/specs/ipo-agents.md`
+
+**From the ticket 03 review:** this is the first ticket with parallel model calls. Add a seam B test proving that parallel branches can't jointly overshoot the cap (the meter reserves each call's worst case under a lock).

@@ -1,7 +1,9 @@
 """SQLite store for IPO status (spec: Data contracts, status lifecycle)."""
 from __future__ import annotations
 
+import re
 import sqlite3
+from datetime import date, timedelta
 from pathlib import Path
 
 from ipo_agents.contracts import Ipo
@@ -21,11 +23,28 @@ CREATE TABLE IF NOT EXISTS ipos (
 TERMINAL = {"done", "failed_budget"}
 
 
+def same_company(a: str, b: str) -> bool:
+    """'HD Fire Protect Ltd.' and 'HD FIRE PROTECT LIMITED' name the same company."""
+    def norm(name: str) -> str:
+        words = re.sub(r"[^a-z0-9 ]", " ", name.lower()).split()
+        return " ".join(w for w in words if w not in {"ltd", "limited", "ipo"})
+    return norm(a) == norm(b)
+
+
 class Store:
     def __init__(self, db_path: str | Path):
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self._db = sqlite3.connect(db_path)
         self._db.executescript(SCHEMA)
+
+    def known_id(self, ipo: Ipo) -> str:
+        """The stored id for this issue: sources disagree on ids, so match company name + open date."""
+        if self.status(ipo.ipo_id) is not None:
+            return ipo.ipo_id
+        rows = self._db.execute(
+            "SELECT ipo_id, name FROM ipos WHERE open_date = ?", (ipo.open_date.isoformat(),)
+        ).fetchall()
+        return next((row_id for row_id, name in rows if same_company(name, ipo.name)), ipo.ipo_id)
 
     def status(self, ipo_id: str) -> str | None:
         row = self._db.execute("SELECT status FROM ipos WHERE ipo_id = ?", (ipo_id,)).fetchone()
@@ -53,3 +72,20 @@ class Store:
 
     def close(self) -> None:
         self._db.close()
+
+    # --- closing reminders (ticket 05) ---
+
+    def due_reminders(self, today: date) -> list[tuple[str, str, date, str | None]]:
+        """(ipo_id, name, close_date, verdict) for done IPOs closing today or tomorrow, not yet reminded today."""
+        rows = self._db.execute(
+            """SELECT ipo_id, name, close_date, verdict FROM ipos
+               WHERE status = 'done' AND close_date IN (?, ?)
+                 AND (last_reminded_at IS NULL OR last_reminded_at != ?)
+               ORDER BY close_date, ipo_id""",
+            (today.isoformat(), (today + timedelta(days=1)).isoformat(), today.isoformat()),
+        ).fetchall()
+        return [(i, n, date.fromisoformat(c), v) for i, n, c, v in rows]
+
+    def mark_reminded(self, ipo_id: str, today: date) -> None:
+        self._db.execute("UPDATE ipos SET last_reminded_at = ? WHERE ipo_id = ?", (today.isoformat(), ipo_id))
+        self._db.commit()

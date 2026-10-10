@@ -1,7 +1,7 @@
 """Chittorgarh: the mainboard IPO report API plus each IPO's page (last fallback).
 
 Before listing, Chittorgarh has no NSE symbol for an IPO, so the symbol falls back to one
-derived from the page slug. The ipo_id can then differ from NSE's for the same issue.
+derived from the page slug. The ipo_id can then differ from NSE's; Store.known_id matches the issue by company name + open date.
 """
 from __future__ import annotations
 

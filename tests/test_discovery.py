@@ -208,3 +208,18 @@ def test_bse_is_used_when_nse_blocks(adapters, config, tiny_rhp):
     [msg] = adapters.notifier.messages
     assert "HD Fire Protect Limited IPO (Mainboard)" in msg
     assert "Band ₹258–₹271 · Lot 55" in msg
+
+
+def test_ipo_found_via_chittorgarh_is_not_reanalysed_when_nse_lists_it_under_its_symbol(adapters, config, tiny_rhp):
+    # Chittorgarh has no NSE symbol before listing, so its id differs ("HD Fire Protect Ltd." vs
+    # NSE's "HD Fire Protect Limited"/HDFIRE). Same company + same open date is the same issue.
+    wire(adapters, Web(nse_blocked() | bse_blocked() | chittorgarh_routes(tiny_rhp)))
+    first = run_daily(OPEN_DAY, adapters, config)
+    assert len(first.analysed) == 1
+
+    wire(adapters, Web(nse_routes(tiny_rhp)))
+    second = run_daily(OPEN_DAY, adapters, config)
+
+    assert second.analysed == []
+    assert second.skipped == first.analysed
+    assert adapters.llm.calls == []
