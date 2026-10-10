@@ -99,6 +99,16 @@ def test_missing_secrets_are_named_and_values_are_never_shown(config, monkeypatc
     assert "sk-supersecret-value" not in msg
 
 
+def test_real_market_data_is_wired_without_any_secret_of_its_own(config, monkeypatch):
+    from ipo_agents.market import HttpMarketData
+
+    for key in ("OPENAI_API_KEY", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"):
+        monkeypatch.setenv(key, "x")
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+
+    assert isinstance(build_adapters(config).market, HttpMarketData)
+
+
 def _summary():
     from ipo_agents.contracts import RunSummary
 

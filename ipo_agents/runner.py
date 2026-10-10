@@ -9,7 +9,7 @@ from ipo_agents.adapters import Adapters
 from ipo_agents.analysis import analyse_rhp
 from ipo_agents.budget import BudgetExceeded
 from ipo_agents.config import Config
-from ipo_agents.contracts import Report, RunSummary, Sentiment
+from ipo_agents.contracts import Report, RunSummary, Sentiment, SubscriptionStatus
 from ipo_agents.discovery import DiscoveryError
 from ipo_agents.notify.reminders import send_closing_reminders
 from ipo_agents.store import TERMINAL, Store
@@ -27,10 +27,17 @@ VERDICT_LABELS = {
 
 
 def _sentiment_line(s: Sentiment) -> str:
-    if not s.available:
-        return "Sentiment: unavailable"
     counts = [f"{n} {stance.replace('_only', '').replace('_', ' ')}" for stance, n in s.tally.items() if n]
-    return "Sentiment: " + (" / ".join(counts) or "no recent coverage found")
+    line = "Sentiment: " + ((" / ".join(counts) or "no recent coverage found") if s.available else "unavailable")
+    if s.gmp and s.gmp.value is not None:
+        line += f" · GMP ₹{s.gmp.value:,g} (unofficial)"
+    return line
+
+
+def _subscription_line(sub: SubscriptionStatus) -> str:
+    parts = [f"{name} {f.value:.1f}×" for name, f in (("QIB", sub.qib), ("NII", sub.nii), ("Retail", sub.retail))
+             if f and f.value is not None]
+    return f"Subscription: {sub.total.value:.1f}× total" + (f" ({', '.join(parts)})" if parts else "")
 
 
 def format_summary(report: Report) -> str:
@@ -44,6 +51,8 @@ def format_summary(report: Report) -> str:
         lines.append(f"Issue: ₹{f.value:,.2f} cr (p. {f.page})")
     if report.sentiment:
         lines.append(_sentiment_line(report.sentiment))
+        if (sub := report.sentiment.subscription) and sub.total.value is not None:
+            lines.append(_subscription_line(sub))
     lines += ["", f"Verdict: {VERDICT_LABELS.get(report.verdict, 'N/A')}", "", DISCLAIMER]
     return "\n".join(lines)
 
