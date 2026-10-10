@@ -130,6 +130,18 @@ def _chunks(group: str, start: int, end: int, texts: list[str]) -> list[Chunk]:
     return chunks
 
 
+_PAGE_TAG = re.compile(r"^\[page (\d+)\]\n", re.MULTILINE)
+
+
+def page_texts(chunks: list[Chunk]) -> dict[int, str]:
+    """Page number -> that page's text, recovered from the chunks' "[page N]" tags."""
+    pages: dict[int, str] = {}
+    for chunk in chunks:
+        parts = _PAGE_TAG.split(chunk.text)  # ["", "N", text, "N+1", text, ...]
+        pages.update((int(n), text) for n, text in zip(parts[1::2], parts[2::2]))
+    return pages
+
+
 def _page_text(page: fitz.Page) -> str:
     """The text layer, plus OCR for scans: pages with no text, or with a few characters over an image."""
     text = page.get_text()

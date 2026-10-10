@@ -10,9 +10,9 @@ from ipo_agents.budget import BudgetMeter, _count
 from ipo_agents.contracts import ClaimedFact, Fact, OfferObjects
 from ipo_agents.sentiment import ClaimedNumber, SentimentPoints, StanceTag
 from ipo_agents.runner import run_daily
-from tests.fakes import FakeExchange, FakeSearch, ScriptedLLM, make_ipo
+from tests.fakes import FakeExchange, FakeSearch, ScriptedLLM, make_ipo, offer_objects
 
-OFFER = OfferObjects(issue_size_cr=Fact(
+OFFER = offer_objects(issue_size=Fact(
     value=1250.0, unit="₹ crore", page=2, verbatim_quote="Total issue size of up to Rs. 1,250.00 crore"))
 
 
@@ -24,7 +24,7 @@ def test_without_a_search_adapter_sentiment_is_unavailable_and_the_run_completes
     assert report.status == "complete"
     assert report.sentiment.available is False
     assert "sentiment unavailable" in report.sentiment.note
-    assert report.offer.issue_size_cr.value == 1250.0
+    assert report.offer.issue_size.value == 1250.0
 
 
 def test_a_failing_search_makes_sentiment_unavailable_and_the_run_completes(tiny_rhp, adapters, config):

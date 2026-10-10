@@ -14,9 +14,9 @@ from ipo_agents.analysis import analyse_rhp
 from ipo_agents.budget import BudgetExceeded
 from ipo_agents.config import RunEstimate
 from ipo_agents.contracts import Fact, OfferObjects
-from tests.fakes import ProviderError, ScriptedLLM, make_ipo
+from tests.fakes import ProviderError, ScriptedLLM, make_ipo, offer_objects
 
-OFFER = OfferObjects(issue_size_cr=Fact(
+OFFER = offer_objects(issue_size=Fact(
     value=1250.0, unit="₹ crore", page=2, verbatim_quote="Total issue size of up to Rs. 1,250.00 crore"))
 
 
@@ -130,7 +130,7 @@ def test_groq_failure_falls_back_to_luna_without_waiting(tiny_rhp, adapters, con
 
     report = analyse_rhp(make_ipo(), tiny_rhp, adapters, config)
 
-    assert report.offer.issue_size_cr.value == 1250.0
+    assert report.offer.issue_size.value == 1250.0
     assert [c["model"] for c in adapters.llm.calls] == ["groq", "luna"]
     assert sleeps == []
 
@@ -153,7 +153,7 @@ def test_transient_openai_error_is_retried_with_backoff(tiny_rhp, adapters, conf
 
     report = analyse_rhp(make_ipo(), tiny_rhp, adapters, config)
 
-    assert report.offer.issue_size_cr.value == 1250.0
+    assert report.offer.issue_size.value == 1250.0
     assert [c["model"] for c in adapters.llm.calls] == ["terra"] * 3
     assert sleeps == [0.5, 1.0]
 
@@ -247,7 +247,7 @@ def test_real_openai_rate_limit_is_retried(tiny_rhp, adapters, config, sleeps):
 
     report = analyse_rhp(make_ipo(), tiny_rhp, adapters, config)
 
-    assert report.offer.issue_size_cr.value == 1250.0
+    assert report.offer.issue_size.value == 1250.0
     assert [c["model"] for c in adapters.llm.calls] == ["terra", "terra"]
     assert sleeps == [0.5]
 

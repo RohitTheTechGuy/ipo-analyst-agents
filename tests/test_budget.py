@@ -7,9 +7,9 @@ from ipo_agents.budget import BudgetExceeded
 from ipo_agents.config import RunEstimate
 from ipo_agents.contracts import Fact, OfferObjects
 from ipo_agents.llm import LLMParseError
-from tests.fakes import ScriptedLLM, make_ipo
+from tests.fakes import ScriptedLLM, make_ipo, offer_objects
 
-OFFER = OfferObjects(issue_size_cr=Fact(
+OFFER = offer_objects(issue_size=Fact(
     value=1250.0, unit="₹ crore", page=2, verbatim_quote="Total issue size of up to Rs. 1,250.00 crore"))
 
 
@@ -54,7 +54,7 @@ def test_call_under_the_cap_goes_through(tiny_rhp, adapters, config):
 
     report = analyse_rhp(make_ipo(), tiny_rhp, adapters, config)
 
-    assert report.offer.issue_size_cr.value == 1250.0
+    assert report.offer.issue_size.value == 1250.0
     assert len(adapters.llm.calls) == 1
 
 

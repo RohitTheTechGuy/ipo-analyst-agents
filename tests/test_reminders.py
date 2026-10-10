@@ -2,14 +2,14 @@ from datetime import date
 
 from ipo_agents.contracts import Fact, OfferObjects
 from ipo_agents.runner import run_daily
-from tests.fakes import FakeExchange, ScriptedLLM, make_ipo
+from tests.fakes import FakeExchange, ScriptedLLM, make_ipo, offer_objects
 
 # make_ipo() opens 13 Oct and closes 15 Oct.
 OPEN_DAY, DAY_BEFORE_CLOSE, CLOSE_DAY = date(2026, 10, 13), date(2026, 10, 14), date(2026, 10, 15)
 
 
 def offer_llm():
-    return ScriptedLLM({OfferObjects: OfferObjects(issue_size_cr=Fact(
+    return ScriptedLLM({OfferObjects: offer_objects(issue_size=Fact(
         value=1250.0, unit="₹ crore", page=2, verbatim_quote="Total issue size of up to Rs. 1,250.00 crore"))})
 
 

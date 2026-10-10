@@ -8,14 +8,14 @@ import pytest
 from ipo_agents.contracts import Fact, OfferObjects
 from ipo_agents.notify.telegram import TelegramNotifier, telegram_notifier_from_env
 from ipo_agents.runner import run_daily
-from tests.fakes import FakeExchange, ScriptedLLM, make_ipo
+from tests.fakes import FakeExchange, ScriptedLLM, make_ipo, offer_objects
 
 TODAY = date(2026, 10, 13)
 TOKEN, CHAT_ID = "123:secret-token", "-1001"
 
 
 def offer_llm():
-    return ScriptedLLM({OfferObjects: OfferObjects(issue_size_cr=Fact(
+    return ScriptedLLM({OfferObjects: offer_objects(issue_size=Fact(
         value=1250.0, unit="₹ crore", page=2, verbatim_quote="Total issue size of up to Rs. 1,250.00 crore"))})
 
 
@@ -45,7 +45,7 @@ def test_summary_is_sent_to_the_telegram_chat_as_plain_text(adapters, config):
     assert body["chat_id"] == CHAT_ID
     assert "parse_mode" not in body
     assert body["text"].startswith("📄 Acme Ltd IPO (Mainboard)")
-    assert "₹1,250.00 cr" in body["text"]
+    assert "Issue: ₹1,250 crore (p. 2)" in body["text"]
     assert body["text"].endswith("Not investment advice; generated from RHP + public sources.")
 
 

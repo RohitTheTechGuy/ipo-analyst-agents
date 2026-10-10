@@ -2,65 +2,63 @@
 from __future__ import annotations
 
 import dataclasses
+import operator
 from pathlib import Path
-from typing import TypedDict
+from typing import Annotated, TypedDict
 
 from langgraph.graph import END, START, StateGraph
+from pydantic import BaseModel
 
 from ipo_agents.adapters import Adapters
 from ipo_agents.budget import BudgetMeter, MeteredLLM
 from ipo_agents.config import Config
-from ipo_agents.contracts import Ipo, OfferObjects, Report, SectionedDocument, Sentiment
+from ipo_agents.contracts import Ipo, Report, SectionedDocument, Sentiment
 from ipo_agents.ingestion import ingest
 from ipo_agents.router import estimate_run_usd
+from ipo_agents.section_agent import SectionSpec, run_section
+from ipo_agents.sections import SECTIONS
 from ipo_agents.sentiment import gather_sentiment
 
-EXTRACT_RULES = (
-    "Use ONLY the text provided. Every number must cite the page it appears on and an exact quote "
-    "from that page. If a value is not present, return null with not_disclosed_reason "
-    "'not disclosed in provided pages'. Never calculate; only extract."
-)
+
+def _merge(a: dict, b: dict) -> dict:
+    return {**a, **b}
 
 
 class AnalysisState(TypedDict, total=False):
     ipo: Ipo
     rhp_pdf: str
     doc: SectionedDocument
-    offer: OfferObjects
+    findings: Annotated[dict[str, BaseModel], _merge]  # section group -> verified output
+    unverified: Annotated[list[str], operator.add]  # dotted paths of facts that failed verification
     sentiment: Sentiment
-
-
-def _pages_text(doc: SectionedDocument) -> str:
-    chunks = sorted((c for s in doc.sections.values() for c in s), key=lambda c: c.page_start)
-    return "\n\n".join(c.text for c in chunks)  # chunk text already tags each page "[page N]"
 
 
 def build_graph(adapters: Adapters, config: Config):
     def ingest_node(state: AnalysisState):
         return {"doc": ingest(Path(state["rhp_pdf"]))}
 
-    def offer_node(state: AnalysisState):
-        result = adapters.llm.invoke_structured(
-            system=f"You extract the Offer & Objects section of an Indian IPO RHP. {EXTRACT_RULES}",
-            user=_pages_text(state["doc"]),
-            schema=OfferObjects,
-            max_tokens=config.default_max_tokens,
-            task="offer_objects",
-        )
-        return {"offer": result.parsed}
+    def section_node(spec: SectionSpec):
+        def node(state: AnalysisState):
+            chunks = state["doc"].sections.get(spec.group, [])
+            if not chunks:
+                return {}
+            output, failed = run_section(spec, chunks, adapters.llm, config.default_max_tokens)
+            return {"findings": {spec.group: output}, "unverified": failed}
+        return node
 
     def sentiment_node(state: AnalysisState):
         return {"sentiment": gather_sentiment(state["ipo"], adapters, config)}
 
     g = StateGraph(AnalysisState)
     g.add_node("ingest", ingest_node)
-    g.add_node("offer_objects", offer_node)
     g.add_node("sentiment", sentiment_node)
     g.add_edge(START, "ingest")
-    # Sentiment runs alongside the section agents; both join at END.
-    g.add_edge("ingest", "offer_objects")
+    # Sentiment runs alongside the section agents; all join at END.
+    for group, spec in SECTIONS.items():
+        g.add_node(group, section_node(spec))
+        g.add_edge("ingest", group)
+        g.add_edge(group, END)
     g.add_edge("ingest", "sentiment")
-    g.add_edge("offer_objects", END)
     g.add_edge("sentiment", END)
     return g.compile()
 
@@ -76,7 +74,8 @@ def analyse_rhp(ipo: Ipo, rhp_pdf: Path, adapters: Adapters, config: Config) -> 
         ipo=ipo,
         status="complete",
         verdict=None,  # set by the synthesizer (ticket 20)
-        offer=state["offer"],
         sentiment=state.get("sentiment"),
+        unverified_fields=state.get("unverified", []),
+        **{spec.report_field: state.get("findings", {}).get(group) for group, spec in SECTIONS.items()},
         rhp_sha256=state["doc"].sha256,
     )
