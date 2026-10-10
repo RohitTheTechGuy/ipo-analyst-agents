@@ -1,0 +1,86 @@
+# Golden set: loss-making IPO (restated loss for FY2024).
+# Values use the RHP's own units (₹ million). page = 1-based PDF page index (PyMuPDF);
+# printed_page = page number printed on the page. Quotes are verbatim page.get_text()
+# with runs of whitespace collapsed to one space. Negative values are shown in
+# brackets in the RHP, e.g. (15,844.00).
+# ipo.* listing details (dates, band, lot) are NOT in the RHP (shown as [●]); they come
+# from public sources and must be hand-checked against the price band advertisement.
+needs_human_review: true
+ipo:
+  name: Ola Electric Mobility Limited
+  symbol: OLAELEC
+  category: loss_making
+  open_date: 2024-08-02
+  close_date: 2024-08-06
+  price_band: [72, 76]
+  lot_size: 195
+rhp:
+  url: https://business.bofa.com/content/dam/flagship/in/en/investment-banking/Ola-Electric-Mobility-Limited-RHP.pdf
+  source: BofA Securities (BRLM) site; RHP dated July 26, 2024
+  sha256: be88ab000eadd7b614c500dc5de8a4af39b6cb0a9cbd4baf38386c34a74b39b0
+  pages: 461
+facts:
+  - key: fresh_issue_size
+    value: 55000
+    unit: ₹ million
+    page: 19
+    printed_page: 15
+    verbatim_quote: "(i) Fresh Issue(1) Up to [●] equity shares of face value of ₹ 10 each aggregating up to ₹55,000 million."
+  - key: ofs_shares
+    value: 84941997
+    unit: equity shares
+    page: 19
+    printed_page: 15
+    note: OFS rupee amount is [●] in the RHP; only the share count is disclosed.
+    verbatim_quote: "(ii) Offer for Sale(2) Up to 84,941,997 equity shares of face value of ₹ 10 each aggregating up to ₹[●] million."
+  - key: pre_offer_shares
+    value: 3687072258
+    unit: equity shares
+    page: 83
+    printed_page: 79
+    note: Post-Offer share count is [●] in the RHP.
+    verbatim_quote: "Equity Shares outstanding prior to the Offer (as on the date of this Red Herring Prospectus) 3,687,072,258 equity shares of face value of ₹ 10 each"
+  - key: promoter_pre_offer_holding_pct
+    value: 36.94
+    unit: "%"
+    page: 19
+    printed_page: 15
+    note: Promoter Bhavish Aggarwal only; promoter + promoter group + selling shareholders in this table total 84.35%.
+    verbatim_quote: "Bhavish Aggarwal 1,361,875,240 36.94"
+  - key: revenue_from_operations_fy2024
+    value: 50098.31
+    unit: ₹ million
+    page: 87
+    printed_page: 83
+    note: First column = Fiscal 2024.
+    verbatim_quote: "Revenue from operations 50,098.31 26,309.27 3,734.23"
+  - key: pat_fy2024
+    value: -15844.00
+    unit: ₹ million
+    page: 20
+    printed_page: 16
+    verbatim_quote: "Loss for the year (15,844.00) (14,720.79) (7,841.50)"
+  - key: basic_eps_fy2024
+    value: -4.35
+    unit: ₹ per share
+    page: 20
+    printed_page: 16
+    verbatim_quote: "Basic earnings per equity share (in ₹) (A(i)) (4.35) (3.91) (2.23)"
+  - key: net_worth_fy2024
+    value: 20193.39
+    unit: ₹ million
+    page: 20
+    printed_page: 16
+    verbatim_quote: "Net Worth (C) 20,193.39 23,564.44 36,614.52"
+  - key: cfo_fy2024
+    value: -6330.87
+    unit: ₹ million
+    page: 353
+    printed_page: 349
+    verbatim_quote: "Net cash used in operating activities for Fiscal 2024 was ₹ 6,330.87 million"
+  - key: waca_all_shares_last_one_year
+    value: 47.00
+    unit: ₹ per share
+    page: 26
+    printed_page: 22
+    verbatim_quote: "Last one year 47.00 [●]* Nil**-129.90"

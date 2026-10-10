@@ -1,0 +1,93 @@
+# Golden set: OFS-heavy IPO (100% offer for sale, no fresh issue).
+# Values use the RHP's own units (₹ million). page = 1-based PDF page index (PyMuPDF);
+# printed_page = page number printed on the page. Quotes are verbatim page.get_text()
+# with runs of whitespace collapsed to one space.
+# ipo.* listing details (dates, band, lot) are NOT in the RHP (shown as [●]); they come
+# from public sources and must be hand-checked against the price band advertisement.
+needs_human_review: true
+ipo:
+  name: Hyundai Motor India Limited
+  symbol: HYUNDAI
+  category: ofs_heavy
+  open_date: 2024-10-15
+  close_date: 2024-10-17
+  price_band: [1865, 1960]
+  lot_size: 7
+rhp:
+  url: https://indiaipo.jpmorgan.com/content/dam/jpm/india-private-limited/documents/hyundai-motor-india-red-herring-prospectus.pdf
+  source: J.P. Morgan India (BRLM) IPO site; RHP dated October 8, 2024
+  sha256: 4403ba7da8373c0196175c885857132629b1e00583e21f53d656d62f38f988a2
+  pages: 476
+facts:
+  - key: ofs_shares
+    value: 142194700
+    unit: equity shares
+    page: 21
+    printed_page: 16
+    verbatim_quote: "The Offer comprises an Offer for Sale of up to 142,194,700 Equity Shares of face value of ₹ 10 each aggregating up to ₹ [●] million by the Promoter Selling Shareholder."
+  - key: offer_pct_of_post_offer_capital
+    value: 17.50
+    unit: "%"
+    page: 21
+    printed_page: 16
+    verbatim_quote: "The Offer and the Net Offer shall constitute 17.50% and 17.40%, respectively, of the post-Offer paid-up Equity Share capital of our Company."
+  - key: post_offer_shares
+    value: 812541100
+    unit: equity shares
+    page: 22
+    printed_page: 17
+    note: Pure OFS, so pre-Offer and post-Offer share count are the same (812,541,100).
+    verbatim_quote: "Hyundai Motor Company 812,541,100# 100.00 [●] [●] Total 812,541,100# 100.00"
+  - key: promoter_pre_offer_holding_pct
+    value: 100.00
+    unit: "%"
+    page: 22
+    printed_page: 17
+    verbatim_quote: "Hyundai Motor Company 812,541,100# 100.00 [●] [●]"
+  - key: revenue_from_operations_fy2024
+    value: 698290.57
+    unit: ₹ million
+    page: 22
+    printed_page: 17
+    note: Third column = Financial Year ended March 31, 2024.
+    verbatim_quote: "Revenue from operations 173,442.34 166,235.11 698,290.57 603,075.80 473,784.32"
+  - key: pat_fy2024
+    value: 60600.44
+    unit: ₹ million
+    page: 22
+    printed_page: 17
+    note: Third column = Financial Year ended March 31, 2024.
+    verbatim_quote: "Profit for the period/year 14,896.52 13,291.86 60,600.44 47,092.50 29,015.91"
+  - key: basic_eps_fy2024
+    value: 74.58
+    unit: ₹ per share
+    page: 22
+    printed_page: 17
+    verbatim_quote: "- Basic earnings per share (1)(2) 18.33 16.36 74.58 57.96 35.71"
+  - key: net_worth_fy2024
+    value: 106656.57
+    unit: ₹ million
+    page: 22
+    printed_page: 17
+    note: As at March 31, 2024 (third column). As at June 30, 2024 it is 121,487.10.
+    verbatim_quote: "Net Worth(5) 121,487.10 213,808.29 106,656.57 200,548.18 168,562.55"
+  - key: cfo_fy2024
+    value: 92519.55
+    unit: ₹ million
+    page: 354
+    printed_page: 349
+    verbatim_quote: "Our net cash generated from operating activities for Fiscal 2024 was ₹92,519.55 million"
+  - key: contingent_liabilities_claims_not_acknowledged
+    value: 31461.02
+    unit: ₹ million
+    page: 24
+    printed_page: 19
+    note: As at June 30, 2024. A further ₹7,083.78 million is "decided in favour of the group against which department has gone on appeal".
+    verbatim_quote: "Claims against the group not acknowledged as debt(1) 31,461.02"
+  - key: industry_pe_average
+    value: 23.57
+    unit: times
+    page: 124
+    printed_page: 119
+    note: P/E at the cap price is [●] in the RHP (filled only in the price band ad), so industry average is recorded instead.
+    verbatim_quote: "C. Industry P/E ratio Particulars P/E Ratio Highest 29.96 Lowest 11.36 Average 23.57"
