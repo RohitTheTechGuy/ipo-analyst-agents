@@ -71,10 +71,24 @@ def _prompt_tokens(system: str, user: str, schema: type) -> int:
     return int(text * PROMPT_SAFETY) + REQUEST_OVERHEAD_TOKENS
 
 
-def _transient(e: Exception) -> bool:
-    """A rate limit or server error (openai/groq APIStatusError carry status_code); worth retrying."""
+def _status(e: Exception) -> int | None:
+    """The HTTP status an openai/groq APIStatusError carries; None for timeouts and other errors."""
     status = getattr(e, "status_code", None)
-    return isinstance(status, int) and (status == 429 or status >= 500)
+    return status if isinstance(status, int) else None
+
+
+def _transient(e: Exception) -> bool:
+    """A rate limit or server error: worth retrying. An exhausted quota is a 429 that never clears."""
+    status = _status(e)
+    if status == 429:
+        return getattr(e, "code", None) != "insufficient_quota"
+    return status is not None and status >= 500
+
+
+def _rejected(e: Exception) -> bool:
+    """The server answered 4xx: it refused the request, so it was not billed."""
+    status = _status(e)
+    return status is not None and 400 <= status < 500
 
 
 class BudgetMeter:
@@ -104,15 +118,18 @@ class BudgetMeter:
         """Spend has reached degrade_pct of the cap, or the pre-run estimate is over it:
         Terra tasks run on Luna and sentiment reads fewer sources."""
         threshold = self.cap * self.config.budget.degrade_pct / 100
-        return self.spent >= threshold or self.estimate_usd > threshold
+        # Tolerance: summed float costs can land a hair under a threshold they exactly reach.
+        return self.spent >= threshold - 1e-9 or self.estimate_usd > threshold
 
-    def tokens_today(self, models: list[str]) -> int:
-        """Tokens logged today (UTC) on these model keys, across all IPOs: Groq's limit is per day, not per IPO."""
+    def tokens_last_24h(self, models: list[str]) -> int:
+        """Tokens logged in the last 24 hours on these model keys, across all IPOs (Groq's limit is per
+        day, not per IPO; a rolling window doesn't depend on when the provider's day resets).
+        Calls still in flight aren't counted yet; the headroom under daily_budget_pct absorbs them."""
         marks = ",".join("?" * len(models))
         with self._db() as db:
             (n,) = db.execute(
                 f"""SELECT COALESCE(SUM(input_tokens + output_tokens), 0) FROM llm_calls
-                    WHERE model IN ({marks}) AND date(ts) = date('now')""",
+                    WHERE model IN ({marks}) AND ts > datetime('now', '-24 hours')""",
                 models,
             ).fetchone()
         return n
@@ -146,19 +163,29 @@ class BudgetMeter:
 
     def settle(self, reservation: float, *, task: str, model: str,
                input_tokens: int, cached_tokens: int, output_tokens: int) -> float:
-        """Swaps a reservation for the call's actual cost and logs it. Groq's zero prices log it at $0."""
-        cfg = self._model(model)
-        uncached = max(0, input_tokens - cached_tokens)
-        cost = (uncached * cfg.price_in + cached_tokens * cfg.price_cached + output_tokens * cfg.price_out) / PER_MILLION
-        with self._db() as db:
-            db.execute(
-                """INSERT INTO llm_calls (ipo_id, task, model, input_tokens, cached_tokens, output_tokens, cost_usd)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (self.ipo_id, task, model, input_tokens, cached_tokens, output_tokens, cost),
-            )
-        with self._lock:
-            self.reserved -= reservation
-            self.spent += cost
+        """Swaps a reservation for the call's actual cost and logs it. Groq's zero prices log it at $0.
+
+        Never raises on a log failure: it may run while a provider error is propagating, and the
+        in-memory spend (which keeps this run under the cap) must be updated either way."""
+        cost = reservation  # if pricing fails below, keep holding the worst case
+        try:
+            cfg = self._model(model)
+            uncached = max(0, input_tokens - cached_tokens)
+            cost = (uncached * cfg.price_in + cached_tokens * cfg.price_cached
+                    + output_tokens * cfg.price_out) / PER_MILLION
+            with self._db() as db:
+                db.execute(
+                    """INSERT INTO llm_calls (ipo_id, task, model, input_tokens, cached_tokens, output_tokens, cost_usd)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (self.ipo_id, task, model, input_tokens, cached_tokens, output_tokens, cost),
+                )
+        except Exception:
+            # Lost from the log, so a later resume won't see this spend; this run still counts it.
+            log.exception("%s: could not log a %s call costing $%.4f", self.ipo_id, model, cost)
+        finally:
+            with self._lock:
+                self.reserved -= reservation
+                self.spent += cost
         return cost
 
 
@@ -178,6 +205,9 @@ class MeteredLLM:
         if is_groq(model, self.meter.config):
             try:
                 return self._metered_call(model, prompt_tokens, **call)
+            except (BudgetExceeded, ValueError):
+                # Raised by the meter before anything was sent: not a Groq failure, so no fallback.
+                raise
             except Exception as e:
                 # Rate limit (429) or any other Groq failure: nothing ever waits on Groq.
                 log.warning("%s on groq failed (%s); falling back to %s", task, e, FALLBACK)
@@ -203,11 +233,15 @@ class MeteredLLM:
             self.meter.settle(held, task=task, model=model, input_tokens=e.input_tokens,
                               cached_tokens=e.cached_tokens, output_tokens=e.output_tokens)
             raise
-        except Exception:
-            # Usage is unknown (timeout, dropped connection after the request went out), so charge the
-            # worst case: the cap must hold even if the provider billed for it.
-            self.meter.settle(held, task=task, model=model, input_tokens=prompt_tokens,
-                              cached_tokens=0, output_tokens=max_tokens)
+        except Exception as e:
+            if _rejected(e):
+                # The server replied 4xx and refused the request (rate limit, bad request): nothing billed.
+                self.meter.settle(held, task=task, model=model, input_tokens=0, cached_tokens=0, output_tokens=0)
+            else:
+                # Usage is unknown (timeout, dropped connection, 5xx after the request went out), so charge
+                # the worst case: the cap must hold even if the provider billed for it.
+                self.meter.settle(held, task=task, model=model, input_tokens=prompt_tokens,
+                                  cached_tokens=0, output_tokens=max_tokens)
             raise
         self.meter.settle(held, task=task, model=model, input_tokens=result.input_tokens,
                           cached_tokens=result.cached_tokens, output_tokens=result.output_tokens)

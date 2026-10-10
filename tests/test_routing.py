@@ -1,7 +1,13 @@
 """Model routing at seam B (spec: Budget rules; plan 6.3). Prices from config.yaml, USD per 1M tokens:
 terra in 2.00 / cached 0.20 / out 12.00; luna 0.20 / 0.02 / 1.20; groq 0 / 0 / 0.
 `offer_objects` routes to terra. Cap $1.50, degrade at 70% = $1.05."""
+import sqlite3
+from contextlib import closing
+from dataclasses import dataclass
+
 import fitz
+import httpx
+import openai
 import pytest
 
 from ipo_agents.analysis import analyse_rhp
@@ -31,6 +37,17 @@ def test_spend_at_70_percent_routes_terra_tasks_to_luna(tiny_rhp, adapters, conf
     analyse_rhp(make_ipo(), tiny_rhp, adapters, config)
 
     assert [c["model"] for c in adapters.llm.calls] == ["terra", second_model]
+
+
+def test_spend_summing_to_exactly_70_percent_degrades_despite_float_rounding(tiny_rhp, adapters, config):
+    # 350,000 in x $2/1M = $0.70, then 175,000 in = $0.35: $1.05 spent, exactly 70% of $1.50.
+    # (In floating point 0.70 + 0.35 = 1.0499999999999998, a hair under 1.05.) Third call: luna.
+    adapters.llm = offer_llm(config, usage=[(350_000, 0, 0), (175_000, 0, 0)])
+
+    for _ in range(3):
+        analyse_rhp(make_ipo(), tiny_rhp, adapters, config)
+
+    assert [c["model"] for c in adapters.llm.calls] == ["terra", "terra", "luna"]
 
 
 def rhp_with_pages(tmp_path, n):
@@ -161,16 +178,132 @@ def test_non_transient_openai_error_is_not_retried(tiny_rhp, adapters, config, s
     assert sleeps == []
 
 
-def test_each_retry_is_metered(tiny_rhp, adapters, config, sleeps):
-    # One terra attempt's worst case: 4,000 out x $12/1M = $0.048 plus a small prompt, ~$0.0485.
-    # Cap $0.09 fits one attempt but not two: the failed attempt is charged its worst case
-    # (usage unknown), so the retry is stopped before it is sent.
+def test_budget_stop_on_a_groq_task_is_not_treated_as_a_groq_failure(tiny_rhp, adapters, config, caplog):
+    # Run 1 on terra bills 800,000 in x $2/1M = $1.60, over the $1.50 cap (actual usage can exceed
+    # the reservation). Run 2 is on groq: even its $0 worst case doesn't fit, so it stops there,
+    # with no fallback to luna.
+    adapters.llm = offer_llm(config, usage=[(800_000, 0, 0)])
+    analyse_rhp(make_ipo(), tiny_rhp, adapters, config)
+
+    with pytest.raises(BudgetExceeded):
+        analyse_rhp(make_ipo(), tiny_rhp, adapters, on_groq(config))
+
+    assert [c["model"] for c in adapters.llm.calls] == ["terra"]
+    assert "falling back" not in caplog.text
+
+
+def test_missing_max_tokens_on_a_groq_task_is_not_treated_as_a_groq_failure(tiny_rhp, adapters, config, caplog):
+    adapters.llm = offer_llm(config)
+
+    with pytest.raises(ValueError, match="max_tokens"):
+        analyse_rhp(make_ipo(), tiny_rhp, adapters, on_groq(config, default_max_tokens=0))
+
+    assert adapters.llm.calls == []
+    assert "falling back" not in caplog.text
+
+
+@dataclass
+class LogLostProvider(ScriptedLLM):
+    """While the call is out, the call log becomes unwritable (here: its table is gone)."""
+
+    db_path: str = ""
+
+    def invoke_structured(self, **kwargs):
+        with closing(sqlite3.connect(self.db_path)) as db:
+            db.execute("DROP TABLE IF EXISTS llm_calls")
+        return super().invoke_structured(**kwargs)
+
+
+def test_spend_still_counts_when_the_call_log_cannot_be_written(tiny_rhp, adapters, config, sleeps):
+    # The 503'd attempt is charged W in memory even though logging it fails, so the retry
+    # (needing 2W > $0.09) is stopped; the log failure does not replace the budget stop.
+    config = tiny_cap(config, 0.09)
+    adapters.llm = LogLostProvider({OfferObjects: OFFER}, models=config.models,
+                                   errors=[ProviderError(503)] * 3, db_path=config.db_path)
+
+    with pytest.raises(BudgetExceeded):
+        analyse_rhp(make_ipo(), tiny_rhp, adapters, config)
+
+    assert len(adapters.llm.calls) == 1
+
+
+def test_a_call_log_failure_does_not_mask_the_provider_error(tiny_rhp, adapters, config):
+    adapters.llm = LogLostProvider({OfferObjects: OFFER}, models=config.models,
+                                   errors=[TimeoutError("read timed out")], db_path=config.db_path)
+
+    with pytest.raises(TimeoutError):
+        analyse_rhp(make_ipo(), tiny_rhp, adapters, config)
+
+
+def openai_429(code):
+    """A real openai.RateLimitError, shaped as the client builds it (body = the response's `error` object)."""
+    response = httpx.Response(429, request=httpx.Request("POST", "https://api.openai.com/v1/chat/completions"))
+    return openai.RateLimitError("rate limited", response=response, body={"code": code, "message": "rate limited"})
+
+
+def test_real_openai_rate_limit_is_retried(tiny_rhp, adapters, config, sleeps):
+    adapters.llm = offer_llm(config, errors=[openai_429("rate_limit_exceeded")])
+
+    report = analyse_rhp(make_ipo(), tiny_rhp, adapters, config)
+
+    assert report.offer.issue_size_cr.value == 1250.0
+    assert [c["model"] for c in adapters.llm.calls] == ["terra", "terra"]
+    assert sleeps == [0.5]
+
+
+def test_out_of_quota_429_is_never_retried(tiny_rhp, adapters, config, sleeps):
+    # insufficient_quota means the account is out of credit: retrying cannot succeed.
+    adapters.llm = offer_llm(config, errors=[openai_429("insufficient_quota")])
+
+    with pytest.raises(openai.RateLimitError):
+        analyse_rhp(make_ipo(), tiny_rhp, adapters, config)
+
+    assert len(adapters.llm.calls) == 1
+    assert sleeps == []
+
+
+def tiny_cap(config, cap_usd):
+    """A tiny cap, with the pre-run estimate zeroed so the run is not degraded to luna from the start."""
     no_estimate = RunEstimate(tokens_per_page=0, output_tokens_per_page=0, fixed_usd=0)
-    config = config.model_copy(update={"budget": config.budget.model_copy(
-        update={"cap_usd": 0.09, "estimate": no_estimate})})
-    adapters.llm = offer_llm(config, errors=[ProviderError(429)])
+    return config.model_copy(update={"budget": config.budget.model_copy(
+        update={"cap_usd": cap_usd, "estimate": no_estimate})})
+
+
+# One terra attempt's worst case W = 4,000 out x $12/1M = $0.048 + prompt (< 2,000 tokens x $2/1M
+# = < $0.004), so $0.048 <= W < $0.052. A $0.09 cap fits one W (and W + $0.03) but never 2W (>= $0.096).
+
+def test_rejected_429_costs_nothing_and_only_the_successful_retry_is_charged(tiny_rhp, adapters, config, sleeps):
+    # Run 1: the 429 settles at $0; the retry succeeds with 15,000 in x $2/1M = $0.03 spent.
+    # Run 2: $0.03 + W < $0.082 fits $0.09, so it is sent. (Had the 429 been charged W,
+    # run 2 would need W + $0.03 + W >= $0.126 and be stopped.)
+    config = tiny_cap(config, 0.09)
+    adapters.llm = offer_llm(config, errors=[ProviderError(429)], usage=[(0, 0, 0), (15_000, 0, 0)])
+
+    analyse_rhp(make_ipo(), tiny_rhp, adapters, config)
+    analyse_rhp(make_ipo(), tiny_rhp, adapters, config)
+
+    assert [c["model"] for c in adapters.llm.calls] == ["terra"] * 3
+
+
+def test_a_503_still_charges_the_worst_case(tiny_rhp, adapters, config, sleeps):
+    # A 5xx may have been billed: the failed attempt is charged W, so the retry needs 2W > $0.09
+    # and is stopped before it is sent.
+    config = tiny_cap(config, 0.09)
+    adapters.llm = offer_llm(config, errors=[ProviderError(503)] * 3)
 
     with pytest.raises(BudgetExceeded):
         analyse_rhp(make_ipo(), tiny_rhp, adapters, config)
 
     assert [c["model"] for c in adapters.llm.calls] == ["terra"]
+
+
+def test_a_rejected_groq_call_uses_none_of_the_daily_groq_tokens(tiny_rhp, adapters, config, sleeps):
+    # 159,999 Groq tokens used (limit 160,000 = 80% of 200,000). The 429'd groq call then counts 0 tokens,
+    # so the third IPO still gets groq. (Counting its worst case, prompt + 4,000, would pass 160,000.)
+    config = on_groq(config)
+    adapters.llm = offer_llm(config, errors=[None, ProviderError(429)], usage=[(159_000, 0, 999)])
+
+    for ipo_id in ("ACME-2026-10-13", "BETA-2026-10-13", "GAMMA-2026-10-13"):
+        analyse_rhp(make_ipo().model_copy(update={"ipo_id": ipo_id}), tiny_rhp, adapters, config)
+
+    assert [c["model"] for c in adapters.llm.calls] == ["groq", "groq", "luna", "groq"]

@@ -41,12 +41,12 @@ def get_model(task: str, est_tokens: int, meter: BudgetMeter) -> str:
 
 
 def _groq_has_room(est_tokens: int, meter: BudgetMeter) -> bool:
-    """Small call, and today's Groq usage under daily_budget_pct of Groq's daily cap."""
+    """Small call, and the last 24h of Groq usage under daily_budget_pct of Groq's daily cap."""
     limits = meter.config.groq_limits
     if est_tokens > limits.max_call_tokens:
         return False
     groq_keys = [k for k in meter.config.models if is_groq(k, meter.config)]
-    return meter.tokens_today(groq_keys) < limits.daily_cap_tokens * limits.daily_budget_pct / 100
+    return meter.tokens_last_24h(groq_keys) < limits.daily_cap_tokens * limits.daily_budget_pct / 100
 
 
 def is_groq(model: str, config: Config) -> bool:

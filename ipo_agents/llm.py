@@ -7,6 +7,10 @@ from typing import Any, Protocol
 from ipo_agents.config import ModelConfig
 
 
+# A hung request must not stall a graph branch; the meter charges a timed-out call its worst case.
+REQUEST_TIMEOUT_S = 120
+
+
 @dataclass
 class LLMResult:
     parsed: Any
@@ -43,11 +47,14 @@ class LangChainLLM:
             from langchain_openai import ChatOpenAI
 
             # No hidden client retries: each retry could be billed without the budget meter seeing it.
-            return ChatOpenAI(model=cfg.id, temperature=0, max_tokens=max_tokens, max_retries=0)
+            return ChatOpenAI(model=cfg.id, temperature=0, max_tokens=max_tokens,
+                              max_retries=0, timeout=REQUEST_TIMEOUT_S)
         if cfg.provider == "groq":
             from langchain_groq import ChatGroq
 
-            return ChatGroq(model=cfg.id, temperature=0, max_tokens=max_tokens)
+            # Also no client retries: a Groq 429 must fall back to Luna at once, never wait.
+            return ChatGroq(model=cfg.id, temperature=0, max_tokens=max_tokens,
+                            max_retries=0, timeout=REQUEST_TIMEOUT_S)
         raise ValueError(f"unknown provider {cfg.provider!r}")
 
     def invoke_structured(self, *, model, system, user, schema, max_tokens, task=""):
