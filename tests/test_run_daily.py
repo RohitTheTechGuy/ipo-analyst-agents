@@ -81,3 +81,14 @@ def test_telegram_failure_does_not_stop_other_ipos(adapters, config):
     assert summary.analysed == ["ACME-2026-10-13", "BETA-2026-10-13"]
     assert summary.notify_failed == ["ACME-2026-10-13"]
     assert "Beta Ltd IPO (Mainboard)" in adapters.notifier.messages[-1]
+
+
+def test_rendered_report_pdf_follows_the_summary(adapters, config, rendered_pdf):
+    pdf = rendered_pdf
+    adapters.exchange = FakeExchange([make_ipo()])
+    adapters.llm = offer_llm()
+
+    run_daily(TODAY, adapters, config)
+
+    assert len(adapters.notifier.messages) == 1
+    assert adapters.notifier.documents == [pdf]

@@ -9,6 +9,7 @@ from ipo_agents.adapters import Adapters
 from ipo_agents.analysis import analyse_rhp
 from ipo_agents.config import Config
 from ipo_agents.contracts import Report, RunSummary
+from ipo_agents.notify.reminders import send_closing_reminders
 from ipo_agents.store import TERMINAL, Store
 
 log = logging.getLogger(__name__)
@@ -53,10 +54,20 @@ def run_daily(today: date, adapters: Adapters, config: Config) -> RunSummary:
             continue
         store.mark_done(ipo.ipo_id, report.verdict, report.rhp_sha256)
         summary.analysed.append(ipo.ipo_id)
+        # The summary is today's notice, even if sending fails: no reminder on top of it.
+        store.mark_reminded(ipo.ipo_id, today)
         try:
             adapters.notifier.send_message(format_summary(report))
         except Exception:
-            log.exception("telegram send failed for %s", ipo.ipo_id)
+            log.exception("telegram summary send failed for %s", ipo.ipo_id)
             summary.notify_failed.append(ipo.ipo_id)
+            continue
+        if report.pdf_path:
+            try:
+                adapters.notifier.send_document(Path(report.pdf_path), caption=f"{ipo.name} IPO report")
+            except Exception:
+                log.exception("telegram report upload failed for %s", ipo.ipo_id)
+                summary.notify_failed.append(ipo.ipo_id)
+    summary.notify_failed += send_closing_reminders(today, store, adapters.notifier, VERDICT_LABELS)
     store.close()
     return summary
