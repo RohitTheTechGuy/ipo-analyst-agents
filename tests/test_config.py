@@ -39,3 +39,14 @@ def test_unpriced_model_that_nothing_routes_to_is_allowed(tmp_path):
     path = write_config(tmp_path, lambda raw: raw["models"].update(spare={"provider": "openai", "id": "x"}))
 
     assert "spare" in load_config(path).models
+
+
+@pytest.mark.parametrize("edit, match", [
+    (lambda raw: raw["models"]["terra"].update(price_out=0.0), "terra.*free"),
+    (lambda raw: raw["models"]["luna"].update(price_in=-1.0), "greater than or equal"),
+    (lambda raw: raw["budget"].update(cap_usd=0), "greater than 0"),
+    (lambda raw: raw.update(default_max_tokens=0), "greater than 0"),
+])
+def test_config_that_would_disable_or_break_metering_refuses_to_start(tmp_path, edit, match):
+    with pytest.raises(ValidationError, match=match):
+        load_config(write_config(tmp_path, edit))

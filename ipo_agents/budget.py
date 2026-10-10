@@ -1,9 +1,10 @@
 """Per-IPO budget meter and the metered LLM every agent calls through (spec: Budget rules)."""
 from __future__ import annotations
 
+import json
 import logging
-
 import sqlite3
+import threading
 from collections.abc import Iterator
 from contextlib import closing, contextmanager
 from functools import lru_cache
@@ -15,6 +16,10 @@ from ipo_agents.config import Config, ModelConfig
 from ipo_agents.llm import LLM, LLMParseError
 
 PER_MILLION = 1_000_000
+# Tokens the provider bills beyond the prompt text: message framing, tool/response-format wrapper.
+REQUEST_OVERHEAD_TOKENS = 200
+# Headroom for tokenizer drift between tiktoken and the provider's own count.
+PROMPT_SAFETY = 1.1
 
 # The call log is the meter's own table: spend per ipo_id survives restarts (crash-resume).
 SCHEMA = """
@@ -45,12 +50,19 @@ def _encoding():
         return None
 
 
-def _prompt_tokens(system: str, user: str) -> int:
+def _count(text: str) -> int:
     enc = _encoding()
     if enc is None:
         # English averages ~4 chars/token; assuming 2 over-counts, which errs on the safe side of the cap.
-        return (len(system) + len(user) + 1) // 2
-    return len(enc.encode(system)) + len(enc.encode(user))
+        return (len(text) + 1) // 2
+    return len(enc.encode(text))
+
+
+def _prompt_tokens(system: str, user: str, schema: type) -> int:
+    """Billable input estimate: prompt text + the output schema sent as a tool definition + framing."""
+    schema_json = json.dumps(schema.model_json_schema()) if hasattr(schema, "model_json_schema") else ""
+    text = _count(system) + _count(user) + _count(schema_json)
+    return int(text * PROMPT_SAFETY) + REQUEST_OVERHEAD_TOKENS
 
 
 class BudgetMeter:
@@ -61,8 +73,12 @@ class BudgetMeter:
         self.cap = config.budget.cap_usd
         self._models = config.models
         self._db_path = config.db_path
+        # Parallel graph branches share one meter: reservations stop them all passing the same check.
+        self._lock = threading.Lock()
+        self.reserved = 0.0
         Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
         with self._db() as db:
+            db.execute("PRAGMA journal_mode=WAL")
             db.executescript(SCHEMA)
             (self.spent,) = db.execute(
                 "SELECT COALESCE(SUM(cost_usd), 0.0) FROM llm_calls WHERE ipo_id = ?", (ipo_id,)
@@ -71,7 +87,7 @@ class BudgetMeter:
     @contextmanager
     def _db(self) -> Iterator[sqlite3.Connection]:
         """A short-lived connection that commits on success and is always closed."""
-        with closing(sqlite3.connect(self._db_path)) as conn, conn:
+        with closing(sqlite3.connect(self._db_path, timeout=30)) as conn, conn:
             yield conn
 
     def _model(self, model: str) -> ModelConfig:
@@ -80,20 +96,26 @@ class BudgetMeter:
             raise ValueError(f"model {model!r} is not configured")
         return cfg
 
-    def check(self, model: str, prompt_tokens: int, max_tokens: int) -> None:
+    def reserve(self, model: str, prompt_tokens: int, max_tokens: int) -> float:
+        """Holds the call's worst-case cost against the cap; raises BudgetExceeded if it doesn't fit."""
         if not isinstance(max_tokens, int) or max_tokens <= 0:
             raise ValueError(f"every call must set a positive max_tokens (got {max_tokens!r})")
         cfg = self._model(model)
         worst = (prompt_tokens * cfg.price_in + max_tokens * cfg.price_out) / PER_MILLION
-        if self.spent + worst > self.cap:
-            raise BudgetExceeded(
-                f"{self.ipo_id}: spent ${self.spent:.4f} + worst case ${worst:.4f} would exceed ${self.cap:.2f}"
-            )
+        with self._lock:
+            if self.spent + self.reserved + worst > self.cap:
+                raise BudgetExceeded(
+                    f"{self.ipo_id}: spent ${self.spent:.4f} + in flight ${self.reserved:.4f} "
+                    f"+ worst case ${worst:.4f} would exceed ${self.cap:.2f}"
+                )
+            self.reserved += worst
+        return worst
 
-    def record(self, *, task: str, model: str, input_tokens: int, cached_tokens: int, output_tokens: int) -> float:
-        """Adds the actual cost of a finished call and logs it. Groq's zero prices log it at $0."""
+    def settle(self, reservation: float, *, task: str, model: str,
+               input_tokens: int, cached_tokens: int, output_tokens: int) -> float:
+        """Swaps a reservation for the call's actual cost and logs it. Groq's zero prices log it at $0."""
         cfg = self._model(model)
-        uncached = input_tokens - cached_tokens
+        uncached = max(0, input_tokens - cached_tokens)
         cost = (uncached * cfg.price_in + cached_tokens * cfg.price_cached + output_tokens * cfg.price_out) / PER_MILLION
         with self._db() as db:
             db.execute(
@@ -101,7 +123,9 @@ class BudgetMeter:
                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
                 (self.ipo_id, task, model, input_tokens, cached_tokens, output_tokens, cost),
             )
-        self.spent += cost
+        with self._lock:
+            self.reserved -= reservation
+            self.spent += cost
         return cost
 
 
@@ -113,16 +137,23 @@ class MeteredLLM:
         self.meter = meter
 
     def invoke_structured(self, *, model, system, user, schema, max_tokens, task=""):
-        self.meter.check(model, _prompt_tokens(system, user), max_tokens)
+        prompt_tokens = _prompt_tokens(system, user, schema)
+        held = self.meter.reserve(model, prompt_tokens, max_tokens)
         try:
             result = self._inner.invoke_structured(
                 model=model, system=system, user=user, schema=schema, max_tokens=max_tokens, task=task
             )
         except LLMParseError as e:
             # The provider billed for the unparseable reply: record it, then let the caller retry or fail.
-            self.meter.record(task=task, model=model, input_tokens=e.input_tokens,
+            self.meter.settle(held, task=task, model=model, input_tokens=e.input_tokens,
                               cached_tokens=e.cached_tokens, output_tokens=e.output_tokens)
             raise
-        self.meter.record(task=task, model=model, input_tokens=result.input_tokens,
+        except Exception:
+            # Usage is unknown (timeout, dropped connection after the request went out), so charge the
+            # worst case: the cap must hold even if the provider billed for it.
+            self.meter.settle(held, task=task, model=model, input_tokens=prompt_tokens,
+                              cached_tokens=0, output_tokens=max_tokens)
+            raise
+        self.meter.settle(held, task=task, model=model, input_tokens=result.input_tokens,
                           cached_tokens=result.cached_tokens, output_tokens=result.output_tokens)
         return result

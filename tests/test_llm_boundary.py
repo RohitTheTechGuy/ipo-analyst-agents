@@ -3,7 +3,7 @@ import re
 
 from tests.conftest import REPO_ROOT
 
-CHAT_MODEL = re.compile(r"\bChat(OpenAI|Groq)\b")
+CHAT_MODEL = re.compile(r"\bChat(OpenAI|Groq)\b|\binit_chat_model\b|^\s*(from|import)\s+(openai|groq|langchain_openai|langchain_groq)\b", re.M)
 PACKAGE = REPO_ROOT / "ipo_agents"
 
 

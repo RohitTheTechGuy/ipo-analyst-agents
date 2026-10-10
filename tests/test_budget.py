@@ -129,3 +129,38 @@ def test_spend_is_tracked_per_ipo(tiny_rhp, adapters, config):
     analyse_rhp(beta, tiny_rhp, adapters, config)
 
     assert len(adapters.llm.calls) == 2
+
+
+class FailingProvider(ScriptedLLM):
+    """The provider errors after the request went out (e.g. a timeout): it may still bill."""
+
+    def invoke_structured(self, **kwargs):
+        self.calls.append(kwargs)
+        raise TimeoutError("read timed out")
+
+
+def test_provider_failure_counts_its_worst_case_against_the_cap(tiny_rhp, adapters, config):
+    # One terra call: 4,000 output tokens x $12/1M = $0.048 plus a small prompt, so ~$0.0485 worst case.
+    # Cap $0.09 fits one call but not two. If the failed call cost nothing, the retry would be sent.
+    config = config.model_copy(update={"budget": config.budget.model_copy(update={"cap_usd": 0.09})})
+    adapters.llm = FailingProvider({}, models=config.models)
+    with pytest.raises(TimeoutError):
+        analyse_rhp(make_ipo(), tiny_rhp, adapters, config)
+
+    adapters.llm = offer_llm(config)
+    with pytest.raises(BudgetExceeded):
+        analyse_rhp(make_ipo(), tiny_rhp, adapters, config)
+    assert adapters.llm.calls == []
+
+
+def test_worst_case_includes_request_overhead_beyond_the_prompt_text(tiny_rhp, adapters, config):
+    # 4,000 output tokens x $12/1M = $0.048. The prompt text (system rules + 3 tiny pages) is
+    # under ~150 tokens = $0.0003, so text alone fits a $0.0485 cap. The output schema and
+    # per-request framing (hundreds of tokens) don't, so the call must not be sent.
+    config = config.model_copy(update={"budget": config.budget.model_copy(update={"cap_usd": 0.0485})})
+    adapters.llm = offer_llm(config)
+
+    with pytest.raises(BudgetExceeded):
+        analyse_rhp(make_ipo(), tiny_rhp, adapters, config)
+
+    assert adapters.llm.calls == []

@@ -42,7 +42,8 @@ class LangChainLLM:
         if cfg.provider == "openai":
             from langchain_openai import ChatOpenAI
 
-            return ChatOpenAI(model=cfg.id, temperature=0, max_tokens=max_tokens)
+            # No hidden client retries: each retry could be billed without the budget meter seeing it.
+            return ChatOpenAI(model=cfg.id, temperature=0, max_tokens=max_tokens, max_retries=0)
         if cfg.provider == "groq":
             from langchain_groq import ChatGroq
 
@@ -52,7 +53,10 @@ class LangChainLLM:
     def invoke_structured(self, *, model, system, user, schema, max_tokens, task=""):
         chain = self._chat(model, max_tokens).with_structured_output(schema, include_raw=True)
         out = chain.invoke([("system", system), ("user", user)])
-        usage = getattr(out["raw"], "usage_metadata", None) or {}
+        usage = getattr(out["raw"], "usage_metadata", None)
+        if not usage:
+            # Can't cost the call; failing makes the meter charge the worst case instead of $0.
+            raise RuntimeError(f"{model}: provider response carried no token usage")
         tokens = dict(
             input_tokens=usage.get("input_tokens", 0),
             cached_tokens=(usage.get("input_token_details") or {}).get("cache_read", 0),
