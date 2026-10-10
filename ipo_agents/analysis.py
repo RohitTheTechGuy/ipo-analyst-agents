@@ -31,7 +31,7 @@ class AnalysisState(TypedDict, total=False):
 
 def _pages_text(doc: SectionedDocument) -> str:
     chunks = sorted((c for s in doc.sections.values() for c in s), key=lambda c: c.page_start)
-    return "\n\n".join(f"[page {c.page_start}]\n{c.text}" for c in chunks)
+    return "\n\n".join(c.text for c in chunks)  # chunk text already tags each page "[page N]"
 
 
 def build_graph(adapters: Adapters, config: Config):
