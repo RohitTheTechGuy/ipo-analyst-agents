@@ -41,6 +41,15 @@ class ClaimedFact(BaseModel):
     label: str | None = None  # what the number is, e.g. "GMP"; rendered "claimed by <source_name>"
 
 
+class SubscriptionStatus(BaseModel):
+    """Times subscribed by investor category, each figure tied to its source and as-of date."""
+
+    qib: ClaimedFact | None = None
+    nii: ClaimedFact | None = None
+    retail: ClaimedFact | None = None
+    total: ClaimedFact
+
+
 class Ipo(BaseModel):
     ipo_id: str
     name: str
@@ -135,6 +144,9 @@ class Sentiment(BaseModel):
     tally: dict[Stance, int] = {}
     bull_points: list[str] = []
     bear_points: list[str] = []
+    # Third-party market data (ticket 19); None means not available. GMP is unofficial and never drives the verdict.
+    gmp: ClaimedFact | None = None
+    subscription: SubscriptionStatus | None = None
 
     @property
     def claimed_numbers(self) -> list[ClaimedFact]:

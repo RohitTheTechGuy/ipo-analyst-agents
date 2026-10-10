@@ -8,7 +8,7 @@ from typing import Mapping
 
 from ipo_agents.adapters import SearchHit
 from ipo_agents.config import load_config
-from ipo_agents.contracts import Fact, Ipo, OfferObjects
+from ipo_agents.contracts import ClaimedFact, Fact, Ipo, OfferObjects, SubscriptionStatus
 from ipo_agents.llm import LLMResult
 
 
@@ -77,6 +77,25 @@ class FakeSearch:
         if self.error is not None:
             raise self.error
         return list(self.results.get(query, []))[:max_results]
+
+
+@dataclass
+class FakeMarketData:
+    """Returns the scripted GMP and subscription (None: not available); `error` makes every call raise."""
+
+    gmp_fact: ClaimedFact | None = None
+    subscription_status: SubscriptionStatus | None = None
+    error: Exception | None = None
+
+    def gmp(self, ipo):
+        if self.error is not None:
+            raise self.error
+        return self.gmp_fact
+
+    def subscription(self, ipo):
+        if self.error is not None:
+            raise self.error
+        return self.subscription_status
 
 
 @dataclass

@@ -6,7 +6,7 @@ from datetime import date
 from pathlib import Path
 from typing import Protocol
 
-from ipo_agents.contracts import Ipo
+from ipo_agents.contracts import ClaimedFact, Ipo, SubscriptionStatus
 from ipo_agents.llm import LLM
 
 
@@ -31,6 +31,16 @@ class WebSearch(Protocol):
     def search(self, query: str, *, max_results: int, published_after: date) -> list[SearchHit]: ...
 
 
+GMP_LABEL = "GMP (unofficial)"  # grey-market premium: unregulated, never a basis for the verdict
+
+
+class MarketData(Protocol):
+    """Third-party market data for one IPO; None when the source has none."""
+
+    def gmp(self, ipo: Ipo) -> ClaimedFact | None: ...
+    def subscription(self, ipo: Ipo) -> SubscriptionStatus | None: ...
+
+
 class Notifier(Protocol):
     def send_message(self, text: str) -> None: ...
     def send_document(self, path: Path, caption: str = "") -> None: ...
@@ -43,3 +53,4 @@ class Adapters:
     llm: LLM
     notifier: Notifier
     search: WebSearch | None = None  # None: sentiment is reported as unavailable
+    market: MarketData | None = None  # None: GMP and subscription are reported as not available
