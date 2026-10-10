@@ -248,10 +248,9 @@ def test_at_most_eight_sources_are_read(tiny_rhp, adapters, config):
     assert [c["task"] for c in llm.calls].count("sentiment_stance_tag") == 8
 
 
-def test_degraded_run_reads_at_most_four_sources(tiny_rhp, adapters, config, monkeypatch):
-    # Ticket 10 adds meter.degraded (spend >= 70% of the cap); until it lands, stub it on the real meter.
-    # TODO(ticket 10): drive this with persisted prior spend >= 70% of the cap instead of the stub.
-    monkeypatch.setattr(BudgetMeter, "degraded", True, raising=False)
+def test_degraded_run_reads_at_most_four_sources(tiny_rhp, adapters, config):
+    # degrade_pct 0: spend ($0) is already at the threshold, so the run is degraded from its first call.
+    config = config.model_copy(update={"budget": config.budget.model_copy(update={"degrade_pct": 0})})
     adapters.search = FakeSearch(TEN_ARTICLES)
     adapters.llm = llm = sentiment_llm(config, {f"n{i}": "neutral" for i in range(10)})
 

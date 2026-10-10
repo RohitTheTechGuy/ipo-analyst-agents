@@ -141,7 +141,6 @@ def _grounded(n: ClaimedNumber, article: str) -> bool:
 def _tag(hit: SearchHit, adapters: Adapters, config: Config) -> SentimentSource:
     content = _truncate_tokens(hit.content, MAX_ARTICLE_TOKENS)
     tag: StanceTag = adapters.llm.invoke_structured(
-        model=config.routing["sentiment_stance_tag"],
         system=STANCE_SYSTEM,
         user=f"URL: {hit.url}\nSource: {hit.source_name}\nPublished: {hit.published}\n\n"
              f"<article>\nTitle: {_fence(hit.title)}\n\n{_fence(content)}\n</article>",
@@ -162,7 +161,6 @@ def _tag(hit: SearchHit, adapters: Adapters, config: Config) -> SentimentSource:
 def _points(sources: list[SentimentSource], adapters: Adapters, config: Config) -> SentimentPoints:
     lines = [f"- {s.source_name} ({s.published}): {s.stance}; " + "; ".join(s.key_reasons) for s in sources]
     return adapters.llm.invoke_structured(
-        model=config.routing["sentiment_agent"],
         system=AGGREGATE_SYSTEM,
         user="\n".join(lines),
         schema=SentimentPoints,
@@ -172,9 +170,8 @@ def _points(sources: list[SentimentSource], adapters: Adapters, config: Config) 
 
 
 def _max_sources(adapters: Adapters) -> int:
-    # Read defensively: the meter's `degraded` flag arrives with ticket 10 (model router).
-    meter = getattr(adapters.llm, "meter", None)
-    return MAX_SOURCES_DEGRADED if getattr(meter, "degraded", False) else MAX_SOURCES
+    # analyse_rhp always wraps the provider in MeteredLLM, so the meter is there.
+    return MAX_SOURCES_DEGRADED if adapters.llm.meter.degraded else MAX_SOURCES
 
 
 def gather_sentiment(ipo: Ipo, adapters: Adapters, config: Config) -> Sentiment:

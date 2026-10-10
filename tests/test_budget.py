@@ -4,12 +4,20 @@ import pytest
 
 from ipo_agents.analysis import analyse_rhp
 from ipo_agents.budget import BudgetExceeded
+from ipo_agents.config import RunEstimate
 from ipo_agents.contracts import Fact, OfferObjects
 from ipo_agents.llm import LLMParseError
 from tests.fakes import ScriptedLLM, make_ipo
 
 OFFER = OfferObjects(issue_size_cr=Fact(
     value=1250.0, unit="₹ crore", page=2, verbatim_quote="Total issue size of up to Rs. 1,250.00 crore"))
+
+
+def with_cap(config, cap_usd):
+    """A tiny cap, with the pre-run estimate zeroed so the run is not degraded to luna from the start."""
+    no_estimate = RunEstimate(tokens_per_page=0, output_tokens_per_page=0, fixed_usd=0)
+    return config.model_copy(update={"budget": config.budget.model_copy(
+        update={"cap_usd": cap_usd, "estimate": no_estimate})})
 
 
 def offer_llm(config, **kw):
@@ -71,14 +79,14 @@ def test_call_to_an_unconfigured_model_never_reaches_the_provider(tiny_rhp, adap
 
 
 @pytest.mark.parametrize("input_tokens, cached_tokens, stops", [
-    # 730,000 x $2/1M = $1.46 + 200 out x $12/1M = $0.0024 -> $1.4624 spent.
-    # Next call's worst case is at least 4,000 x $12/1M = $0.048 -> $1.5104 > $1.50: stop.
-    (730_000, 0, True),
-    # 715,000 uncached x $2 = $1.43 + 150,000 cached x $0.20 = $0.03 + $0.0024 -> $1.4624: stop.
-    # (Treating cached input as free would give $1.4324 and let the call through.)
-    (865_000, 150_000, True),
+    # 748,000 x $2/1M = $1.496 + 200 out x $12/1M = $0.0024 -> $1.4984 spent (past 70%, so the
+    # next call degrades to luna). Its worst case is at least 4,000 x $1.20/1M = $0.0048 -> $1.5032 > $1.50: stop.
+    (748_000, 0, True),
+    # 733,000 uncached x $2 = $1.466 + 150,000 cached x $0.20 = $0.03 + $0.0024 -> $1.4984: stop.
+    # (Treating cached input as free would give $1.4684 and let the luna call through.)
+    (883_000, 150_000, True),
     # 600,000 uncached x $2 = $1.20 + 500,000 cached x $0.20 = $0.10 + $0.0024 -> $1.3024.
-    # Worst case ~$0.048 more -> ~$1.35 < $1.50: proceeds.
+    # Worst case on luna ~$0.005 more -> ~$1.31 < $1.50: proceeds.
     # (Charging cached input at the full $2 would give $2.2024 and stop.)
     (1_100_000, 500_000, False),
 ])
@@ -96,9 +104,9 @@ def test_spend_from_an_earlier_run_counts_against_the_cap(tiny_rhp, adapters, co
 
 
 def test_a_failed_parse_still_counts_its_spend(tiny_rhp, adapters, config):
-    # The unparseable reply still billed 730,000 in + 200 out on terra = $1.4624 (see above),
-    # so the retry's worst case (>= $0.048) would cross $1.50 and is never sent.
-    bad = LLMParseError("reply did not match OfferObjects", input_tokens=730_000, cached_tokens=0, output_tokens=200)
+    # The unparseable reply still billed 748,000 in + 200 out on terra = $1.4984 (see above),
+    # so the retry's worst case on luna (>= $0.0048) would cross $1.50 and is never sent.
+    bad = LLMParseError("reply did not match OfferObjects", input_tokens=748_000, cached_tokens=0, output_tokens=200)
     adapters.llm = ScriptedLLM({OfferObjects: bad}, models=config.models)
 
     with pytest.raises(LLMParseError):
@@ -111,7 +119,11 @@ def test_a_failed_parse_still_counts_its_spend(tiny_rhp, adapters, config):
 
 def test_groq_calls_cost_nothing(tiny_rhp, adapters, config):
     # Groq prices are 0/0/0: 10M tokens in and 100k out still spend $0, so nothing stops.
-    config = config.model_copy(update={"routing": {**config.routing, "offer_objects": "groq"}})
+    # (The daily Groq token cap is lifted so routing keeps these calls on Groq.)
+    config = config.model_copy(update={
+        "routing": {**config.routing, "offer_objects": "groq"},
+        "groq_limits": config.groq_limits.model_copy(update={"daily_cap_tokens": 10**9}),
+    })
     adapters.llm = offer_llm(config, usage=[(10_000_000, 0, 100_000)] * 3)
 
     for _ in range(3):
@@ -142,7 +154,7 @@ class FailingProvider(ScriptedLLM):
 def test_provider_failure_counts_its_worst_case_against_the_cap(tiny_rhp, adapters, config):
     # One terra call: 4,000 output tokens x $12/1M = $0.048 plus a small prompt, so ~$0.0485 worst case.
     # Cap $0.09 fits one call but not two. If the failed call cost nothing, the retry would be sent.
-    config = config.model_copy(update={"budget": config.budget.model_copy(update={"cap_usd": 0.09})})
+    config = with_cap(config, 0.09)
     adapters.llm = FailingProvider({}, models=config.models)
     with pytest.raises(TimeoutError):
         analyse_rhp(make_ipo(), tiny_rhp, adapters, config)
@@ -157,7 +169,7 @@ def test_worst_case_includes_request_overhead_beyond_the_prompt_text(tiny_rhp, a
     # 4,000 output tokens x $12/1M = $0.048. The prompt text (system rules + 3 tiny pages) is
     # under ~150 tokens = $0.0003, so text alone fits a $0.0485 cap. The output schema and
     # per-request framing (hundreds of tokens) don't, so the call must not be sent.
-    config = config.model_copy(update={"budget": config.budget.model_copy(update={"cap_usd": 0.0485})})
+    config = with_cap(config, 0.0485)
     adapters.llm = offer_llm(config)
 
     with pytest.raises(BudgetExceeded):
