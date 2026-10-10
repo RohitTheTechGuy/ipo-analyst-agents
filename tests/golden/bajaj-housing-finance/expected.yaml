@@ -1,0 +1,108 @@
+# Golden set: NBFC / lender IPO (housing finance company, RBI "Upper Layer" NBFC).
+# Values use the RHP's own units (₹ million). page = 1-based PDF page index (PyMuPDF);
+# printed_page = page number printed on the page. Quotes are verbatim page.get_text()
+# with runs of whitespace collapsed to one space. Negative values are shown in
+# brackets in the RHP, e.g. (154,281.1).
+# ipo.* listing details (dates, band, lot) are NOT in the RHP (shown as [●]); they come
+# from public sources and must be hand-checked against the price band advertisement.
+needs_human_review: true
+ipo:
+  name: Bajaj Housing Finance Limited
+  symbol: BAJAJHFL
+  category: nbfc
+  open_date: 2024-09-09
+  close_date: 2024-09-11
+  price_band: [66, 70]
+  lot_size: 214
+rhp:
+  url: https://www.sebi.gov.in/sebi_data/attachdocs/sep-2024/1725261096059.pdf
+  source: SEBI filing page https://www.sebi.gov.in/filings/public-issues/aug-2024/bajaj-housing-finance-limited-rhp_86381.html; RHP dated August 30, 2024
+  sha256: d0d7fd03c7b0a7232bfe7c800d5e5dcfa137704cb12481b43bef792564e05536
+  pages: 547
+facts:
+  - key: issue_size
+    value: 65600.0
+    unit: ₹ million
+    page: 29
+    printed_page: 24
+    verbatim_quote: "Up to [●] Equity Shares of face value of ₹10 each aggregating up to ₹65,600.0 million"
+  - key: fresh_issue_size
+    value: 35600.0
+    unit: ₹ million
+    page: 29
+    printed_page: 24
+    verbatim_quote: "(i) Fresh Issue(1) Up to [●] Equity Shares of face value of ₹10 each aggregating up to ₹35,600.0 million"
+  - key: ofs_size
+    value: 30000.0
+    unit: ₹ million
+    page: 29
+    printed_page: 24
+    note: OFS is 45.7% of the issue, so this IPO is not OFS-heavy.
+    verbatim_quote: "(ii) Offer for Sale(2)(3) Up to [●] Equity Shares of face value of ₹10 each aggregating up to ₹30,000.0 million"
+  - key: pre_offer_shares
+    value: 7819575273
+    unit: equity shares
+    page: 86
+    printed_page: 81
+    note: Post-Offer share count is [●] in the RHP.
+    verbatim_quote: "Equity Shares outstanding prior to the Offer 7,819,575,273 Equity Shares of face value of ₹10 each"
+  - key: promoter_pre_offer_holding_pct
+    value: 100
+    unit: "%"
+    page: 30
+    printed_page: 25
+    verbatim_quote: "Total 7,819,575,273^ 100 [●]"
+  - key: revenue_from_operations_fy2024
+    value: 76173.1
+    unit: ₹ million
+    page: 321
+    printed_page: 316
+    note: Third column = year ended 31 March 2024 (restated statement of profit and loss).
+    verbatim_quote: "Total Revenue from operations 22,086.5 17,632.5 76,173.1 56,647.3 37,667.1"
+  - key: pat_fy2024
+    value: 17312.2
+    unit: ₹ million
+    page: 30
+    printed_page: 25
+    note: Third column = year ended March 31, 2024.
+    verbatim_quote: "Profit for the year 4,826.1 4,618.0 17,312.2 12,578.0 7,096.2"
+  - key: net_worth_fy2024
+    value: 122335.0
+    unit: ₹ million
+    page: 30
+    printed_page: 25
+    note: Third column = as at March 31, 2024. As at June 30, 2024 it is 147,199.1.
+    verbatim_quote: "Net Worth(1) 147,199.1 109,649.9 122,335.0 105,031.9 67,413.6"
+  - key: cfo_fy2024
+    value: -154281.1
+    unit: ₹ million
+    page: 441
+    printed_page: 436
+    note: Negative CFO is normal for a growing lender (loan disbursals are operating outflows).
+    verbatim_quote: "Fiscal 2024 Fiscal 2023 Fiscal 2022 Net cash used in operating activities (A) (154,281.1)"
+  - key: contingent_liabilities
+    value: 35.3
+    unit: ₹ million
+    page: 32
+    printed_page: 27
+    note: As at June 30, 2024.
+    verbatim_quote: "Disputed claims against our Company not acknowledged as debts 35.3"
+  - key: waca_all_shares_last_one_year
+    value: 18.1
+    unit: ₹ per share
+    page: 39
+    printed_page: 34
+    verbatim_quote: "Last one year preceding the date of this Red Herring Prospectus 18.1 [●] 18.1"
+  - key: aum_fy2024
+    value: 913704.0
+    unit: ₹ million
+    page: 224
+    printed_page: 219
+    verbatim_quote: "As at March 31, 2024, our assets under management (“AUM”) were ₹913,704.0 million"
+  - key: gnpa_pct_fy2024
+    value: 0.27
+    unit: "%"
+    page: 43
+    printed_page: 38
+    note: Fifth value in the Ratios row = GNPA as at March 31, 2024 (columns are Jun-24, Jun-23, Mar-24, Mar-23, Mar-22, each GNPA then NNPA).
+    verbatim_quote: "Ratios 0.28% 0.11% 0.23% 0.08% 0.27% 0.10%"
