@@ -11,6 +11,7 @@ from ipo_agents.budget import BudgetExceeded
 from ipo_agents.config import Config
 from ipo_agents.contracts import Fact, Report, RunSummary, Sentiment, SubscriptionStatus
 from ipo_agents.discovery import DiscoveryError
+from ipo_agents.flags import summary_line as offer_summary_line
 from ipo_agents.notify.reminders import send_closing_reminders
 from ipo_agents.store import TERMINAL, Store
 from ipo_agents.verifier import COULD_NOT_VERIFY
@@ -60,6 +61,8 @@ def format_summary(report: Report) -> str:
     ]
     if report.offer:
         lines.append(f"Issue: {_fact_text(report.offer.issue_size)} · OFS: {_fact_text(report.offer.ofs_shares)}")
+        if offer_line := offer_summary_line(report):
+            lines.append(offer_line)
     if report.sentiment:
         lines.append(_sentiment_line(report.sentiment))
         if (sub := report.sentiment.subscription) and sub.total.value is not None:
