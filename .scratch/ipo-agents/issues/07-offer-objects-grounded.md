@@ -12,3 +12,9 @@
 - [ ] Offer facts appear in the Report and the Telegram summary
 
 **Spec:** `docs/specs/ipo-agents.md`
+
+**From the golden set (ticket 02):**
+- Final RHPs show the price band, rupee issue/OFS amounts and P/E as `[●]`. Price band and lot size come from the exchange listing (`Ipo`), not the RHP; an OFS given only as a share count is valid.
+- "Nil" disclosures (e.g. no contingent liabilities, WACA "Nil") must be storable: allow a `Fact` with value 0 whose quote contains "Nil"/"no", and have the verifier accept that.
+- RHPs report in ₹ million (not crore); keep the unit from the page and convert only in the renderer.
+- Negatives appear in brackets, e.g. (15,844.00); the verifier must treat them as negative numbers.

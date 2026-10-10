@@ -11,3 +11,5 @@
 - [ ] No derived number comes from a model
 
 **Spec:** `docs/specs/ipo-agents.md`
+
+**From the golden set (ticket 02):** rupee OFS and total issue size are often `[●]` in the RHP. Compute them in Python as shares × upper band price (from the exchange listing), labelled "computed at upper band".

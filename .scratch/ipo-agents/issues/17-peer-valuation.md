@@ -12,3 +12,5 @@
 - [ ] The choice of multiple (e.g. P/B + RoE for an NBFC) matches the business type on the golden set
 
 **Spec:** `docs/specs/ipo-agents.md`
+
+**From the golden set (ticket 02):** the RHP shows P/E at the band as `[●]`. Compute IPO market cap and P/E in Python from post-issue shares × upper band (from the exchange listing) and the latest-FY EPS/PAT.

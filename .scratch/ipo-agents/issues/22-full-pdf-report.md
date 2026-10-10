@@ -13,3 +13,5 @@
 - [ ] No model is called during rendering
 
 **Spec:** `docs/specs/ipo-agents.md`
+
+**Environment note:** WeasyPrint on python.org Python needs `DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib` set before the process starts (Homebrew pango). Run PDF-rendering tests with it, and fail with a clear message if the import fails.

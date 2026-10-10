@@ -12,3 +12,5 @@
 - [ ] Logs go to a file in the project
 
 **Spec:** `docs/specs/ipo-agents.md`
+
+**Environment note:** the launchd plist must set `DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib` (for WeasyPrint) and `PATH` including `/opt/homebrew/bin` (for tesseract).
