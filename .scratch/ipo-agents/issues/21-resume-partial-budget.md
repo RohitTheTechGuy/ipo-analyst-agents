@@ -12,3 +12,5 @@
 - [ ] `failed_budget` IPOs aren't retried on later runs
 
 **Spec:** `docs/specs/ipo-agents.md`
+
+**From ticket 23:** `run_daily.py --ipo X` can't re-run an IPO that is already `done`/`failed_budget` (the runner skips terminal IPOs). If a manual re-run is wanted, add an explicit `force` flag to `run_daily` here. The CLI's `--dry-run` duplicates the runner's skip/hold/analyse rules (`cli.dry_run`); consider a read-only `plan()` in the runner that both use.
