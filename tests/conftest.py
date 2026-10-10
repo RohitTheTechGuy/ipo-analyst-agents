@@ -37,3 +37,18 @@ def adapters(tiny_rhp):
 
     return Adapters(exchange=FakeExchange([]), downloader=FakeDownloader(tiny_rhp),
                     llm=ScriptedLLM({}), notifier=RecordingNotifier())
+
+
+@pytest.fixture
+def rendered_pdf(monkeypatch, tmp_path):
+    """Stands in for the report renderer until ticket 22 lands: seam B's Report gains a pdf_path.
+
+    TODO(ticket 22): delete this fixture and use the real renderer output.
+    """
+    import ipo_agents.runner as runner
+
+    pdf = tmp_path / "report_acme.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    real_analyse = runner.analyse_rhp
+    monkeypatch.setattr(runner, "analyse_rhp", lambda *a, **k: real_analyse(*a, **k).model_copy(update={"pdf_path": str(pdf)}))
+    return pdf

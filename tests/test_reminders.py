@@ -48,3 +48,43 @@ def test_ipo_analysed_the_day_before_close_gets_its_summary_not_a_reminder_that_
 
     run_daily(CLOSE_DAY, adapters, config)
     assert reminders(adapters.notifier) == ["⏰ Acme Ltd IPO closes TODAY. Verdict was: N/A"]
+
+
+class DownNotifier:
+    """Telegram is unreachable: every send fails."""
+
+    def __init__(self):
+        self.attempts = []
+
+    def send_message(self, text):
+        self.attempts.append(text)
+        raise RuntimeError("telegram down")
+
+    def send_document(self, path, caption=""):
+        raise RuntimeError("telegram down")
+
+
+def test_failed_summary_on_a_closing_day_is_not_followed_by_a_reminder_in_the_same_run(adapters, config):
+    adapters.exchange = FakeExchange([make_ipo()])
+    adapters.llm = offer_llm()
+    adapters.notifier = DownNotifier()
+
+    summary = run_daily(DAY_BEFORE_CLOSE, adapters, config)
+
+    assert summary.notify_failed == ["ACME-2026-10-13"]
+    assert [m for m in adapters.notifier.attempts if m.startswith("⏰")] == []
+
+
+def test_failed_reminder_is_retried_on_the_next_run_that_day(adapters, config):
+    adapters.exchange = FakeExchange([make_ipo()])
+    adapters.llm = offer_llm()
+    working = adapters.notifier
+    run_daily(OPEN_DAY, adapters, config)
+
+    adapters.notifier = DownNotifier()
+    failed_run = run_daily(DAY_BEFORE_CLOSE, adapters, config)
+    assert failed_run.notify_failed == ["ACME-2026-10-13"]
+
+    adapters.notifier = working
+    run_daily(DAY_BEFORE_CLOSE, adapters, config)
+    assert reminders(working) == ["⏰ Acme Ltd IPO closes TOMORROW. Verdict was: N/A"]

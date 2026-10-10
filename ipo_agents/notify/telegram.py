@@ -37,9 +37,12 @@ class TelegramNotifier:
         try:
             resp = self._client.post(f"{API_BASE}/bot{self._token}/{method}", **kwargs)
             body = resp.json()
-        except (httpx.HTTPError, ValueError) as e:
+        except httpx.HTTPError as e:
             raise TelegramError(f"{method} failed: {type(e).__name__}") from None
-        if not body.get("ok"):
+        except ValueError:
+            raise TelegramError(f"{method} failed: HTTP {resp.status_code}, non-JSON response") from None
+        if not isinstance(body, dict) or not body.get("ok"):
+            body = body if isinstance(body, dict) else {}
             raise TelegramError(f"{method} failed: HTTP {resp.status_code}: {body.get('description', 'no description')}")
 
 
