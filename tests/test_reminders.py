@@ -1,8 +1,11 @@
+import pytest
 from datetime import date
 
 from ipo_agents.contracts import Fact, OfferObjects
 from ipo_agents.runner import run_daily
 from tests.fakes import FakeExchange, ScriptedLLM, make_ipo, offer_objects
+
+pytestmark = pytest.mark.usefixtures("offer_section_only")  # one section call per run
 
 # make_ipo() opens 13 Oct and closes 15 Oct.
 OPEN_DAY, DAY_BEFORE_CLOSE, CLOSE_DAY = date(2026, 10, 13), date(2026, 10, 14), date(2026, 10, 15)

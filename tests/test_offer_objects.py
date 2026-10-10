@@ -16,6 +16,8 @@ from ipo_agents.sections import SECTIONS
 from tests.conftest import REPO_ROOT, make_tiny_rhp
 from tests.fakes import NOT_DISCLOSED, ScriptedLLM, make_ipo, offer_objects
 
+pytestmark = pytest.mark.usefixtures("offer_section_only")  # one section call per run
+
 OFFER_PAGE = "\n".join([
     "THE OFFER",
     "Total issue size of up to Rs. 1,250.00 crore",
@@ -220,7 +222,8 @@ def test_a_value_not_disclosed_is_reported_as_not_disclosed(rhp, adapters, confi
 def test_every_number_in_every_section_schema_is_a_fact():
     def raw_numbers(model, path):
         for name, field in model.model_fields.items():
-            yield from walk(field.annotation, f"{path}.{name}")
+            if name != "page":  # a citation, not a number from the RHP
+                yield from walk(field.annotation, f"{path}.{name}")
 
     def walk(ann, path):
         if ann in (int, float):

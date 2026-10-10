@@ -16,6 +16,7 @@ from ipo_agents.contracts import Ipo, Report, SectionedDocument, Sentiment
 from ipo_agents.ingestion import ingest
 from ipo_agents.router import estimate_run_usd
 from ipo_agents.section_agent import SectionSpec, run_section
+from ipo_agents.section_flags import evaluate
 from ipo_agents.sections import SECTIONS
 from ipo_agents.sentiment import gather_sentiment
 
@@ -70,12 +71,16 @@ def analyse_rhp(ipo: Ipo, rhp_pdf: Path, adapters: Adapters, config: Config) -> 
     meter.estimate_usd = estimate_run_usd(rhp_pdf, config)  # a large RHP starts degraded
     adapters = dataclasses.replace(adapters, llm=MeteredLLM(adapters.llm, meter))
     state = build_graph(adapters, config).invoke({"ipo": ipo, "rhp_pdf": str(rhp_pdf)})
+    findings = state.get("findings", {})
+    derived, red_flags = evaluate(ipo, findings)
     return Report(
         ipo=ipo,
         status="complete",
         verdict=None,  # set by the synthesizer (ticket 20)
         sentiment=state.get("sentiment"),
         unverified_fields=sorted(state.get("unverified", [])),
-        **{spec.report_field: state.get("findings", {}).get(group) for group, spec in SECTIONS.items()},
+        red_flags=red_flags,
+        derived=derived,
+        **{spec.report_field: findings.get(group) for group, spec in SECTIONS.items()},
         rhp_sha256=state["doc"].sha256,
     )

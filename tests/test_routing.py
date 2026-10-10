@@ -16,6 +16,8 @@ from ipo_agents.config import RunEstimate
 from ipo_agents.contracts import Fact, OfferObjects
 from tests.fakes import ProviderError, ScriptedLLM, make_ipo, offer_objects
 
+pytestmark = pytest.mark.usefixtures("offer_section_only")  # one section call per run
+
 OFFER = offer_objects(issue_size=Fact(
     value=1250.0, unit="₹ crore", page=2, verbatim_quote="Total issue size of up to Rs. 1,250.00 crore"))
 

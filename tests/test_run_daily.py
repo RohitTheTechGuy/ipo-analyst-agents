@@ -1,9 +1,12 @@
+import pytest
 from datetime import date
 
 from ipo_agents.contracts import Fact, OfferObjects
 from ipo_agents.runner import run_daily
 from tests.conftest import make_tiny_rhp
 from tests.fakes import FakeDownloader, FakeExchange, ScriptedLLM, make_ipo, offer_objects
+
+pytestmark = pytest.mark.usefixtures("offer_section_only")  # one section call per run
 
 TODAY = date(2026, 10, 13)
 

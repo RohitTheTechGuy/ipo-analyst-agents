@@ -1,7 +1,7 @@
 """Section agent registry: one SectionSpec (prompt + schema) per section group. The graph runs every entry."""
 from __future__ import annotations
 
-from ipo_agents.contracts import OfferObjects
+from ipo_agents.contracts import BusinessIndustry, OfferObjects
 from ipo_agents.section_agent import SectionSpec
 
 OFFER_OBJECTS_PROMPT = (
@@ -17,8 +17,24 @@ OFFER_OBJECTS_PROMPT = (
     "objects and their amounts, and Capital Structure for share counts and holdings."
 )
 
+BUSINESS_INDUSTRY_PROMPT = (
+    "You extract the Business & Industry section of an Indian IPO red herring prospectus (RHP): Our "
+    "Business and Industry Overview. Extract what the company sells and to whom; its revenue mix by "
+    "segment, geography or product; the share of revenue from its largest customer and from its top 10 "
+    "customers, and the share of purchases from its largest supplier, for the latest full fiscal year; "
+    "installed capacity and utilisation per plant or product line; the order book; the competitors it "
+    "names; the competitive strengths it claims (a few words each); and the key market claims of the "
+    "industry report (market size, growth, market share), each with its page. Say whether all or most "
+    "manufacturing is at a single plant, and whether most revenue comes from a single state, region or "
+    "country, only if the RHP says so, citing the page. When merging parts: Our Business is authoritative "
+    "for company figures, Industry Overview for market claims; the same competitor, strength or claim in "
+    "several parts is one item."
+)
+
 SECTIONS: dict[str, SectionSpec] = {
     spec.group: spec for spec in [
         SectionSpec(group="offer_objects", schema=OfferObjects, prompt=OFFER_OBJECTS_PROMPT, report_field="offer"),
+        SectionSpec(group="business_industry", schema=BusinessIndustry, prompt=BUSINESS_INDUSTRY_PROMPT,
+                    report_field="business"),
     ]
 }

@@ -6,7 +6,7 @@ from typing import Literal
 
 import math
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, computed_field, model_validator
 
 
 class Fact(BaseModel):
@@ -116,6 +116,81 @@ class OfferObjects(BaseModel):
     selling_shareholders: list[SellingShareholder]
 
 
+class Cited(BaseModel):
+    """A short piece of text from the RHP and the page it is on (not checked by the verifier)."""
+
+    text: str = Field(description="Short paraphrase or name, no more than one sentence")
+    page: int = Field(ge=1, description="N from the nearest '[page N]' tag above the text")
+
+
+COMMISSIONED_REPORT = "per company-commissioned industry report"
+
+
+class RevenueShare(BaseModel):
+    name: str = Field(description="Segment, geography or product, as the RHP names it")
+    basis: Literal["segment", "geography", "product"]
+    share: Fact = Field(description="Its revenue for the latest full fiscal year: % of revenue, or the amount, as printed")
+
+
+class CapacityLine(BaseModel):
+    facility: str = Field(description="Plant or product line")
+    installed_capacity: Fact = Field(description="Installed capacity, with its unit as printed")
+    utilisation_pct: Fact = Field(description="Capacity utilisation for the latest full fiscal year, %")
+
+
+class Dependence(BaseModel):
+    dependent: bool = Field(description="True only if the RHP says so: one plant, or one state/country for most revenue")
+    evidence: Cited | None = Field(description="Where the RHP says it; null when dependent is false")
+
+
+class IndustryClaim(BaseModel):
+    """A market claim from the industry report, always shown as per the company-commissioned report."""
+
+    claim: str = Field(description="The claim, paraphrased in one sentence")
+    page: int = Field(ge=1)
+    figure: Fact | None = Field(description="The claim's headline number (market size, growth %), if it has one")
+
+    @computed_field
+    @property
+    def attribution(self) -> str:
+        return COMMISSIONED_REPORT
+
+
+class BusinessIndustry(BaseModel):
+    """Business & Industry section (Our Business, Industry Overview)."""
+
+    what_it_sells: str = Field(description="What the company sells and to whom, in one or two sentences")
+    revenue_mix: list[RevenueShare] = Field(description="Revenue by segment, geography or product")
+    top1_customer_pct: Fact = Field(description="Revenue from the largest customer, % of revenue, latest full fiscal year")
+    top10_customers_pct: Fact = Field(description="Revenue from the top 10 customers, % of revenue, latest full fiscal year")
+    top_supplier_pct: Fact = Field(description="Purchases from the largest supplier, % of purchases, latest full fiscal year")
+    capacity: list[CapacityLine]
+    order_book: Fact = Field(description="Order book, rupee amount, latest date stated")
+    competitors: list[Cited] = Field(description="Competitors the RHP names, one per item")
+    moats: list[Cited] = Field(description="Competitive strengths the company claims, a few words each")
+    industry_claims: list[IndustryClaim] = Field(description="Key market claims from the industry report")
+    single_plant: Dependence = Field(description="All or most manufacturing at a single plant")
+    single_geography: Dependence = Field(description="Most revenue from a single state, region or country")
+
+
+class RedFlag(BaseModel):
+    """A red flag raised by Python from verified facts (never by a model)."""
+
+    section: str  # the section group that raised it
+    code: str  # stable id, e.g. "customer_concentration"
+    message: str
+    pages: list[int] = []
+
+
+class Derived(BaseModel):
+    """A number computed in Python from verified facts; value None when it can't be computed."""
+
+    name: str
+    value: float | None
+    unit: str
+    note: str  # how it was computed, or why it couldn't be
+
+
 Verdict = Literal["subscribe_long_term", "subscribe_listing_gains", "neutral", "avoid"]
 
 
@@ -158,8 +233,11 @@ class Report(BaseModel):
     status: Literal["complete", "partial_budget"]
     verdict: Verdict | None
     offer: OfferObjects | None = None
+    business: BusinessIndustry | None = None
     sentiment: Sentiment | None = None
     unverified_fields: list[str] = []
+    red_flags: list[RedFlag] = []
+    derived: list[Derived] = []
     rhp_sha256: str
     pdf_path: str | None = None
 
