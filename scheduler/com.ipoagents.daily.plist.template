@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Rendered by scheduler/install.py; edit the template, not the installed copy.
+     launchd runs a StartCalendarInterval job missed during sleep once the Mac wakes. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>$label</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$python</string>
+    <string>$script</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>$repo</string>
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>10</integer><key>Minute</key><integer>30</integer></dict>
+    <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>10</integer><key>Minute</key><integer>30</integer></dict>
+    <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>10</integer><key>Minute</key><integer>30</integer></dict>
+    <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>10</integer><key>Minute</key><integer>30</integer></dict>
+    <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>10</integer><key>Minute</key><integer>30</integer></dict>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- WeasyPrint needs Homebrew's libraries; ingestion needs Homebrew's tesseract on PATH. -->
+    <key>DYLD_FALLBACK_LIBRARY_PATH</key>
+    <string>/opt/homebrew/lib</string>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>$logs/launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>$logs/launchd.err.log</string>
+</dict>
+</plist>
