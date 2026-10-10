@@ -6,3 +6,4 @@ __pycache__/
 reports/
 tests/golden/**/*.pdf
 .pytest_cache/
+.claude/worktrees/

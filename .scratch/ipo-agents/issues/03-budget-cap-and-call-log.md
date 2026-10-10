@@ -14,3 +14,9 @@
 - [ ] A test fails if any module constructs a chat model outside the router
 
 **Spec:** `docs/specs/ipo-agents.md`
+
+**Carried over from the ticket 01 review:**
+- A failed structured parse must still meter its tokens: read usage before raising (e.g. an `LLMParseError` that carries usage), so verifier retries can't spend unmetered.
+- `run_daily` needs an explicit `BudgetExceeded` branch ahead of its generic `except`, so a capped IPO becomes terminal `failed_budget` rather than retryable `failed`. Build the metered LLM per IPO by wrapping `adapters.llm`.
+- Enforce "missing price ⇒ refuse to start" with a validator on `Config`: every routing value must exist in `models` with all three prices.
+- `ScriptedLLM` should reject a `model` that isn't a configured model key, so a wrong routing key can't pass the tests.
