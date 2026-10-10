@@ -31,3 +31,7 @@ groq_limits:
 default_max_tokens: 4000
 db_path: data/ipo.db
 work_dir: data/work
+
+sentiment:
+  # Domains whose IPO coverage is paid promotion; their articles never count in the stance tally.
+  denylist_domains: []
