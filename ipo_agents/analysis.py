@@ -11,8 +11,10 @@ from pydantic import BaseModel
 
 from ipo_agents.adapters import Adapters
 from ipo_agents.budget import BudgetMeter, MeteredLLM
+from ipo_agents.calc import compute_offer
 from ipo_agents.config import Config
 from ipo_agents.contracts import Ipo, Report, SectionedDocument, Sentiment
+from ipo_agents.flags import offer_flags
 from ipo_agents.ingestion import ingest
 from ipo_agents.router import estimate_run_usd
 from ipo_agents.section_agent import SectionSpec, run_section
@@ -70,7 +72,7 @@ def analyse_rhp(ipo: Ipo, rhp_pdf: Path, adapters: Adapters, config: Config) -> 
     meter.estimate_usd = estimate_run_usd(rhp_pdf, config)  # a large RHP starts degraded
     adapters = dataclasses.replace(adapters, llm=MeteredLLM(adapters.llm, meter))
     state = build_graph(adapters, config).invoke({"ipo": ipo, "rhp_pdf": str(rhp_pdf)})
-    return Report(
+    report = Report(
         ipo=ipo,
         status="complete",
         verdict=None,  # set by the synthesizer (ticket 20)
@@ -79,3 +81,6 @@ def analyse_rhp(ipo: Ipo, rhp_pdf: Path, adapters: Adapters, config: Config) -> 
         **{spec.report_field: state.get("findings", {}).get(group) for group, spec in SECTIONS.items()},
         rhp_sha256=state["doc"].sha256,
     )
+    # Derived numbers and flags are plain Python over the verified facts (calc.py, flags.py).
+    calcs = compute_offer(report.offer, ipo)
+    return report.model_copy(update={"calculations": calcs, "flags": offer_flags(report.offer, calcs)})
