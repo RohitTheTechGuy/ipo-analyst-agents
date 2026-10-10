@@ -12,7 +12,8 @@ from pydantic import BaseModel
 from ipo_agents.adapters import Adapters
 from ipo_agents.budget import BudgetMeter, MeteredLLM
 from ipo_agents.config import Config
-from ipo_agents.contracts import Ipo, Report, SectionedDocument, Sentiment
+from ipo_agents.contracts import Financials, Ipo, Report, SectionedDocument, Sentiment
+from ipo_agents.fin_calc import financial_flags
 from ipo_agents.ingestion import ingest
 from ipo_agents.router import estimate_run_usd
 from ipo_agents.section_agent import SectionSpec, run_section
@@ -70,12 +71,15 @@ def analyse_rhp(ipo: Ipo, rhp_pdf: Path, adapters: Adapters, config: Config) -> 
     meter.estimate_usd = estimate_run_usd(rhp_pdf, config)  # a large RHP starts degraded
     adapters = dataclasses.replace(adapters, llm=MeteredLLM(adapters.llm, meter))
     state = build_graph(adapters, config).invoke({"ipo": ipo, "rhp_pdf": str(rhp_pdf)})
+    findings = state.get("findings", {})
+    financials: Financials | None = findings.get("financials")
     return Report(
         ipo=ipo,
         status="complete",
         verdict=None,  # set by the synthesizer (ticket 20)
         sentiment=state.get("sentiment"),
         unverified_fields=sorted(state.get("unverified", [])),
-        **{spec.report_field: state.get("findings", {}).get(group) for group, spec in SECTIONS.items()},
+        **{spec.report_field: findings.get(group) for group, spec in SECTIONS.items()},
+        financial_flags=financial_flags(financials) if financials else [],
         rhp_sha256=state["doc"].sha256,
     )

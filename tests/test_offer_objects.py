@@ -9,7 +9,7 @@ import ipo_agents.analysis as analysis
 import ipo_agents.section_agent as section_agent
 from ipo_agents.analysis import analyse_rhp
 from ipo_agents.budget import BudgetExceeded
-from ipo_agents.contracts import Fact, OfferObjects, ProceedsObject, SellingShareholder
+from ipo_agents.contracts import Fact, OfferObjects, ProceedsObject, Quote, SellingShareholder
 from ipo_agents.llm import LLMParseError
 from ipo_agents.section_agent import SectionSpec
 from ipo_agents.sections import SECTIONS
@@ -225,7 +225,7 @@ def test_every_number_in_every_section_schema_is_a_fact():
     def walk(ann, path):
         if ann in (int, float):
             yield path
-        elif isinstance(ann, type) and issubclass(ann, BaseModel) and ann is not Fact:
+        elif isinstance(ann, type) and issubclass(ann, BaseModel) and ann not in (Fact, Quote):  # Quote.page cites, it isn't data
             yield from raw_numbers(ann, path)
         else:
             for arg in typing.get_args(ann):
