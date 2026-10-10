@@ -1,0 +1,33 @@
+# Model IDs, prices (USD per 1M tokens), routing per task, budget and paths.
+# A model used in `routing` without a price makes the run refuse to start.
+models:
+  luna:  { provider: openai, id: gpt-5.6-luna,        price_in: 0.20, price_cached: 0.02, price_out: 1.20 }
+  terra: { provider: openai, id: gpt-5.6-terra,       price_in: 2.00, price_cached: 0.20, price_out: 12.00 }
+  groq:  { provider: groq,   id: openai/gpt-oss-120b, price_in: 0.0,  price_cached: 0.0,  price_out: 0.0 }
+
+routing:
+  map_extract:          luna
+  offer_objects:        terra
+  financials:           terra
+  fine_print_legal:     terra
+  peer_valuation:       terra
+  synthesizer:          terra
+  risk_factors:         luna
+  business_industry:    luna
+  sentiment_agent:      luna
+  promoters_governance: groq
+  other_disclosures:    groq
+  verifier:             groq
+  sentiment_stance_tag: groq
+
+budget:
+  cap_usd: 1.50
+  degrade_pct: 70
+
+groq_limits:
+  max_call_tokens: 6000
+  daily_budget_pct: 80
+
+default_max_tokens: 4000
+db_path: data/ipo.db
+work_dir: data/work

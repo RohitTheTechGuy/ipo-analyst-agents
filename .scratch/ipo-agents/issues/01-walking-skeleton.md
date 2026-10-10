@@ -8,8 +8,8 @@
 
 - [ ] `pytest` passes offline with no keys and no network
 - [ ] One passing test at each seam (A `run_daily`, B `analyse_rhp`, C `ingest`)
-- [ ] A fake adapter set exists for exchange, downloader, LLM, search, market data, GMP and Telegram
+- [ ] A fake adapter set exists for the boundaries this ticket uses (exchange, downloader, LLM, Telegram); search, market-data and GMP fakes arrive with tickets 17–19
 - [ ] A second `run_daily` on the same day doesn't re-analyse the same IPO
-- [ ] Test dependencies and `pango`/`tesseract` system libs are installed and recorded
+- [ ] Test dependencies are pinned in requirements.txt and `pango`/`tesseract` are installed
 
 **Spec:** `docs/specs/ipo-agents.md`
