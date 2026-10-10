@@ -15,14 +15,25 @@ class ModelConfig(BaseModel):
     price_out: float | None = Field(default=None, ge=0, allow_inf_nan=False)
 
 
+class RunEstimate(BaseModel):
+    """Pre-run cost estimate from the RHP page count (plan section 8: ~520k in / ~60k out to read
+    a ~400-page RHP on Luna, ~$0.42 Terra, ~$0.05 other Luna steps). Rounded up to stay conservative."""
+
+    tokens_per_page: int = Field(default=1300, ge=0)  # map step input, Luna
+    output_tokens_per_page: int = Field(default=150, ge=0)  # map step output, Luna
+    fixed_usd: float = Field(default=0.47, ge=0, allow_inf_nan=False)  # Terra steps + other Luna steps
+
+
 class BudgetConfig(BaseModel):
     cap_usd: float = Field(gt=0, allow_inf_nan=False)
     degrade_pct: float
+    estimate: RunEstimate = RunEstimate()
 
 
 class GroqLimits(BaseModel):
-    max_call_tokens: int
-    daily_budget_pct: float
+    max_call_tokens: int  # prompt + max_tokens above this => Luna
+    daily_budget_pct: float  # today's Groq tokens at or above this % of daily_cap_tokens => Luna
+    daily_cap_tokens: int = Field(gt=0)  # Groq's published per-model tokens/day limit
 
 
 class Config(BaseModel):

@@ -5,7 +5,8 @@ import json
 import logging
 import sqlite3
 import threading
-from collections.abc import Iterator
+import time
+from collections.abc import Callable, Iterator
 from contextlib import closing, contextmanager
 from functools import lru_cache
 from pathlib import Path
@@ -14,12 +15,17 @@ import tiktoken
 
 from ipo_agents.config import Config, ModelConfig
 from ipo_agents.llm import LLM, LLMParseError
+from ipo_agents.router import FALLBACK, get_model, is_groq
 
 PER_MILLION = 1_000_000
 # Tokens the provider bills beyond the prompt text: message framing, tool/response-format wrapper.
 REQUEST_OVERHEAD_TOKENS = 200
 # Headroom for tokenizer drift between tiktoken and the provider's own count.
 PROMPT_SAFETY = 1.1
+
+# Transient OpenAI errors (429/5xx) are retried here, not by the client, so each attempt is metered.
+MAX_RETRIES = 2
+BACKOFF_S = 0.5  # waits 0.5s, then 1s
 
 # The call log is the meter's own table: spend per ipo_id survives restarts (crash-resume).
 SCHEMA = """
@@ -65,17 +71,26 @@ def _prompt_tokens(system: str, user: str, schema: type) -> int:
     return int(text * PROMPT_SAFETY) + REQUEST_OVERHEAD_TOKENS
 
 
+def _transient(e: Exception) -> bool:
+    """A rate limit or server error (openai/groq APIStatusError carry status_code); worth retrying."""
+    status = getattr(e, "status_code", None)
+    return isinstance(status, int) and (status == 429 or status >= 500)
+
+
 class BudgetMeter:
     """Tracks spend for one IPO against the cap, starting from what is already logged for it."""
 
     def __init__(self, ipo_id: str, config: Config):
         self.ipo_id = ipo_id
+        self.config = config
         self.cap = config.budget.cap_usd
         self._models = config.models
         self._db_path = config.db_path
         # Parallel graph branches share one meter: reservations stop them all passing the same check.
         self._lock = threading.Lock()
         self.reserved = 0.0
+        # Pre-run cost estimate for this analysis; set by analyse_rhp before the graph runs.
+        self.estimate_usd = 0.0
         Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
         with self._db() as db:
             db.execute("PRAGMA journal_mode=WAL")
@@ -83,6 +98,24 @@ class BudgetMeter:
             (self.spent,) = db.execute(
                 "SELECT COALESCE(SUM(cost_usd), 0.0) FROM llm_calls WHERE ipo_id = ?", (ipo_id,)
             ).fetchone()
+
+    @property
+    def degraded(self) -> bool:
+        """Spend has reached degrade_pct of the cap, or the pre-run estimate is over it:
+        Terra tasks run on Luna and sentiment reads fewer sources."""
+        threshold = self.cap * self.config.budget.degrade_pct / 100
+        return self.spent >= threshold or self.estimate_usd > threshold
+
+    def tokens_today(self, models: list[str]) -> int:
+        """Tokens logged today (UTC) on these model keys, across all IPOs: Groq's limit is per day, not per IPO."""
+        marks = ",".join("?" * len(models))
+        with self._db() as db:
+            (n,) = db.execute(
+                f"""SELECT COALESCE(SUM(input_tokens + output_tokens), 0) FROM llm_calls
+                    WHERE model IN ({marks}) AND date(ts) = date('now')""",
+                models,
+            ).fetchone()
+        return n
 
     @contextmanager
     def _db(self) -> Iterator[sqlite3.Connection]:
@@ -132,12 +165,34 @@ class BudgetMeter:
 class MeteredLLM:
     """Wraps the provider LLM: checks the cap before each call and records spend after it."""
 
-    def __init__(self, inner: LLM, meter: BudgetMeter):
+    def __init__(self, inner: LLM, meter: BudgetMeter, sleep: Callable[[float], None] | None = None):
         self._inner = inner
         self.meter = meter
+        self._sleep = sleep or time.sleep  # looked up at construction so tests can stub it
 
-    def invoke_structured(self, *, model, system, user, schema, max_tokens, task=""):
+    def invoke_structured(self, *, task, system, user, schema, max_tokens):
+        """Callers name the task; the router picks the model. A failed Groq call is redone on Luna at once."""
         prompt_tokens = _prompt_tokens(system, user, schema)
+        model = get_model(task, prompt_tokens + max_tokens, self.meter)
+        call = dict(task=task, system=system, user=user, schema=schema, max_tokens=max_tokens)
+        if is_groq(model, self.meter.config):
+            try:
+                return self._metered_call(model, prompt_tokens, **call)
+            except Exception as e:
+                # Rate limit (429) or any other Groq failure: nothing ever waits on Groq.
+                log.warning("%s on groq failed (%s); falling back to %s", task, e, FALLBACK)
+                model = FALLBACK
+        for attempt in range(MAX_RETRIES + 1):
+            try:
+                return self._metered_call(model, prompt_tokens, **call)
+            except Exception as e:
+                if attempt == MAX_RETRIES or not _transient(e):
+                    raise
+                log.warning("%s on %s failed (%s); retry %d", task, model, e, attempt + 1)
+                self._sleep(BACKOFF_S * 2**attempt)
+
+    def _metered_call(self, model, prompt_tokens, *, task, system, user, schema, max_tokens):
+        """One provider call: reserve its worst case, call, settle what it actually cost."""
         held = self.meter.reserve(model, prompt_tokens, max_tokens)
         try:
             result = self._inner.invoke_structured(
