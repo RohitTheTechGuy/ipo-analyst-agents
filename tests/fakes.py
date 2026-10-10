@@ -6,21 +6,26 @@ from datetime import date
 from pathlib import Path
 from typing import Mapping
 
+from ipo_agents.config import load_config
 from ipo_agents.contracts import Ipo
 from ipo_agents.llm import LLMResult
+
+
+def _configured_models():
+    return load_config(Path(__file__).resolve().parent.parent / "config.yaml").models
 
 
 @dataclass
 class ScriptedLLM:
     """Returns a scripted object per schema plus token usage.
 
-    `models` is the configured model table; a call naming any other model key fails, so a
-    wrong routing key can't pass. `usage` scripts (input, cached, output) tokens per call, in
+    `models` is the configured model table (default: the repo's config.yaml); a call naming
+    any other model key fails, so a wrong routing key can't pass. `usage` scripts (input, cached, output) tokens per call, in
     order; calls beyond it use the defaults. A scripted response that is an exception is raised.
     """
 
     responses: dict[type, object]
-    models: Mapping[str, object]
+    models: Mapping[str, object] = field(default_factory=lambda: _configured_models())
     usage: list[tuple[int, int, int]] = field(default_factory=list)
     input_tokens: int = 1_000
     cached_tokens: int = 0

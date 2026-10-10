@@ -1,6 +1,8 @@
 """Per-IPO budget meter and the metered LLM every agent calls through (spec: Budget rules)."""
 from __future__ import annotations
 
+import logging
+
 import sqlite3
 from collections.abc import Iterator
 from contextlib import closing, contextmanager
@@ -26,6 +28,8 @@ CREATE TABLE IF NOT EXISTS llm_calls (
 CREATE INDEX IF NOT EXISTS llm_calls_ipo ON llm_calls (ipo_id);
 """
 
+log = logging.getLogger(__name__)
+
 
 class BudgetExceeded(Exception):
     """Raised before a call whose worst-case cost would push the IPO's spend over the cap."""
@@ -33,11 +37,20 @@ class BudgetExceeded(Exception):
 
 @lru_cache(maxsize=1)
 def _encoding():
-    return tiktoken.get_encoding("o200k_base")
+    """o200k_base, or None if it can't be loaded (tiktoken downloads it once into its cache)."""
+    try:
+        return tiktoken.get_encoding("o200k_base")
+    except Exception:
+        log.warning("tiktoken o200k_base unavailable; using a conservative chars/2 token estimate")
+        return None
 
 
 def _prompt_tokens(system: str, user: str) -> int:
-    return len(_encoding().encode(system)) + len(_encoding().encode(user))
+    enc = _encoding()
+    if enc is None:
+        # English averages ~4 chars/token; assuming 2 over-counts, which errs on the safe side of the cap.
+        return (len(system) + len(user) + 1) // 2
+    return len(enc.encode(system)) + len(enc.encode(user))
 
 
 class BudgetMeter:
