@@ -1,6 +1,7 @@
 """SQLite store for IPO status (spec: Data contracts, status lifecycle)."""
 from __future__ import annotations
 
+import re
 import sqlite3
 from datetime import date, timedelta
 from pathlib import Path
@@ -22,11 +23,37 @@ CREATE TABLE IF NOT EXISTS ipos (
 TERMINAL = {"done", "failed_budget"}
 
 
+def same_company(a: str, b: str) -> bool:
+    """'HD Fire Protect Ltd.' and 'HD FIRE PROTECT LIMITED' name the same company, as do
+    'Acevector Ltd. (Snapdeal IPO)' and 'Acevector Limited'."""
+    def norm(name: str) -> str:
+        name = re.sub(r"\([^)]*\)", " ", name.lower())  # parentheticals: "(Snapdeal IPO)"
+        words = re.sub(r"[^a-z0-9 ]", " ", name).split()
+        if words and words[-1] == "ipo":
+            words = words[:-1]
+        return " ".join(w for w in words if w not in {"ltd", "limited", "pvt", "private"})
+    return norm(a) == norm(b)
+
+
 class Store:
     def __init__(self, db_path: str | Path):
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self._db = sqlite3.connect(db_path)
         self._db.executescript(SCHEMA)
+
+    def known_id(self, ipo: Ipo) -> str:
+        """The stored id for this issue: sources disagree on ids, so match company name + open and close dates."""
+        if self.status(ipo.ipo_id) is not None:
+            return ipo.ipo_id
+        rows = self._db.execute(
+            "SELECT ipo_id, name FROM ipos WHERE open_date = ? AND close_date = ?",
+            (ipo.open_date.isoformat(), ipo.close_date.isoformat()),
+        ).fetchall()
+        return next((row_id for row_id, name in rows if same_company(name, ipo.name)), ipo.ipo_id)
+
+    def rhp_url(self, ipo_id: str) -> str | None:
+        row = self._db.execute("SELECT rhp_url FROM ipos WHERE ipo_id = ?", (ipo_id,)).fetchone()
+        return row[0] if row else None
 
     def status(self, ipo_id: str) -> str | None:
         row = self._db.execute("SELECT status FROM ipos WHERE ipo_id = ?", (ipo_id,)).fetchone()

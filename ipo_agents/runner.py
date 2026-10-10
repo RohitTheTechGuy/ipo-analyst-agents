@@ -10,12 +10,14 @@ from ipo_agents.analysis import analyse_rhp
 from ipo_agents.budget import BudgetExceeded
 from ipo_agents.config import Config
 from ipo_agents.contracts import Report, RunSummary, Sentiment
+from ipo_agents.discovery import DiscoveryError
 from ipo_agents.notify.reminders import send_closing_reminders
 from ipo_agents.store import TERMINAL, Store
 
 log = logging.getLogger(__name__)
 
 DISCLAIMER = "Not investment advice; generated from RHP + public sources."
+NO_SOURCE_ALERT = "⚠️ Could not list open IPOs from any source today"
 VERDICT_LABELS = {
     "subscribe_long_term": "SUBSCRIBE (LONG TERM)",
     "subscribe_listing_gains": "SUBSCRIBE – LISTING GAINS ONLY",
@@ -49,9 +51,27 @@ def format_summary(report: Report) -> str:
 def run_daily(today: date, adapters: Adapters, config: Config) -> RunSummary:
     store = Store(config.db_path)
     summary = RunSummary()
-    for ipo in adapters.exchange.open_ipos(today):
+    try:
+        ipos = adapters.exchange.open_ipos(today)
+    except DiscoveryError as exc:
+        log.exception("no source could list open IPOs")
+        try:
+            adapters.notifier.send_message(f"{NO_SOURCE_ALERT}\n{exc}")
+        except Exception:
+            log.exception("telegram send failed for the no-source alert")
+        ipos = []
+    for ipo in ipos:
+        ipo = ipo.model_copy(update={"ipo_id": store.known_id(ipo)})
         if store.status(ipo.ipo_id) in TERMINAL:
             summary.skipped.append(ipo.ipo_id)
+            continue
+        if ipo.rhp_url is None and (known_rhp := store.rhp_url(ipo.ipo_id)):
+            # A fallback source may lack the link an earlier source found; don't hold the IPO again.
+            ipo = ipo.model_copy(update={"rhp_url": known_rhp, "is_draft": False})
+        if ipo.rhp_url is None or ipo.is_draft:
+            # Never analyse a draft: hold until the exchange page links the final RHP.
+            store.upsert(ipo, "waiting_rhp")
+            summary.waiting_rhp.append(ipo.ipo_id)
             continue
         store.upsert(ipo, "analysing")
         try:
