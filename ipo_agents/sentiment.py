@@ -1,6 +1,6 @@
 """Market Sentiment agent: dated public articles -> per-source stance -> tally (plan 5.4).
 
-YouTube is out of scope for v1; GMP and subscription status are ticket 19.
+YouTube is out of scope for v1. GMP and subscription status come from the market-data adapter.
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 import httpx
 from pydantic import BaseModel, Field
 
-from ipo_agents.adapters import Adapters, SearchHit
+from ipo_agents.adapters import GMP_LABEL, Adapters, SearchHit
 from ipo_agents.budget import _count
 from ipo_agents.config import Config
 from ipo_agents.contracts import STANCES, ClaimedFact, Ipo, Sentiment, SentimentSource, Stance
@@ -174,7 +174,28 @@ def _max_sources(adapters: Adapters) -> int:
     return MAX_SOURCES_DEGRADED if adapters.llm.meter.degraded else MAX_SOURCES
 
 
+def _market(ipo: Ipo, adapters: Adapters) -> dict:
+    """GMP and subscription status. Third-party and optional: any failure means "not available", never a
+    failed run (the adapter makes no model calls, so there is no budget error to let through)."""
+    if adapters.market is None:
+        return {}
+    found = {}
+    for field, fetch in (("gmp", adapters.market.gmp), ("subscription", adapters.market.subscription)):
+        try:
+            found[field] = fetch(ipo)
+        except Exception:
+            log.warning("market data (%s) failed for %s", field, ipo.ipo_id, exc_info=True)
+    if found.get("gmp") is not None:
+        # Whatever the adapter called it, the GMP is reported as unofficial.
+        found["gmp"] = found["gmp"].model_copy(update={"label": GMP_LABEL})
+    return found
+
+
 def gather_sentiment(ipo: Ipo, adapters: Adapters, config: Config) -> Sentiment:
+    return _articles(ipo, adapters, config).model_copy(update=_market(ipo, adapters))
+
+
+def _articles(ipo: Ipo, adapters: Adapters, config: Config) -> Sentiment:
     if adapters.search is None:
         return Sentiment(available=False, note="sentiment unavailable: no web search configured")
     cutoff = ipo.open_date - RHP_DATE_PROXY

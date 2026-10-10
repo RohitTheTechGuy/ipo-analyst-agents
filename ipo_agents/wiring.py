@@ -8,6 +8,7 @@ from ipo_agents.adapters import Adapters
 from ipo_agents.config import Config
 from ipo_agents.discovery import HttpRhpDownloader, default_exchange, make_client
 from ipo_agents.llm import LangChainLLM
+from ipo_agents.market import HttpMarketData
 from ipo_agents.notify.telegram import telegram_notifier_from_env
 from ipo_agents.search import TavilySearch
 
@@ -46,4 +47,4 @@ def build_adapters(config: Config, *, discovery_only: bool = False) -> Adapters:
     if search is None:
         log.warning("TAVILY_API_KEY not set: sentiment will be reported as unavailable")
     return Adapters(exchange=exchange, downloader=downloader, llm=LangChainLLM(config.models),
-                    notifier=telegram_notifier_from_env(), search=search)
+                    notifier=telegram_notifier_from_env(), search=search, market=HttpMarketData(client))
