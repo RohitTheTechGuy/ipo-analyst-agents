@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import date, timedelta
 from pathlib import Path
 
 from ipo_agents.contracts import Ipo
@@ -53,3 +54,20 @@ class Store:
 
     def close(self) -> None:
         self._db.close()
+
+    # --- closing reminders (ticket 05) ---
+
+    def due_reminders(self, today: date) -> list[tuple[str, str, date, str | None]]:
+        """(ipo_id, name, close_date, verdict) for done IPOs closing today or tomorrow, not yet reminded today."""
+        rows = self._db.execute(
+            """SELECT ipo_id, name, close_date, verdict FROM ipos
+               WHERE status = 'done' AND close_date IN (?, ?)
+                 AND (last_reminded_at IS NULL OR last_reminded_at != ?)
+               ORDER BY close_date, ipo_id""",
+            (today.isoformat(), (today + timedelta(days=1)).isoformat(), today.isoformat()),
+        ).fetchall()
+        return [(i, n, date.fromisoformat(c), v) for i, n, c, v in rows]
+
+    def mark_reminded(self, ipo_id: str, today: date) -> None:
+        self._db.execute("UPDATE ipos SET last_reminded_at = ? WHERE ipo_id = ?", (today.isoformat(), ipo_id))
+        self._db.commit()

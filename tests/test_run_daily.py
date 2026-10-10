@@ -81,3 +81,30 @@ def test_telegram_failure_does_not_stop_other_ipos(adapters, config):
     assert summary.analysed == ["ACME-2026-10-13", "BETA-2026-10-13"]
     assert summary.notify_failed == ["ACME-2026-10-13"]
     assert "Beta Ltd IPO (Mainboard)" in adapters.notifier.messages[-1]
+
+
+def test_summary_is_sent_without_a_document_while_no_pdf_is_rendered(adapters, config):
+    adapters.exchange = FakeExchange([make_ipo()])
+    adapters.llm = offer_llm()
+
+    run_daily(TODAY, adapters, config)
+
+    assert len(adapters.notifier.messages) == 1
+    assert adapters.notifier.documents == []
+
+
+def test_rendered_report_pdf_follows_the_summary(adapters, config, monkeypatch, tmp_path):
+    # The renderer (ticket 22) does not exist yet, so stand in for seam B's output.
+    import ipo_agents.runner as runner
+
+    pdf = tmp_path / "report_acme.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    real_analyse = runner.analyse_rhp
+    monkeypatch.setattr(runner, "analyse_rhp", lambda *a: real_analyse(*a).model_copy(update={"pdf_path": str(pdf)}))
+    adapters.exchange = FakeExchange([make_ipo()])
+    adapters.llm = offer_llm()
+
+    run_daily(TODAY, adapters, config)
+
+    assert len(adapters.notifier.messages) == 1
+    assert adapters.notifier.documents == [pdf]
