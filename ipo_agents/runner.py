@@ -9,7 +9,7 @@ from ipo_agents.adapters import Adapters
 from ipo_agents.analysis import analyse_rhp
 from ipo_agents.budget import BudgetExceeded
 from ipo_agents.config import Config
-from ipo_agents.contracts import Report, RunSummary
+from ipo_agents.contracts import Report, RunSummary, Sentiment
 from ipo_agents.notify.reminders import send_closing_reminders
 from ipo_agents.store import TERMINAL, Store
 
@@ -24,6 +24,13 @@ VERDICT_LABELS = {
 }
 
 
+def _sentiment_line(s: Sentiment) -> str:
+    if not s.available:
+        return "Sentiment: unavailable"
+    counts = [f"{n} {stance.replace('_only', '').replace('_', ' ')}" for stance, n in s.tally.items() if n]
+    return "Sentiment: " + (" / ".join(counts) or "no recent coverage found")
+
+
 def format_summary(report: Report) -> str:
     ipo = report.ipo
     lines = [
@@ -33,6 +40,8 @@ def format_summary(report: Report) -> str:
     if report.offer and report.offer.issue_size_cr.value is not None:
         f = report.offer.issue_size_cr
         lines.append(f"Issue: ₹{f.value:,.2f} cr (p. {f.page})")
+    if report.sentiment:
+        lines.append(_sentiment_line(report.sentiment))
     lines += ["", f"Verdict: {VERDICT_LABELS.get(report.verdict, 'N/A')}", "", DISCLAIMER]
     return "\n".join(lines)
 
