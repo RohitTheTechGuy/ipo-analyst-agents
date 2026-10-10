@@ -1,0 +1,8 @@
+.venv/
+.env
+.ipynb_checkpoints/
+__pycache__/
+*.db
+reports/
+tests/golden/**/*.pdf
+.pytest_cache/

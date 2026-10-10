@@ -1,0 +1,14 @@
+# 21 — Resume + partial-budget report
+
+**What to build:** A crashed analysis resumes from its LangGraph checkpoint on the next run with prior spend carried over. A run stopped by `BudgetExceeded` produces a partial report from facts verified so far, alerts on Telegram, and becomes terminal `failed_budget`.
+
+**Blocked by:** 07 — Offer & Objects grounded facts
+
+**Status:** ready-for-agent
+
+- [ ] At seam A, a crash mid-graph followed by a rerun doesn't repeat completed model calls
+- [ ] The resumed run's budget includes the pre-crash spend
+- [ ] A budget stop yields a `partial_budget` Report, a Telegram alert and status `failed_budget`
+- [ ] `failed_budget` IPOs aren't retried on later runs
+
+**Spec:** `docs/specs/ipo-agents.md`
