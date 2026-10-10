@@ -31,9 +31,9 @@ def config(tmp_path):
 
 
 @pytest.fixture
-def adapters(tiny_rhp):
+def adapters(tiny_rhp, config):
     from ipo_agents.adapters import Adapters
     from tests.fakes import FakeDownloader, FakeExchange, RecordingNotifier, ScriptedLLM
 
     return Adapters(exchange=FakeExchange([]), downloader=FakeDownloader(tiny_rhp),
-                    llm=ScriptedLLM({}), notifier=RecordingNotifier())
+                    llm=ScriptedLLM({}, models=config.models), notifier=RecordingNotifier())

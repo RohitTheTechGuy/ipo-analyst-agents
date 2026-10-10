@@ -7,6 +7,7 @@ from pathlib import Path
 
 from ipo_agents.adapters import Adapters
 from ipo_agents.analysis import analyse_rhp
+from ipo_agents.budget import BudgetExceeded
 from ipo_agents.config import Config
 from ipo_agents.contracts import Report, RunSummary
 from ipo_agents.store import TERMINAL, Store
@@ -46,6 +47,19 @@ def run_daily(today: date, adapters: Adapters, config: Config) -> RunSummary:
         try:
             rhp = adapters.downloader.download(ipo.rhp_url, Path(config.work_dir) / ipo.ipo_id)
             report = analyse_rhp(ipo, rhp, adapters, config)
+        except BudgetExceeded:
+            # Terminal: retrying would only spend more. The partial report arrives with ticket 21.
+            log.warning("budget cap reached for %s", ipo.ipo_id)
+            store.upsert(ipo, "failed_budget")
+            summary.failed.append(ipo.ipo_id)
+            try:
+                adapters.notifier.send_message(
+                    f"⚠️ {ipo.name}: analysis stopped at the ${config.budget.cap_usd:.2f} budget cap"
+                )
+            except Exception:
+                log.exception("telegram send failed for %s", ipo.ipo_id)
+                summary.notify_failed.append(ipo.ipo_id)
+            continue
         except Exception:
             log.exception("analysis failed for %s", ipo.ipo_id)
             store.upsert(ipo, "failed")

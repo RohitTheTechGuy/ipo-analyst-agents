@@ -6,7 +6,7 @@ from tests.fakes import ScriptedLLM, make_ipo
 
 def test_report_carries_page_cited_offer_facts(tiny_rhp, adapters, config):
     adapters.llm = ScriptedLLM({OfferObjects: OfferObjects(issue_size_cr=Fact(
-        value=1250.0, unit="₹ crore", page=2, verbatim_quote="Total issue size of up to Rs. 1,250.00 crore"))})
+        value=1250.0, unit="₹ crore", page=2, verbatim_quote="Total issue size of up to Rs. 1,250.00 crore"))}, models=config.models)
 
     report = analyse_rhp(make_ipo(), tiny_rhp, adapters, config)
 
@@ -18,7 +18,7 @@ def test_report_carries_page_cited_offer_facts(tiny_rhp, adapters, config):
 
 def test_offer_agent_reads_the_rhp_text(tiny_rhp, adapters, config):
     llm = ScriptedLLM({OfferObjects: OfferObjects(issue_size_cr=Fact(
-        value=None, unit="₹ crore", page=None, verbatim_quote=None, not_disclosed_reason="not in pages"))})
+        value=None, unit="₹ crore", page=None, verbatim_quote=None, not_disclosed_reason="not in pages"))}, models=config.models)
     adapters.llm = llm
 
     analyse_rhp(make_ipo(), tiny_rhp, adapters, config)
