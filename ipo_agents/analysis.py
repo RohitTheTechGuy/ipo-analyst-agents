@@ -30,8 +30,10 @@ from pydantic import BaseModel
 
 from ipo_agents.adapters import Adapters
 from ipo_agents.budget import BudgetExceeded, BudgetMeter, MeteredLLM
+from ipo_agents.calc import compute_offer
 from ipo_agents.config import Config
 from ipo_agents.contracts import Ipo, Report, SectionedDocument, Sentiment
+from ipo_agents.flags import offer_flags
 from ipo_agents.ingestion import ingest
 from ipo_agents.router import estimate_run_usd
 from ipo_agents.section_agent import SectionSpec, run_section
@@ -108,7 +110,7 @@ def _checkpointer(config: Config) -> Iterator[SqliteSaver]:
 
 def _report(ipo: Ipo, state: dict, status: str, rhp_sha256: str) -> Report:
     findings = state.get("findings", {})
-    return Report(
+    report = Report(
         ipo=ipo,
         status=status,
         verdict=None,  # set by the synthesizer (ticket 20)
@@ -117,6 +119,9 @@ def _report(ipo: Ipo, state: dict, status: str, rhp_sha256: str) -> Report:
         **{spec.report_field: findings.get(group) for group, spec in SECTIONS.items()},
         rhp_sha256=rhp_sha256,
     )
+    # Derived numbers and flags are plain Python over the verified facts (calc.py, flags.py).
+    calcs = compute_offer(report.offer, ipo)
+    return report.model_copy(update={"calculations": calcs, "flags": offer_flags(report.offer, calcs)})
 
 
 def analyse_rhp(ipo: Ipo, rhp_pdf: Path, adapters: Adapters, config: Config) -> Report:
@@ -149,4 +154,6 @@ def analyse_rhp(ipo: Ipo, rhp_pdf: Path, adapters: Adapters, config: Config) -> 
             # The checkpoint's state includes every node that finished, siblings of the stopped one too.
             exc.report = _report(ipo, graph.get_state(thread).values, "partial_budget", rhp_sha256)
             raise
+        # A finished run never resumes; drop its checkpoints so they don't pile up (several MB per IPO).
+        saver.delete_thread(thread_id)
     return _report(ipo, state, "complete", rhp_sha256)
