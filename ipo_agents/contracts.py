@@ -119,6 +119,66 @@ class OfferObjects(BaseModel):
     selling_shareholders: list[SellingShareholder]
 
 
+class Quote(BaseModel):
+    """Text (not a number) taken from the RHP. The verifier checks the quote is printed on the cited
+    page; one it can't find comes back with page and verbatim_quote set to None."""
+
+    page: int | None = Field(default=None, ge=1)
+    verbatim_quote: str | None = Field(default=None, description="The words copied character for character from the page")
+
+
+class FinancialPeriod(BaseModel):
+    """One column of the restated financials: a fiscal year or a stub (interim) period."""
+
+    label: str = Field(description="Period label as printed, e.g. 'Fiscal 2024' or 'Three months ended June 30, 2024'")
+    end_date: str = Field(description="Period end date as printed, e.g. 'March 31, 2024'")
+    kind: Literal["full_year", "stub"] = Field(description="'stub' for an interim period shorter than a full fiscal year")
+    revenue_from_operations: Fact
+    total_income: Fact = Field(description="Revenue from operations plus other income")
+    ebitda: Fact = Field(description="EBITDA as disclosed; not disclosed if the RHP doesn't state it")
+    pat: Fact = Field(description="Restated profit (or loss) after tax for the period; a loss is negative")
+    cfo: Fact = Field(description="Net cash from / (used in) operating activities; cash used is negative")
+    capex: Fact = Field(description="Purchase of property, plant and equipment (incl. intangibles if one line)")
+    total_borrowings: Fact = Field(description="Total borrowings (current + non-current) at period end")
+    cash_and_equivalents: Fact = Field(description="Cash and cash equivalents at period end")
+    net_worth: Fact = Field(description="Net worth / total equity at period end")
+    trade_receivables: Fact = Field(description="Trade receivables at period end")
+    inventories: Fact = Field(description="Inventories at period end")
+    trade_payables: Fact = Field(description="Trade payables at period end")
+    ronw_pct: Fact = Field(description="Return on net worth / ROE, % as disclosed")
+    roce_pct: Fact = Field(description="Return on capital employed, % as disclosed")
+
+
+class AuditorRemark(BaseModel):
+    """A qualification or emphasis-of-matter paragraph in the auditor's examination report."""
+
+    kind: Literal["qualification", "emphasis_of_matter"]
+    summary: str = Field(description="One line in plain words: what the auditor points to")
+    source: Quote
+
+
+class Restatement(BaseModel):
+    adjusted: bool = Field(description="True if the restated figures differ from the audited ones (any non-nil restatement adjustment)")
+    source: Quote
+
+
+class Financials(BaseModel):
+    """Financials section: 3 fiscal years plus any stub period. Flags are computed in Python (fin_calc)."""
+
+    periods: list[FinancialPeriod] = Field(description="One entry per period column: each fiscal year and any stub period")
+    auditor_remarks: list[AuditorRemark] = Field(description="Every auditor qualification and emphasis of matter; empty if none")
+    restatement: Restatement | None = Field(description="Whether restatement adjustments were made; None if not stated")
+
+
+class FinancialCheck(BaseModel):
+    """A financial red-flag check Python computed from verified facts. A check whose inputs aren't
+    all verified is 'not_computable', never guessed."""
+
+    code: str
+    status: Literal["raised", "clear", "not_computable"]
+    detail: str
+
+
 Verdict = Literal["subscribe_long_term", "subscribe_listing_gains", "neutral", "avoid"]
 
 
@@ -189,6 +249,8 @@ class Report(BaseModel):
     status: Literal["complete", "partial_budget"]
     verdict: Verdict | None
     offer: OfferObjects | None = None
+    financials: Financials | None = None
+    financial_flags: list[FinancialCheck] = []
     sentiment: Sentiment | None = None
     calculations: dict[str, Derived] = {}  # name -> derived number (calc.py)
     flags: list[Flag] = []  # red flags (flags.py)

@@ -15,7 +15,7 @@ from dataclasses import dataclass
 
 from pydantic import BaseModel
 
-from ipo_agents.contracts import Chunk, Fact
+from ipo_agents.contracts import Chunk, Fact, Quote
 from ipo_agents.ingestion import MAX_CHUNK_CHARS, page_texts
 from ipo_agents.llm import LLM, LLMParseError
 from ipo_agents.verifier import Rejection, check_facts
@@ -163,7 +163,9 @@ def _retry(spec: SectionSpec, chunks: list[Chunk], pages: dict[int, str], curren
     and, for a one-part section, the pages are its exact text, so the provider can reuse the cached prefix.
     Returns `current` with only the failed fields that now verify replaced, and what still fails."""
     failures = "\n".join(
-        f"- {r.path}: you gave value {r.fact.value} ({r.fact.unit}) on page {r.fact.page}, quote "
+        f"- {r.path}: you gave "
+        + (f"value {r.fact.value} ({r.fact.unit}) " if isinstance(r.fact, Fact) else "")
+        + f"on page {r.fact.page}, quote "
         f"{json.dumps(r.fact.verbatim_quote, ensure_ascii=False)}; rejected because {r.reason}"
         for r in rejections)
     user = (f"{_retry_text(chunks, rejections)}\n\n{RETRY_RULES}\n\nFailed fields:\n{failures}\n\n"
@@ -209,6 +211,17 @@ def _merge_fixes(current: BaseModel, answer: BaseModel, rejections: list[Rejecti
             if path not in pending:
                 return cur
             if isinstance(new, Fact) and new.value is not None:
+                fixed, rejected = check_facts(new, pages, path)
+                if not rejected:
+                    return fixed
+                still.extend(rejected)
+            else:
+                still.append(pending[path])
+            return cur
+        if isinstance(cur, Quote):
+            if path not in pending:
+                return cur
+            if isinstance(new, Quote) and new.verbatim_quote:
                 fixed, rejected = check_facts(new, pages, path)
                 if not rejected:
                     return fixed

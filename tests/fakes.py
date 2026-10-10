@@ -1,10 +1,13 @@
 """Fakes for the system's outer boundary only (spec: Testing Decisions)."""
 from __future__ import annotations
 
+import typing
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 from typing import Mapping
+
+from pydantic import BaseModel
 
 from ipo_agents.adapters import SearchHit
 from ipo_agents.config import load_config
@@ -25,7 +28,8 @@ class ScriptedLLM:
     order; calls beyond it use the defaults. A scripted response that is an exception is raised; one
     that is a function is called with the prompt's user text, so per-call answers can key on it.
     `errors` scripts a failure per call, in order (None = that call succeeds). Every call, failed
-    or not, is recorded in `calls` with the model key it was sent to.
+    or not, is recorded in `calls` with the model key it was sent to. A schema with no scripted
+    response gets `found_nothing(schema)`, so a test scripts only the sections it is about.
     """
 
     responses: dict[type, object]
@@ -44,7 +48,7 @@ class ScriptedLLM:
         n = len(self.calls) - 1
         if n < len(self.errors) and self.errors[n] is not None:
             raise self.errors[n]
-        response = self.responses[schema]
+        response = self.responses[schema] if schema in self.responses else found_nothing(schema)
         if callable(response):
             response = response(user)
         if isinstance(response, Exception):
@@ -134,6 +138,20 @@ def make_ipo() -> Ipo:
 
 NOT_DISCLOSED = Fact(value=None, unit="", page=None, verbatim_quote=None,
                      not_disclosed_reason="not disclosed in provided pages")
+
+
+def found_nothing(schema: type[BaseModel]) -> BaseModel:
+    """What a model that found nothing in its pages returns: every Fact not disclosed, every list
+    empty, every optional field None."""
+    def empty(f):
+        if f.annotation is Fact:
+            return NOT_DISCLOSED
+        if typing.get_origin(f.annotation) is list:
+            return []
+        if type(None) in typing.get_args(f.annotation):
+            return None
+        raise TypeError(f"{schema.__name__}: no empty value for {f.annotation}; script this schema")
+    return schema(**{name: empty(f) for name, f in schema.model_fields.items()})
 
 
 def offer_objects(**fields) -> OfferObjects:

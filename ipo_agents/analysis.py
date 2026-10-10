@@ -32,7 +32,8 @@ from ipo_agents.adapters import Adapters
 from ipo_agents.budget import BudgetExceeded, BudgetMeter, MeteredLLM
 from ipo_agents.calc import compute_offer
 from ipo_agents.config import Config
-from ipo_agents.contracts import Ipo, Report, SectionedDocument, Sentiment
+from ipo_agents.contracts import Financials, Ipo, Report, SectionedDocument, Sentiment
+from ipo_agents.fin_calc import financial_flags
 from ipo_agents.flags import offer_flags
 from ipo_agents.ingestion import ingest
 from ipo_agents.router import estimate_run_usd
@@ -117,6 +118,7 @@ def _report(ipo: Ipo, state: dict, status: str, rhp_sha256: str) -> Report:
         sentiment=state.get("sentiment"),
         unverified_fields=sorted(state.get("unverified", [])),
         **{spec.report_field: findings.get(group) for group, spec in SECTIONS.items()},
+        financial_flags=financial_flags(findings["financials"]) if findings.get("financials") else [],
         rhp_sha256=rhp_sha256,
     )
     # Derived numbers and flags are plain Python over the verified facts (calc.py, flags.py).

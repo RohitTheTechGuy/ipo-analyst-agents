@@ -13,7 +13,7 @@ from typing import TypeVar
 from pydantic import BaseModel
 from rapidfuzz import fuzz
 
-from ipo_agents.contracts import Fact
+from ipo_agents.contracts import Fact, Quote
 
 COULD_NOT_VERIFY = "could not verify"
 MIN_QUOTE_SCORE = 90  # rapidfuzz partial_ratio, 0-100
@@ -35,10 +35,10 @@ M = TypeVar("M", bound=BaseModel)
 
 @dataclass(frozen=True)
 class Rejection:
-    """A Fact that failed verification: its dotted path, the Fact as the agent gave it, and why."""
+    """A Fact or Quote that failed verification: its dotted path, what the agent gave, and why."""
 
     path: str
-    fact: Fact
+    fact: Fact | Quote
     reason: str
 
 
@@ -49,6 +49,8 @@ def verify_facts(output: M, pages: dict[int, str], prefix: str) -> tuple[M, list
     dotted paths of those fields (e.g. "offer_objects.objects[1].amount"), so a retry can name them.
     A Fact passes when its quote is printed on the cited page and its value is a number in that
     quote and in the matching text on the page, in the Fact's unit (see `_why_not`).
+    A Quote (text, not a number) passes when its quote is printed on the cited page; a failing one
+    comes back with page and verbatim_quote set to None.
     Raises TypeError if a Fact sits in a dict, tuple or set, which this walk does not rewrite.
     """
     checked, rejections = check_facts(output, pages, prefix)
@@ -67,6 +69,11 @@ def check_facts(output: M, pages: dict[int, str], prefix: str) -> tuple[M, list[
             failed.append(Rejection(path, obj, reason))
             return Fact(value=None, unit=obj.unit, page=None, verbatim_quote=None,
                         not_disclosed_reason=COULD_NOT_VERIFY)
+        if isinstance(obj, Quote):
+            if _quoted(obj, pages):
+                return obj
+            failed.append(Rejection(path, obj, "the quote is not printed on the cited page"))
+            return Quote()
         if isinstance(obj, BaseModel):
             return obj.model_copy(update={name: walk(getattr(obj, name), f"{path}.{name}")
                                           for name in type(obj).model_fields})
@@ -81,7 +88,7 @@ def check_facts(output: M, pages: dict[int, str], prefix: str) -> tuple[M, list[
 
 
 def _holds_fact(obj) -> bool:
-    if isinstance(obj, Fact):
+    if isinstance(obj, (Fact, Quote)):
         return True
     if isinstance(obj, BaseModel):
         return any(_holds_fact(getattr(obj, name)) for name in type(obj).model_fields)
@@ -112,6 +119,14 @@ def _why_not(fact: Fact, pages: dict[int, str]) -> str | None:
     if not any(_matches(fact, quote, span, text) for span in spans):
         return f"the value in unit '{fact.unit}' does not match the text on page {fact.page}"
     return None
+
+
+def _quoted(q: Quote, pages: dict[int, str]) -> bool:
+    page = pages.get(q.page) if q.page is not None else None
+    if page is None or not q.verbatim_quote:
+        return False
+    quote = _normalise(q.verbatim_quote)
+    return len(quote) >= MIN_QUOTE_CHARS and bool(_WORD.search(quote)) and bool(_occurrences(quote, _normalise(page)))
 
 
 def _in_quote(fact: Fact, quote: str) -> bool:
