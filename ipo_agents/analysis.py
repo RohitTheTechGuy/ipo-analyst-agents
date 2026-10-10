@@ -1,12 +1,14 @@
 """Per-IPO analysis graph (spec seam B)."""
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 from typing import TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
 from ipo_agents.adapters import Adapters
+from ipo_agents.budget import BudgetMeter, MeteredLLM
 from ipo_agents.config import Config
 from ipo_agents.contracts import Ipo, OfferObjects, Report, SectionedDocument
 from ipo_agents.ingestion import ingest
@@ -55,6 +57,9 @@ def build_graph(adapters: Adapters, config: Config):
 
 
 def analyse_rhp(ipo: Ipo, rhp_pdf: Path, adapters: Adapters, config: Config) -> Report:
+    """Raises BudgetExceeded if a call would push this IPO's spend over the cap."""
+    # Every agent call goes through the IPO's meter; spend already logged for it carries over.
+    adapters = dataclasses.replace(adapters, llm=MeteredLLM(adapters.llm, BudgetMeter(ipo.ipo_id, config)))
     state = build_graph(adapters, config).invoke({"ipo": ipo, "rhp_pdf": str(rhp_pdf)})
     return Report(
         ipo=ipo,
