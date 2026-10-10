@@ -8,7 +8,7 @@ from ipo_agents.budget import BudgetExceeded
 from ipo_agents.config import RunEstimate
 from ipo_agents.contracts import Fact, OfferObjects, ProceedsObject
 from tests.conftest import make_tiny_rhp
-from tests.fakes import ScriptedLLM, make_ipo, offer_objects
+from tests.fakes import NOT_DISCLOSED, ScriptedLLM, make_ipo, offer_objects
 from tests.test_offer_objects import CAPITAL_PAGE, COULD_NOT_VERIFY, OBJECTS_PAGE, OFFER_PAGE, fact
 
 ISSUE = fact(1250.0, 2, "Total issue size of up to Rs. 1,250.00 crore")
@@ -89,6 +89,51 @@ def test_a_retry_that_does_not_fit_the_budget_stops_the_run(rhp, adapters, confi
         analyse_rhp(make_ipo(), rhp, adapters, config)
 
     assert len(llm.calls) == 1
+
+
+REPAY_QUOTE = "Repayment of borrowings Rs. 800.00 crore"
+
+
+@pytest.fixture
+def objects_rhp(tmp_path):
+    return make_tiny_rhp(tmp_path / "offer_rhp.pdf", (OFFER_PAGE, CAPITAL_PAGE, OBJECTS_PAGE))
+
+
+def test_a_retry_with_list_items_reordered_merges_onto_the_same_item(objects_rhp, adapters, config):
+    # The retry swaps the two objects; the fixed 800 belongs to "Repayment of borrowings", now objects[1].
+    gcp = ProceedsObject(purpose="General corporate purposes", amount=NOT_DISCLOSED)
+
+    def answer(user):
+        if is_retry(user):
+            # Same purpose, written in another case and spacing.
+            return offer_objects(objects=[gcp, ProceedsObject(purpose="repayment  of BORROWINGS",
+                                                              amount=fact(800.0, 4, REPAY_QUOTE))])
+        return offer_objects(objects=[ProceedsObject(purpose="Repayment of borrowings",
+                                                     amount=fact(900.0, 4, REPAY_QUOTE)), gcp])
+
+    report, _ = run(objects_rhp, adapters, config, answer)
+
+    assert [o.purpose for o in report.offer.objects] == ["Repayment of borrowings", "General corporate purposes"]
+    assert report.offer.objects[0].amount == fact(800.0, 4, REPAY_QUOTE)
+    assert report.offer.objects[1].amount == NOT_DISCLOSED
+    assert report.unverified_fields == []
+
+
+def test_a_retry_item_with_a_different_purpose_is_not_merged(objects_rhp, adapters, config):
+    # 800 is grounded on page 4, but the retry files it under another purpose: not this item's number.
+    def answer(user):
+        if is_retry(user):
+            return offer_objects(objects=[ProceedsObject(purpose="Capital expenditure",
+                                                         amount=fact(800.0, 4, REPAY_QUOTE))])
+        return offer_objects(objects=[ProceedsObject(purpose="Repayment of borrowings",
+                                                     amount=fact(900.0, 4, REPAY_QUOTE))])
+
+    report, llm = run(objects_rhp, adapters, config, answer)
+
+    assert report.offer.objects[0].purpose == "Repayment of borrowings"
+    assert report.offer.objects[0].amount == COULD_NOT_VERIFY
+    assert report.unverified_fields == ["offer_objects.objects[0].amount"]
+    assert len(llm.calls) == 3
 
 
 def test_a_multi_part_section_retries_against_the_cited_chunk_and_its_neighbours(tmp_path, adapters, config,

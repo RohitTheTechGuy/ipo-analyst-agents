@@ -196,9 +196,10 @@ def _retry_text(chunks: list[Chunk], rejections: list[Rejection]) -> str:
 
 def _merge_fixes(current: BaseModel, answer: BaseModel, rejections: list[Rejection], pages: dict[int, str],
                  prefix: str) -> tuple[BaseModel, list[Rejection]]:
-    """Walks `current` and the retry's `answer` side by side. A failed field takes the answer's Fact at the
-    same path if it has a value that verifies; every other field, including ones the answer changed, is
-    kept. An answer of "not disclosed" for a field first given a number doesn't clear it: the two answers
+    """Walks `current` and the retry's `answer` side by side, pairing list items by identity (`_same_item`),
+    not index. A failed field takes the answer's Fact in the same place if it has a value that verifies (a
+    list item with no match, or more than one, gives nothing); every other field, including ones the
+    answer changed, is kept. An answer of "not disclosed" for a field first given a number doesn't clear it: the two answers
     disagree, so it stays "could not verify". Still-failing fields carry their latest rejection."""
     pending = {r.path: r for r in rejections}
     still: list[Rejection] = []
@@ -222,7 +223,26 @@ def _merge_fixes(current: BaseModel, answer: BaseModel, rejections: list[Rejecti
                 for name in type(cur).model_fields})
         if isinstance(cur, list):
             new = new if isinstance(new, list) else []
-            return [walk(item, new[i] if i < len(new) else None, f"{path}[{i}]") for i, item in enumerate(cur)]
+            return [walk(item, _same_item(item, new), f"{path}[{i}]") for i, item in enumerate(cur)]
         return cur
 
     return walk(current, answer, prefix), still
+
+
+def _same_item(item, candidates: list):
+    """The one item of the retry's list with the same identity as `item`, else None. Matching by identity,
+    not index, stops a grounded number being filed under another item when the retry reorders a list."""
+    key = _identity(item)
+    if not key:
+        return None  # no identity (e.g. a bare Fact): nothing to match on, so nothing is merged
+    matches = [c for c in candidates if _identity(c) == key]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _identity(item) -> tuple:
+    """A list item's identity: its str fields (e.g. ProceedsObject.purpose, SellingShareholder.name),
+    case- and whitespace-normalised. Empty for a Fact or a model without str fields."""
+    if not isinstance(item, BaseModel) or isinstance(item, Fact):
+        return ()
+    return tuple((name, " ".join(value.split()).casefold()) for name in type(item).model_fields
+                 if isinstance(value := getattr(item, name), str))
