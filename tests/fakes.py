@@ -6,6 +6,7 @@ from datetime import date
 from pathlib import Path
 from typing import Mapping
 
+from ipo_agents.adapters import SearchHit
 from ipo_agents.config import load_config
 from ipo_agents.contracts import Ipo
 from ipo_agents.llm import LLMResult
@@ -21,7 +22,8 @@ class ScriptedLLM:
 
     `models` is the configured model table (default: the repo's config.yaml); a call naming
     any other model key fails, so a wrong routing key can't pass. `usage` scripts (input, cached, output) tokens per call, in
-    order; calls beyond it use the defaults. A scripted response that is an exception is raised.
+    order; calls beyond it use the defaults. A scripted response that is an exception is raised; one
+    that is a function is called with the prompt's user text, so per-call answers can key on it.
     `errors` scripts a failure per call, in order (None = that call succeeds). Every call, failed
     or not, is recorded in `calls` with the model key it was sent to.
     """
@@ -43,6 +45,8 @@ class ScriptedLLM:
         if n < len(self.errors) and self.errors[n] is not None:
             raise self.errors[n]
         response = self.responses[schema]
+        if callable(response):
+            response = response(user)
         if isinstance(response, Exception):
             raise response
         input_tokens, cached_tokens, output_tokens = (
@@ -58,6 +62,21 @@ class ProviderError(Exception):
     def __init__(self, status_code: int):
         super().__init__(f"HTTP {status_code}")
         self.status_code = status_code
+
+
+@dataclass
+class FakeSearch:
+    """Returns the scripted hits per exact query (none for others); `error` makes every search raise."""
+
+    results: dict[str, list[SearchHit]] = field(default_factory=dict)
+    error: Exception | None = None
+    queries: list[dict] = field(default_factory=list)
+
+    def search(self, query, *, max_results, published_after):
+        self.queries.append({"query": query, "max_results": max_results, "published_after": published_after})
+        if self.error is not None:
+            raise self.error
+        return list(self.results.get(query, []))[:max_results]
 
 
 @dataclass

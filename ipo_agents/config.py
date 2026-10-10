@@ -36,6 +36,11 @@ class GroqLimits(BaseModel):
     daily_cap_tokens: int = Field(gt=0)  # Groq's published per-model tokens/day limit
 
 
+class SentimentConfig(BaseModel):
+    # Sites whose IPO pages are paid promotion; a host matches the domain itself or any subdomain of it.
+    denylist_domains: list[str] = []
+
+
 class Config(BaseModel):
     models: dict[str, ModelConfig]
     routing: dict[str, str]
@@ -44,6 +49,7 @@ class Config(BaseModel):
     default_max_tokens: int = Field(gt=0)
     db_path: str
     work_dir: str
+    sentiment: SentimentConfig = SentimentConfig()
 
     @model_validator(mode="after")
     def _routed_models_are_priced(self):

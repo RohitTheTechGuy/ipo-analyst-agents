@@ -10,9 +10,10 @@ from langgraph.graph import END, START, StateGraph
 from ipo_agents.adapters import Adapters
 from ipo_agents.budget import BudgetMeter, MeteredLLM
 from ipo_agents.config import Config
-from ipo_agents.contracts import Ipo, OfferObjects, Report, SectionedDocument
+from ipo_agents.contracts import Ipo, OfferObjects, Report, SectionedDocument, Sentiment
 from ipo_agents.ingestion import ingest
 from ipo_agents.router import estimate_run_usd
+from ipo_agents.sentiment import gather_sentiment
 
 EXTRACT_RULES = (
     "Use ONLY the text provided. Every number must cite the page it appears on and an exact quote "
@@ -26,11 +27,12 @@ class AnalysisState(TypedDict, total=False):
     rhp_pdf: str
     doc: SectionedDocument
     offer: OfferObjects
+    sentiment: Sentiment
 
 
 def _pages_text(doc: SectionedDocument) -> str:
     chunks = sorted((c for s in doc.sections.values() for c in s), key=lambda c: c.page_start)
-    return "\n\n".join(f"[page {c.page_start}]\n{c.text}" for c in chunks)
+    return "\n\n".join(c.text for c in chunks)  # chunk text already tags each page "[page N]"
 
 
 def build_graph(adapters: Adapters, config: Config):
@@ -47,12 +49,19 @@ def build_graph(adapters: Adapters, config: Config):
         )
         return {"offer": result.parsed}
 
+    def sentiment_node(state: AnalysisState):
+        return {"sentiment": gather_sentiment(state["ipo"], adapters, config)}
+
     g = StateGraph(AnalysisState)
     g.add_node("ingest", ingest_node)
     g.add_node("offer_objects", offer_node)
+    g.add_node("sentiment", sentiment_node)
     g.add_edge(START, "ingest")
+    # Sentiment runs alongside the section agents; both join at END.
     g.add_edge("ingest", "offer_objects")
+    g.add_edge("ingest", "sentiment")
     g.add_edge("offer_objects", END)
+    g.add_edge("sentiment", END)
     return g.compile()
 
 
@@ -68,5 +77,6 @@ def analyse_rhp(ipo: Ipo, rhp_pdf: Path, adapters: Adapters, config: Config) -> 
         status="complete",
         verdict=None,  # set by the synthesizer (ticket 20)
         offer=state["offer"],
+        sentiment=state.get("sentiment"),
         rhp_sha256=state["doc"].sha256,
     )

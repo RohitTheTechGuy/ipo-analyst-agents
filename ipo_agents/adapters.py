@@ -18,6 +18,19 @@ class RhpDownloader(Protocol):
     def download(self, url: str, dest_dir: Path) -> Path: ...
 
 
+@dataclass(frozen=True)
+class SearchHit:
+    url: str
+    title: str
+    source_name: str
+    published: date | None  # None when the provider can't date it; such hits are never used
+    content: str  # the page's text, so no separate fetch is needed
+
+
+class WebSearch(Protocol):
+    def search(self, query: str, *, max_results: int, published_after: date) -> list[SearchHit]: ...
+
+
 class Notifier(Protocol):
     def send_message(self, text: str) -> None: ...
     def send_document(self, path: Path, caption: str = "") -> None: ...
@@ -29,3 +42,4 @@ class Adapters:
     downloader: RhpDownloader
     llm: LLM
     notifier: Notifier
+    search: WebSearch | None = None  # None: sentiment is reported as unavailable

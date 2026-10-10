@@ -50,11 +50,12 @@ def test_spend_summing_to_exactly_70_percent_degrades_despite_float_rounding(tin
     assert [c["model"] for c in adapters.llm.calls] == ["terra", "terra", "luna"]
 
 
-def rhp_with_pages(tmp_path, n):
+def rhp_with_pages(tmp_path, tiny_rhp, n):
+    """tiny_rhp's 7 sections padded to n pages with short text pages (blank pages would be OCR'd)."""
     path = tmp_path / f"rhp_{n}.pdf"
-    doc = fitz.open()
-    for i in range(n):
-        doc.new_page().insert_text((72, 72), "THE OFFER\nTotal issue size of up to Rs. 1,250.00 crore" if i == 1 else "")
+    doc = fitz.open(tiny_rhp)
+    for _ in range(n - doc.page_count):
+        doc.new_page().insert_text((72, 72), "Continued disclosures.")
     doc.save(path)
     return path
 
@@ -67,10 +68,10 @@ def rhp_with_pages(tmp_path, n):
     # 1,300 pages: $0.572 + $0.47 = $1.042 <= $1.05: normal routing.
     (1_300, "terra"),
 ])
-def test_large_rhp_starts_in_degraded_mode(tmp_path, adapters, config, pages, model):
+def test_large_rhp_starts_in_degraded_mode(tmp_path, tiny_rhp, adapters, config, pages, model):
     adapters.llm = offer_llm(config)
 
-    analyse_rhp(make_ipo(), rhp_with_pages(tmp_path, pages), adapters, config)
+    analyse_rhp(make_ipo(), rhp_with_pages(tmp_path, tiny_rhp, pages), adapters, config)
 
     assert [c["model"] for c in adapters.llm.calls] == [model]
 
