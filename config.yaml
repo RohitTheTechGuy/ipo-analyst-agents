@@ -23,10 +23,14 @@ routing:
 budget:
   cap_usd: 1.50
   degrade_pct: 70
+  # Pre-run estimate: pages x (tokens_per_page in + output_tokens_per_page out) at Luna prices + fixed_usd.
+  # Over degrade_pct of the cap => the run starts degraded.
+  estimate: { tokens_per_page: 1300, output_tokens_per_page: 150, fixed_usd: 0.47 }
 
 groq_limits:
   max_call_tokens: 6000
   daily_budget_pct: 80
+  daily_cap_tokens: 200000
 
 default_max_tokens: 4000
 db_path: data/ipo.db

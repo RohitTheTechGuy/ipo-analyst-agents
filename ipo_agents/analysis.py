@@ -12,6 +12,7 @@ from ipo_agents.budget import BudgetMeter, MeteredLLM
 from ipo_agents.config import Config
 from ipo_agents.contracts import Ipo, OfferObjects, Report, SectionedDocument, Sentiment
 from ipo_agents.ingestion import ingest
+from ipo_agents.router import estimate_run_usd
 from ipo_agents.sentiment import gather_sentiment
 
 EXTRACT_RULES = (
@@ -40,7 +41,6 @@ def build_graph(adapters: Adapters, config: Config):
 
     def offer_node(state: AnalysisState):
         result = adapters.llm.invoke_structured(
-            model=config.routing["offer_objects"],
             system=f"You extract the Offer & Objects section of an Indian IPO RHP. {EXTRACT_RULES}",
             user=_pages_text(state["doc"]),
             schema=OfferObjects,
@@ -68,7 +68,9 @@ def build_graph(adapters: Adapters, config: Config):
 def analyse_rhp(ipo: Ipo, rhp_pdf: Path, adapters: Adapters, config: Config) -> Report:
     """Raises BudgetExceeded if a call would push this IPO's spend over the cap."""
     # Every agent call goes through the IPO's meter; spend already logged for it carries over.
-    adapters = dataclasses.replace(adapters, llm=MeteredLLM(adapters.llm, BudgetMeter(ipo.ipo_id, config)))
+    meter = BudgetMeter(ipo.ipo_id, config)
+    meter.estimate_usd = estimate_run_usd(rhp_pdf, config)  # a large RHP starts degraded
+    adapters = dataclasses.replace(adapters, llm=MeteredLLM(adapters.llm, meter))
     state = build_graph(adapters, config).invoke({"ipo": ipo, "rhp_pdf": str(rhp_pdf)})
     return Report(
         ipo=ipo,
