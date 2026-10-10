@@ -44,10 +44,10 @@ def run_daily(today: date, adapters: Adapters, config: Config) -> RunSummary:
     summary = RunSummary()
     try:
         ipos = adapters.exchange.open_ipos(today)
-    except DiscoveryError:
+    except DiscoveryError as exc:
         log.exception("no source could list open IPOs")
         try:
-            adapters.notifier.send_message(NO_SOURCE_ALERT)
+            adapters.notifier.send_message(f"{NO_SOURCE_ALERT}\n{exc}")
         except Exception:
             log.exception("telegram send failed for the no-source alert")
         ipos = []
@@ -56,6 +56,9 @@ def run_daily(today: date, adapters: Adapters, config: Config) -> RunSummary:
         if store.status(ipo.ipo_id) in TERMINAL:
             summary.skipped.append(ipo.ipo_id)
             continue
+        if ipo.rhp_url is None and (known_rhp := store.rhp_url(ipo.ipo_id)):
+            # A fallback source may lack the link an earlier source found; don't hold the IPO again.
+            ipo = ipo.model_copy(update={"rhp_url": known_rhp, "is_draft": False})
         if ipo.rhp_url is None or ipo.is_draft:
             # Never analyse a draft: hold until the exchange page links the final RHP.
             store.upsert(ipo, "waiting_rhp")
