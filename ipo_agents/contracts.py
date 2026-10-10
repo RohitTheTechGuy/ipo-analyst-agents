@@ -173,6 +173,48 @@ class BusinessIndustry(BaseModel):
     single_geography: Dependence = Field(description="Most revenue from a single state, region or country")
 
 
+class Promoter(BaseModel):
+    name: str
+    background: str = Field(description="Education, experience and other businesses, in one or two sentences")
+    page: int = Field(ge=1)
+
+
+class GroupCompany(BaseModel):
+    name: str
+    same_line_of_business: bool = Field(
+        description="True if the RHP says it is in the same or a similar line of business, or has common pursuits")
+    page: int = Field(ge=1)
+
+
+class Remuneration(BaseModel):
+    name: str
+    role: str = Field(description="e.g. Managing Director, Chief Financial Officer")
+    is_promoter: bool = Field(description="True if this person is a named promoter")
+    amount: Fact = Field(description="Total remuneration for the latest full fiscal year, rupee amount")
+
+
+class Dividend(BaseModel):
+    period: str = Field(description="Fiscal year or period, as written")
+    per_share: Fact = Field(description="Dividend per equity share, ₹")
+
+
+class PromotersGovernance(BaseModel):
+    """Promoters & Governance section (Our Management, Our Promoters, Group Companies, History,
+    Subsidiaries, Dividend Policy)."""
+
+    promoters: list[Promoter]
+    group_companies: list[GroupCompany]
+    subsidiaries: list[Cited]
+    remuneration: list[Remuneration] = Field(description="Each promoter, director and KMP paid in the latest full fiscal year")
+    board_size: Fact = Field(description="Number of directors on the board")
+    independent_directors: Fact = Field(description="Number of independent directors on the board")
+    promoter_shares_pledged: Fact = Field(
+        description="Promoter shares pledged or encumbered, number of shares or % as printed; 'Nil' is 0")
+    dividends: list[Dividend] = Field(description="Dividends declared in the last three fiscal years and the stub period")
+    auditor_changes: list[Cited] = Field(description="Each change of statutory auditor in the last three years")
+    kmp_changes: list[Cited] = Field(description="Each change in key managerial personnel in the last three years")
+
+
 class RedFlag(BaseModel):
     """A red flag raised by Python from verified facts (never by a model)."""
 
@@ -234,6 +276,7 @@ class Report(BaseModel):
     verdict: Verdict | None
     offer: OfferObjects | None = None
     business: BusinessIndustry | None = None
+    governance: PromotersGovernance | None = None
     sentiment: Sentiment | None = None
     unverified_fields: list[str] = []
     red_flags: list[RedFlag] = []

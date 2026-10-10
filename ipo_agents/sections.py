@@ -1,7 +1,7 @@
 """Section agent registry: one SectionSpec (prompt + schema) per section group. The graph runs every entry."""
 from __future__ import annotations
 
-from ipo_agents.contracts import BusinessIndustry, OfferObjects
+from ipo_agents.contracts import BusinessIndustry, OfferObjects, PromotersGovernance
 from ipo_agents.section_agent import SectionSpec
 
 OFFER_OBJECTS_PROMPT = (
@@ -31,10 +31,26 @@ BUSINESS_INDUSTRY_PROMPT = (
     "several parts is one item."
 )
 
+PROMOTERS_GOVERNANCE_PROMPT = (
+    "You extract the Promoters & Governance section of an Indian IPO red herring prospectus (RHP): Our "
+    "Management, Our Promoters and Promoter Group, Group Companies, History and Certain Corporate Matters, "
+    "Our Subsidiaries and Dividend Policy. Extract each promoter with a one- or two-sentence background "
+    "(education, experience, other businesses); each group company, marking whether the RHP says it is in "
+    "the same or a similar line of business or has common pursuits; the subsidiaries; the remuneration of "
+    "each promoter, director and key managerial personnel (KMP) for the latest full fiscal year, marking "
+    "who is a promoter; the number of directors and of independent directors; promoter shares pledged or "
+    "encumbered; dividends declared per share; and each change of statutory auditor and each change in KMP "
+    "in the last three years, with its page. When merging parts: Our Management is authoritative for the "
+    "board, remuneration and KMP changes, Our Promoters for promoters and pledges, Group Companies for "
+    "group companies; the same person, company or change in several parts is one item."
+)
+
 SECTIONS: dict[str, SectionSpec] = {
     spec.group: spec for spec in [
         SectionSpec(group="offer_objects", schema=OfferObjects, prompt=OFFER_OBJECTS_PROMPT, report_field="offer"),
         SectionSpec(group="business_industry", schema=BusinessIndustry, prompt=BUSINESS_INDUSTRY_PROMPT,
                     report_field="business"),
+        SectionSpec(group="promoters_governance", schema=PromotersGovernance, prompt=PROMOTERS_GOVERNANCE_PROMPT,
+                    report_field="governance"),
     ]
 }
