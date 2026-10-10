@@ -1,9 +1,40 @@
+import os
+import subprocess
 from pathlib import Path
 
 import fitz
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _golden_dir() -> Path:
+    """GOLDEN_DIR, else this checkout's tests/golden, else the main checkout's (PDFs are gitignored)."""
+    if os.environ.get("GOLDEN_DIR"):
+        return Path(os.environ["GOLDEN_DIR"])
+    local = REPO_ROOT / "tests" / "golden"
+    if any(local.glob("*/rhp.pdf")):
+        return local
+    try:
+        common = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                                cwd=REPO_ROOT, capture_output=True, text=True, check=True).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return local
+    return Path(common).parent / "tests" / "golden"
+
+
+@pytest.fixture(scope="session")
+def golden_rhp():
+    """Returns a function: company slug -> path to its golden RHP, skipping if the PDF is absent."""
+    root = _golden_dir()
+
+    def _get(slug: str) -> Path:
+        path = root / slug / "rhp.pdf"
+        if not path.exists():
+            pytest.skip(f"golden RHP not present: {path}")
+        return path
+
+    return _get
 
 
 @pytest.fixture
