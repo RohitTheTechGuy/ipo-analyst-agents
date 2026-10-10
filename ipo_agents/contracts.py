@@ -93,5 +93,6 @@ class Report(BaseModel):
 class RunSummary(BaseModel):
     analysed: list[str] = []
     skipped: list[str] = []
+    waiting_rhp: list[str] = []
     failed: list[str] = []
     notify_failed: list[str] = []
