@@ -32,7 +32,7 @@ flowchart TD
         SYN --> REP[_report: Python calcs · flags · cross-checks]
     end
 
-    REP --> ADV[🤖 Financial Advisor<br/>BUY / NO BUY · ticket 27]
+    REP --> ADV[🤖 Financial Advisor<br/>BUY / NO BUY]
     ADV --> PDF[PDF renderer]
     PDF --> TG[Telegram: summary + PDF]
 
@@ -63,7 +63,7 @@ flowchart LR
 | `luna` | `gpt-5.6-luna` (OpenAI) | 0.20 · 1.20 | Bulk reading (map), long or descriptive sections, sentiment aggregate |
 | `terra` | `gpt-5.6-terra` (OpenAI) | 2.00 · 12.00 | Steps that drive the decision |
 | `groq` | `openai/gpt-oss-120b` (Groq) | free tier | Small calls. Any Groq failure, or a call over 6k tokens, falls back to Luna. |
-| `sol` | `gpt-6.1-sol` (OpenAI) | 2.00 · 10.00 | Financial Advisor (ticket 27) |
+| `sol` | `gpt-6.1-sol` (OpenAI) | 2.00 · 10.00 | Financial Advisor (high reasoning effort) |
 
 The routing lives in `config.yaml` (`routing:`). Once spend passes 70% of the $1.50 cap, Terra tasks move down to Luna.
 
@@ -115,16 +115,22 @@ All 8 share:
   - Points that cite an unknown ID are dropped, and so are points containing a number not in their cited evidence.
   - A Subscribe verdict backed only by GMP is downgraded to Neutral.
 
-### Financial Advisor 🤖 (`advisor.py`, ticket 27, in progress)
+### Financial Advisor 🤖 (`advisor.py`)
 - **Role:** an expert IPO advisor giving the headline **BUY / NO BUY**, with conviction, time horizon, reasons, key risks and what would change its mind.
 - **Model:** `gpt-6.1-sol`, at high reasoning effort.
 - **Budget:** its own ledger, `<ipo_id>:advisor`, with a $0.50 cap. It is separate from the analysis's $1.50.
 - **Sees:**
   - The synthesizer's evidence digest.
   - The analyst view, as `A:` items.
-  - Fresh market data and context (days left to close, minimum investment).
+  - Fresh market data, as `S:` items (only article points whose numbers are grounded).
+  - Context, as `K:` items (days left to close, minimum investment).
   - It never sees raw RHP text.
-- **When it runs:** once on analysis day, and again on the morning of closing day (sentiment is re-gathered first).
+- **Checks (Python):** same evidence-ID and number checks as the synthesizer. A BUY resting only on market data or the analyst view is cut to low conviction. Fewer than 2 surviving reasons means no advice.
+- **When it runs:**
+  - At the end of `analyse_rhp` on analysis day, so the PDF renders with the advisor box.
+  - On closing-day morning, after reloading `report.json` and re-gathering sentiment. The ⏰ message shows "was NO BUY → now BUY" or "Same call".
+  - Other daily updates repeat the analysis-day call with no model call.
+- **Fails soft:** if the advisor errors or hits its $0.50 cap, the analysis summary and PDF still go out.
 
 ### Deterministic steps (no model)
 | Step | Module | Does |
@@ -167,7 +173,7 @@ These are files the run reads and writes. All of them are local and gitignored.
 | `data/ipo.db`, table `ipos` | Runner, Store | Runner, daily updates, dry run | Each IPO's status (`discovered`, `waiting_rhp`, `analysing`, `done`, `failed`, `failed_budget`), dates, band, symbol, verdict, report path, date of last update |
 | `data/ipo.db`, table `llm_calls` | Budget meter | Budget meter, router, `--reset-budget` | Every model call: ledger, task, model, tokens, cost. Spend per IPO and Groq's 24-hour usage are summed from here. |
 | `data/checkpoints.db` | LangGraph `SqliteSaver` | `analyse_rhp` on resume | Graph state per `ipo_id:rhp_sha256`. Deleted when a run finishes. |
-| `data/work/<ipo_id>/` | Downloader, renderer, advisor | Analysis, closing-day refresh | `rhp.pdf`, `report_<SYMBOL>.pdf`, `report.json`, and `advice_<date>.json` once ticket 27 lands |
+| `data/work/<ipo_id>/` | Downloader, renderer, advisor | Analysis, closing-day refresh | `rhp.pdf`, `report_<SYMBOL>.pdf`, `report.json` (path also kept in `ipos.report_path`), `advice_<date>.json` |
 | `config.yaml` | You | Everything | Models, prices, routing, caps, thresholds |
 | `.env` | You | `wiring.py`, `cli.py` | API keys and the Telegram bot |
 | `logs/ipo-agents.log` | CLI | You | Run logs. Secrets are never logged. |
