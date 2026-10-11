@@ -14,22 +14,16 @@ from ipo_agents.contracts import Fact, Ipo, Report, RunSummary, Sentiment, Subsc
 from ipo_agents.discovery import DiscoveryError
 from ipo_agents.flags import summary_line as offer_summary_line
 from ipo_agents.notify.reminders import send_closing_reminders
+from ipo_agents.report.labels import DISCLAIMER, VERDICT_LABELS
 from ipo_agents.store import TERMINAL, Store, same_company
 from ipo_agents.valuation import summary_line as valuation_summary_line
 from ipo_agents.verifier import COULD_NOT_VERIFY
 
 log = logging.getLogger(__name__)
 
-DISCLAIMER = "Not investment advice; generated from RHP + public sources."
 NO_SOURCE_ALERT = "⚠️ Could not list open IPOs from any source today"
 BULLET_CHARS = 120  # one line on a phone screen, roughly
 SUMMARY_RED_FLAGS = 3
-VERDICT_LABELS = {
-    "subscribe_long_term": "SUBSCRIBE (LONG TERM)",
-    "subscribe_listing_gains": "SUBSCRIBE – LISTING GAINS ONLY",
-    "neutral": "NEUTRAL",
-    "avoid": "AVOID",
-}
 
 
 def _sentiment_line(s: Sentiment) -> str:

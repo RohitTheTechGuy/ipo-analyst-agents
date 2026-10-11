@@ -1,8 +1,12 @@
 from datetime import date
+from pathlib import Path
 
+import pytest
+
+import ipo_agents.analysis as analysis
 from ipo_agents.contracts import Fact, OfferObjects
 from ipo_agents.runner import run_daily
-from tests.conftest import make_tiny_rhp
+from tests.conftest import make_tiny_rhp, pdf_text
 from tests.fakes import FakeDownloader, FakeExchange, ScriptedLLM, make_ipo, offer_objects
 
 TODAY = date(2026, 10, 13)
@@ -112,15 +116,35 @@ def test_telegram_failure_does_not_stop_other_ipos(adapters, config):
     assert "Beta Ltd IPO (Mainboard)" in adapters.notifier.messages[-1]
 
 
-def test_rendered_report_pdf_follows_the_summary(adapters, config, rendered_pdf):
-    pdf = rendered_pdf
+@pytest.mark.renderer
+def test_rendered_report_pdf_follows_the_summary(adapters, config):
     adapters.exchange = FakeExchange([make_ipo()])
     adapters.llm = offer_llm(config)
 
     run_daily(TODAY, adapters, config)
 
     assert len(adapters.notifier.messages) == 1
-    assert adapters.notifier.documents == [pdf]
+    [pdf] = adapters.notifier.documents
+    assert pdf == Path(config.work_dir) / "ACME-2026-10-13" / "report_ACME.pdf"
+    text = pdf_text(pdf)
+    assert "Acme Ltd" in text
+    assert "₹1,250 cr (p. 2)" in text  # the verified issue size, with its page
+
+
+def test_a_rendering_failure_still_sends_the_summary(adapters, config, monkeypatch, caplog):
+    def broken(report, out_dir):
+        raise ZeroDivisionError("renderer bug")
+    monkeypatch.setattr(analysis, "render_pdf", broken)
+    adapters.exchange = FakeExchange([make_ipo()])
+    adapters.llm = offer_llm(config)
+
+    summary = run_daily(TODAY, adapters, config)
+
+    assert summary.analysed == ["ACME-2026-10-13"]
+    [msg] = adapters.notifier.messages
+    assert "Acme Ltd IPO (Mainboard)" in msg
+    assert adapters.notifier.documents == []
+    assert "rendering the PDF report failed" in caplog.text
 
 
 def test_summary_shows_the_issue_size_and_ofs_shares_with_their_pages(adapters, config, tmp_path):

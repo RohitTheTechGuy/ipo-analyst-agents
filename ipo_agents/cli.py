@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from datetime import date, datetime
 from logging.handlers import RotatingFileHandler
@@ -25,6 +26,8 @@ log = logging.getLogger("ipo_agents.cli")
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 IST = ZoneInfo("Asia/Kolkata")
+RENDERER_ENV = "DYLD_FALLBACK_LIBRARY_PATH"
+HOMEBREW_LIB = Path("/opt/homebrew/lib")
 
 
 def today_in_india(now: datetime | None = None) -> date:
@@ -106,6 +109,20 @@ def remaining_budget(ipo: Ipo, config: Config) -> tuple[float, float]:
         store.close()
     spent = BudgetMeter(ipo_id, config).spent
     return spent, max(0.0, config.budget.cap_usd - spent)
+
+
+def reexec_with_renderer_env(*, environ: Mapping[str, str] = os.environ, platform: str = sys.platform,
+                             lib_dir: Path = HOMEBREW_LIB, argv: Sequence[str] | None = None,
+                             execve: Callable[..., None] = os.execve) -> None:
+    """WeasyPrint needs Homebrew's pango, which macOS finds only if DYLD_FALLBACK_LIBRARY_PATH is set
+    before Python starts. On a Mac with Homebrew and the variable unset, this replaces the process with
+    the same command, variable set (the launchd plist sets it already, so a scheduled run never re-execs)."""
+    if platform != "darwin" or environ.get(RENDERER_ENV) or not lib_dir.is_dir():
+        return
+    argv = list(sys.orig_argv if argv is None else argv)
+    sys.stdout.flush()  # execve drops anything still buffered
+    sys.stderr.flush()
+    execve(sys.executable, [sys.executable, *argv[1:]], {**environ, RENDERER_ENV: str(lib_dir)})
 
 
 def _parse_date(text: str) -> date:

@@ -1,0 +1,513 @@
+{#- IPO report (plan 5.8). Autoescape is on: every string from the RHP or a model is escaped. -#}
+{%- macro F(f) -%}
+{%- if f is none %}<span class="na">not disclosed</span>
+{%- elif f.value is none %}<span class="na">{{ f|missing }}</span>
+{%- else %}{{ f|fval }} <span class="pg">(p. {{ f.page }})</span>{% endif -%}
+{%- endmacro -%}
+{%- macro D(d) -%}
+{%- if d is none %}<span class="na">not computable</span>
+{%- elif d.value is none %}<span class="na">not computable ({{ d.not_computable_reason or "missing input" }})</span>
+{%- else %}{{ d|dval }} <span class="pg">({{ d|dref }})</span>{% endif -%}
+{%- endmacro -%}
+{%- macro C(c) -%}
+{%- if c is none %}<span class="na">not available</span>
+{%- elif c.value is none %}<span class="na">not available (claimed by {{ c.source_name }})</span>
+{%- else %}<span class="claimed">{{ c|cval }} <span class="src">claimed by {{ c.source_name }}, as of {{ c.as_of.strftime("%d %b %Y") }}</span></span>{% endif -%}
+{%- endmacro -%}
+{%- macro V(x) -%}
+{%- set k = x|kind -%}
+{%- if k == "fact" %}{{ F(x) }}{% elif k == "derived" %}{{ D(x) }}{% elif k == "claimed" %}{{ C(x) }}{% else %}<span class="na">not disclosed / not reached</span>{% endif -%}
+{%- endmacro -%}
+{%- macro Q(q) -%}
+{%- if q is none or q.verbatim_quote is none %}<span class="na">could not verify</span>
+{%- else %}“{{ q.verbatim_quote }}” <span class="pg">(p. {{ q.page }})</span>{% endif -%}
+{%- endmacro -%}
+{%- macro CT(t) -%}
+{{ t.text }} {% if t.source.verbatim_quote %}<span class="pg">(p. {{ t.source.page }})</span>{% else %}<span class="na">(could not verify)</span>{% endif -%}
+{%- endmacro -%}
+{%- macro pages(ps) -%}{% if ps %} <span class="pg">(p. {{ ps|join(", p. ") }})</span>{% endif %}{%- endmacro -%}
+{%- macro missing_section(what) -%}
+<p class="na">{% if partial %}Not reached: the run stopped at the budget cap before {{ what }}.{% else %}Nothing disclosed / not reached for {{ what }}.{% endif %}</p>
+{%- endmacro -%}
+{%- macro none_listed(items, what="None disclosed.") -%}{% if not items %}<p class="na">{{ what }}</p>{% endif %}{%- endmacro -%}
+{%- macro red(text, extra="") -%}<div class="callout red"><span class="tag">RED FLAG</span>{{ text }}{{ extra }}</div>{%- endmacro -%}
+{%- macro green(text, extra="") -%}<div class="callout green"><span class="tag">POSITIVE</span>{{ text }}{{ extra }}</div>{%- endmacro -%}
+{%- macro flag_callouts(flags) -%}
+{% for f in flags %}
+{% if f.severity in ("warning", "error") %}{{ red(f.message, pages(f.evidence_pages)) }}
+{% else %}<div class="callout info"><span class="tag">NOTE</span>{{ f.message }}{{ pages(f.evidence_pages) }}</div>{% endif %}
+{% endfor %}
+{%- endmacro -%}
+{%- macro checks(items) -%}
+{% for c in items if c.status == "raised" %}{{ red(c.detail, " (" ~ c.code ~ ")") }}
+{% endfor %}
+{% set clear = items|selectattr("status", "equalto", "clear")|list %}
+{% set nc = items|selectattr("status", "equalto", "not_computable")|list %}
+{% if clear %}<p class="note">Checked, clear: {{ clear|map(attribute="code")|join(", ") }}.</p>{% endif %}
+{% if nc %}<p class="note">Not computable (inputs not verified): {% for c in nc %}{{ c.code }}{% if not loop.last %}, {% endif %}{% endfor %}.</p>{% endif %}
+{%- endmacro -%}
+{%- macro summary_of(key) -%}
+{% if r.synthesis %}{% for s in r.synthesis.section_summaries if s.section == key %}<p>{{ s.text }}</p>{% endfor %}{% endif %}
+{%- endmacro -%}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{ ipo.name }} IPO report</title>
+<style>{{ css|safe }}</style>
+</head>
+<body>
+
+{# ---------------------------------------------------------------- 1. Summary #}
+<section class="page" id="summary">
+{% if partial %}<div class="banner">PARTIAL — stopped at the budget cap. Sections the run did not reach say so.</div>{% endif %}
+<h1>{{ ipo.name }}</h1>
+<div class="sub">
+  <span>{{ ipo.symbol }} · Mainboard IPO</span>
+  <span>Open {{ ipo.open_date.strftime("%d %b %Y") }} – close {{ ipo.close_date.strftime("%d %b %Y") }}</span>
+  <span>Price band {{ ipo.price_band }}</span>
+  <span>Lot {{ ipo.lot_size|indian }} shares</span>
+  <span>Minimum investment {% if min_investment %}{{ min_investment.text }} <span class="pg">({{ min_investment.basis }})</span>{% else %}<span class="na">not computable</span>{% endif %}</span>
+</div>
+<h2><span class="num">1</span>Summary</h2>
+
+<div class="verdict">
+  <span class="badge {{ verdict_class }}">{{ verdict_label }}</span>
+  {% if r.synthesis %}<span class="confidence">Confidence: <b>{{ r.synthesis.confidence|upper }}</b></span>
+  {% else %}<span class="confidence na">{% if partial %}The run stopped at the budget cap before the verdict.{% else %}No verdict: nothing was verified to decide on.{% endif %}</span>{% endif %}
+</div>
+
+<div class="tiles">
+{% for t in tiles %}
+  <div class="tile">
+    <div class="label">{{ t.label }}</div>
+    {% if t.multiple is defined %}
+      {% set m = t.multiple %}
+      {% if m and m.ipo.value is not none %}
+      <div class="value">{{ m.ipo|dval }} vs {% if m.median.value is not none %}{{ m.median|dval }}{% else %}—{% endif %}</div>
+      <div class="ref">IPO {{ m.ipo|dref }}{% if m.premium_pct.value is not none %}; {{ m.premium_pct.value|abs|round(0)|int }}% {{ "premium" if m.premium_pct.value >= 0 else "discount" }} to peer median{% endif %}</div>
+      {% else %}<div class="value na">not computed</div>{% endif %}
+    {% else %}
+      {% set k = t.value|kind %}
+      {% if k == "none" or t.value.value is none %}<div class="value na">{{ "not available" if k in ("claimed", "none") else "not disclosed" }}</div><div class="ref">{{ V(t.value) }}</div>
+      {% elif k == "fact" %}<div class="value">{{ t.value|fval }}</div><div class="ref">(p. {{ t.value.page }})</div>
+      {% elif k == "derived" %}<div class="value">{{ t.value|dval }}</div><div class="ref">{{ t.value|dref }}</div>
+      {% else %}<div class="value claimed">{{ t.value|cval }}</div><div class="ref">unofficial; claimed by {{ t.value.source_name }}, as of {{ t.value.as_of.strftime("%d %b %Y") }}</div>{% endif %}
+    {% endif %}
+  </div>
+{% endfor %}
+</div>
+
+<h3>Why</h3>
+{% if r.synthesis and r.synthesis.reasons %}
+<ol class="reasons">{% for p in r.synthesis.reasons %}<li>{{ p.text }}</li>{% endfor %}</ol>
+{% else %}<p class="na">No reasons: the verdict was not reached.</p>{% endif %}
+
+<h3>Top red flags</h3>
+{% for f in red_flags %}{{ red(f.text, pages(f.pages)) }}
+{% else %}<p class="na">No red flags raised by the checks that could run.</p>{% endfor %}
+
+{% if r.synthesis and r.synthesis.top_positives %}
+<h3>Positives</h3>
+{% for p in r.synthesis.top_positives[:3] %}{{ green(p.text) }}
+{% endfor %}
+{% endif %}
+<p class="note">How to read this report: <span class="pg">(p. 287)</span> is the RHP page a number is printed on;
+<span class="pg">computed from p. X, p. Y</span> marks a number Python worked out from RHP figures;
+<span class="claimed">purple <span class="src">claimed by …</span></span> marks a third-party number, not from the RHP.</p>
+</section>
+
+{# ---------------------------------------------------------------- 2. Offer #}
+<section class="page" id="offer">
+<h2><span class="num">2</span>Offer structure</h2>
+{% set o = r.offer %}
+{% if o is none %}{{ missing_section("the offer section") }}{% else %}
+{{ summary_of("offer_objects") }}
+{% set fp = r.calculations.get("fresh_pct") %}{% set op = r.calculations.get("ofs_pct") %}
+{% if fp and op and fp.value is not none and op.value is not none %}
+<h3>Fresh issue vs offer for sale</h3>
+<div class="split">
+  {% if fp.value > 0 %}<div class="fresh" style="width: {{ fp.value|round(1) }}%">Fresh {{ fp.value|round(1) }}%</div>{% endif %}
+  {% if op.value > 0 %}<div class="ofs" style="width: {{ op.value|round(1) }}%">OFS {{ op.value|round(1) }}%</div>{% endif %}
+</div>
+<p class="pg">{{ fp|dref }}</p>
+{% endif %}
+<div class="two"><div>
+<table class="kv">
+  <tr><td>Issue size</td><td>{{ F(o.issue_size) }}</td></tr>
+  <tr><td>Fresh issue</td><td>{{ F(o.fresh_issue) }}</td></tr>
+  <tr><td>Offer for sale</td><td>{{ F(o.ofs_amount) }}</td></tr>
+  <tr><td>OFS shares</td><td>{{ F(o.ofs_shares) }}</td></tr>
+  <tr><td>Shares before the issue</td><td>{{ F(o.pre_issue_shares) }}</td></tr>
+  <tr><td>Shares after the issue</td><td>{{ F(o.post_issue_shares) }}</td></tr>
+  <tr><td>Promoter holding before</td><td>{{ F(o.promoter_holding_pre_pct) }}</td></tr>
+  <tr><td>Promoter holding after</td><td>{{ F(o.promoter_holding_post_pct) }}</td></tr>
+</table>
+</div><div>
+<table class="kv">
+  <tr><td>Market cap at upper band</td><td>{{ D(r.calculations.get("market_cap_cr")) }}</td></tr>
+  <tr><td>OFS share of issue</td><td>{{ D(r.calculations.get("ofs_pct")) }}</td></tr>
+  <tr><td>Dilution</td><td>{{ D(r.calculations.get("dilution_pct")) }}</td></tr>
+  <tr><td>Promoter holding change</td><td>{{ D(r.calculations.get("promoter_change_pp")) }}</td></tr>
+  <tr><td>QIB / NII / retail</td><td>{{ F(o.qib_pct) }} / {{ F(o.nii_pct) }} / {{ F(o.retail_pct) }}</td></tr>
+  <tr><td>Anchor portion</td><td>{{ F(o.anchor_pct) }}</td></tr>
+</table>
+</div></div>
+
+<h3>Selling shareholders</h3>
+{% if o.selling_shareholders %}
+<table>
+  <tr><th>Name</th><th>Category</th><th class="n">Shares offered</th><th class="n">Holding after</th></tr>
+  {% for s in o.selling_shareholders %}
+  <tr><td>{{ s.name }}</td><td>{{ s.category or "—" }}</td><td class="n">{{ F(s.shares_offered) }}</td><td class="n">{{ F(s.holding_after) }}</td></tr>
+  {% endfor %}
+</table>
+{% else %}{{ none_listed(o.selling_shareholders, "No selling shareholders disclosed.") }}{% endif %}
+
+<h3>Use of fresh-issue proceeds</h3>
+<table>
+  <tr><th>Object</th><th class="n">Amount</th></tr>
+  {% for p in o.objects %}<tr><td>{{ p.purpose }}</td><td class="n">{{ F(p.amount) }}</td></tr>{% endfor %}
+  <tr><td>General corporate purposes</td><td class="n">{{ F(o.gcp_amount) }}</td></tr>
+  <tr><td>GCP share of the fresh issue</td><td class="n">{{ D(r.calculations.get("gcp_pct_of_fresh")) }}</td></tr>
+</table>
+{% endif %}
+</section>
+
+{# ---------------------------------------------------------------- 3. Business #}
+<section class="page" id="business">
+<h2><span class="num">3</span>Business</h2>
+{% set b = r.business %}
+{% if b is none %}{{ missing_section("the business section") }}{% else %}
+{{ summary_of("business_industry") }}
+{% if b.what_it_sells %}<p><b>What it sells:</b> {{ b.what_it_sells }}</p>{% endif %}
+{{ flag_callouts(section_flags.get("business_industry", [])) }}
+<div class="two"><div>
+<h3>Concentration</h3>
+<table class="kv">
+  <tr><td>Largest customer</td><td>{{ F(b.top1_customer_pct) }}</td></tr>
+  <tr><td>Top 10 customers</td><td>{{ F(b.top10_customers_pct) }}</td></tr>
+  <tr><td>Largest supplier</td><td>{{ F(b.top_supplier_pct) }}</td></tr>
+  <tr><td>Order book</td><td>{{ F(b.order_book) }}</td></tr>
+  <tr><td>Single plant</td><td>{% if b.single_plant.dependent %}Yes {{ Q(b.single_plant.evidence) }}{% else %}No{% endif %}</td></tr>
+  <tr><td>Single geography</td><td>{% if b.single_geography.dependent %}Yes {{ Q(b.single_geography.evidence) }}{% else %}No{% endif %}</td></tr>
+</table>
+</div><div>
+<h3>Revenue mix</h3>
+{% if b.revenue_mix %}
+<table>
+  <tr><th>Segment</th><th>Basis</th><th class="n">Share</th></tr>
+  {% for m in b.revenue_mix %}<tr><td>{{ m.name }}</td><td>{{ m.basis }}</td><td class="n">{{ F(m.share) }}</td></tr>{% endfor %}
+</table>
+{% else %}{{ none_listed(b.revenue_mix) }}{% endif %}
+</div></div>
+
+<h3>Capacity</h3>
+{% if b.capacity %}
+<table>
+  <tr><th>Facility</th><th class="n">Installed capacity</th><th class="n">Utilisation</th></tr>
+  {% for c in b.capacity %}<tr><td>{{ c.facility }}</td><td class="n">{{ F(c.installed_capacity) }}</td><td class="n">{{ F(c.utilisation_pct) }}</td></tr>{% endfor %}
+</table>
+{% else %}{{ none_listed(b.capacity) }}{% endif %}
+
+<div class="two"><div>
+<h3>Strengths the company claims</h3>
+{% for m in b.moats %}{{ green(CT(m)) }}{% else %}{{ none_listed([]) }}{% endfor %}
+</div><div>
+<h3>Competitors named</h3>
+{% if b.competitors %}<ul>{% for c in b.competitors %}<li>{{ CT(c) }}</li>{% endfor %}</ul>{% else %}{{ none_listed([]) }}{% endif %}
+</div></div>
+
+<h3>Industry claims</h3>
+{% for c in b.industry_claims %}
+<p>{{ c.claim }}{% if c.figure %} — {{ F(c.figure) }}{% endif %} <span class="note">({{ c.attribution }}{% if c.source.page %}, p. {{ c.source.page }}{% endif %})</span></p>
+{% else %}{{ none_listed([]) }}{% endfor %}
+{% endif %}
+</section>
+
+{# ---------------------------------------------------------------- 4. Financials #}
+<section class="page" id="financials">
+<h2><span class="num">4</span>Financials</h2>
+{% set fin = r.financials %}
+{% if fin is none %}{{ missing_section("the financials") }}{% else %}
+{{ summary_of("financials") }}
+{% if fin.periods %}
+{% set rows = [("Revenue from operations", "revenue_from_operations"), ("Total income", "total_income"), ("EBITDA", "ebitda"),
+               ("Profit after tax", "pat"), ("Cash from operations", "cfo"), ("Capex", "capex"),
+               ("Total borrowings", "total_borrowings"), ("Cash and equivalents", "cash_and_equivalents"),
+               ("Net worth", "net_worth"), ("Trade receivables", "trade_receivables"), ("Inventories", "inventories"),
+               ("Trade payables", "trade_payables"), ("RoNW", "ronw_pct"), ("RoCE", "roce_pct")] %}
+<table>
+  <tr><th></th>{% for p in fin.periods %}<th class="n">{{ p.label }}{% if p.kind == "stub" %} (stub){% endif %}</th>{% endfor %}</tr>
+  {% for label, field in rows %}
+  <tr><td>{{ label }}</td>{% for p in fin.periods %}<td class="n">{{ F(p[field]) }}</td>{% endfor %}</tr>
+  {% endfor %}
+</table>
+{% else %}{{ none_listed([], "No financial periods disclosed.") }}{% endif %}
+
+<div class="chart">
+{% if charts.trend %}<img src="{{ charts.trend }}" alt="Revenue, EBITDA and PAT by period"><div class="caption">Revenue, EBITDA and PAT, ₹ crore (verified figures only; page references in the table above).</div>
+{% else %}<p class="na">Revenue / EBITDA / PAT chart: fewer than two verified figures.</p>{% endif %}
+</div>
+<div class="chart">
+{% if charts.cash %}<img src="{{ charts.cash }}" alt="PAT against cash from operations"><div class="caption">PAT vs cash from operations, ₹ crore: profit that does not turn into cash shows as a gap.</div>
+{% else %}<p class="na">PAT vs cash-flow chart: fewer than two verified figures.</p>{% endif %}
+</div>
+
+<h3>Financial checks</h3>
+{{ checks(r.financial_flags) }}{{ none_listed(r.financial_flags, "No checks ran.") }}
+
+<h3>Auditor</h3>
+{% for a in fin.auditor_remarks %}{{ red(a.summary, " — " ~ (a.kind|replace("_", " "))) }}<blockquote>{{ Q(a.source) }}</blockquote>
+{% else %}<p>No auditor qualification or emphasis of matter reported.</p>{% endfor %}
+<p>Restatement: {% if fin.restatement is none %}<span class="na">not stated</span>{% else %}{{ "adjustments made" if fin.restatement.adjusted else "no adjustments" }} {{ Q(fin.restatement.source) }}{% endif %}</p>
+{% endif %}
+</section>
+
+{# ---------------------------------------------------------------- 5. Valuation #}
+<section class="page" id="valuation">
+<h2><span class="num">5</span>Valuation vs peers</h2>
+{% set v = r.valuation %}
+{% if v is none %}{{ missing_section("peer valuation") }}{% else %}
+{% if v.read %}<p>{{ v.read }}</p>{% endif %}
+{{ flag_callouts(section_flags.get("peer_valuation", [])) }}
+<p>IPO market cap at upper band: {{ D(v.ipo_market_cap) }}</p>
+{% if v.multiples %}
+<table>
+  <tr><th>Multiple</th><th class="n">IPO (upper band)</th><th class="n">Peer median</th><th class="n">Min</th><th class="n">Max</th><th class="n">Premium / discount</th></tr>
+  {% for m in v.multiples %}
+  <tr><td>{{ multiple_labels[m.multiple] }}<div class="note">{{ m.reason }}</div></td><td class="n">{{ D(m.ipo) }}</td><td class="n">{{ D(m.median) }}</td>
+      <td class="n">{{ D(m.min) }}</td><td class="n">{{ D(m.max) }}</td><td class="n">{{ D(m.premium_pct) }}</td></tr>
+  {% endfor %}
+</table>
+{% else %}{{ none_listed([], "No multiple was computed.") }}{% endif %}
+<div class="chart">
+{% if charts.peers %}<img src="{{ charts.peers }}" alt="Peer multiples with the IPO marked"><div class="caption">Headline multiple per peer (third-party data), the IPO at the upper band in blue, peer median dashed.</div>
+{% else %}<p class="na">Peer chart: not enough peer multiples.</p>{% endif %}
+</div>
+{% for title, rows in [("Peers from the RHP", v.rhp_peers), ("Agent-suggested peers (not in the RHP)", v.suggested_peers)] %}
+<h3>{{ title }}</h3>
+{% if rows %}
+<table>
+  <tr><th>Peer</th><th class="n">Price</th><th class="n">Market cap</th>{% for m in v.multiples %}<th class="n">{{ multiple_labels[m.multiple] }}</th>{% endfor %}</tr>
+  {% for p in rows %}
+  <tr><td>{{ p.name }}{% if p.quote %} <span class="pg">{{ p.quote.symbol }}</span>{% endif %}{% if p.reason %}<div class="note">{{ p.reason }}</div>{% endif %}</td>
+    {% if p.quote %}<td class="n">{{ C(p.quote.price) }}</td><td class="n">{{ C(p.quote.market_cap) }}</td>
+    {% else %}<td class="n na" colspan="2">{{ p.unavailable or "data unavailable" }}</td>{% endif %}
+    {% for m in v.multiples %}<td class="n">{% if m.multiple in p.multiples %}{{ D(p.multiples[m.multiple]) }}{% else %}—{% endif %}</td>{% endfor %}
+  </tr>
+  {% endfor %}
+</table>
+{% else %}{{ none_listed([], "None.") }}{% endif %}
+{% endfor %}
+{% if v.checks %}
+<h3>Growth and margin vs peers</h3>
+<table class="kv">{% for name, d in v.checks.items() %}<tr><td>{{ name|replace("_", " ") }}</td><td>{{ D(d) }}</td></tr>{% endfor %}</table>
+{% endif %}
+{% endif %}
+
+<h3>Basis for offer price (RHP)</h3>
+{% set pb = r.price_basis %}
+{% if pb is none %}{{ missing_section("the basis for offer price") }}{% else %}
+{{ summary_of("offer_price_basis") }}
+{{ flag_callouts(section_flags.get("offer_price_basis", [])) }}
+<table class="kv">
+  <tr><td>P/E at floor / cap</td><td>{{ F(pb.pe_at_floor) }} / {{ F(pb.pe_at_cap) }}</td></tr>
+  <tr><td>Industry P/E high / low / average</td><td>{{ F(pb.industry_pe.highest) }} / {{ F(pb.industry_pe.lowest) }} / {{ F(pb.industry_pe.average) }}</td></tr>
+  {% for kind, w in [("Primary", pb.waca_primary), ("Secondary", pb.waca_secondary)] %}
+  <tr><td>{{ kind }} WACA</td><td>{{ F(w.waca) }}; upper band is {{ D(r.calculations.get("cap_price_to_waca_" ~ kind|lower)) }}
+    {% if w.floor_price_times.value is not none or w.cap_price_times.value is not none %}<div>RHP: floor {{ F(w.floor_price_times) }}, cap {{ F(w.cap_price_times) }}</div>{% endif %}</td></tr>
+  {% endfor %}
+  {% for p in pb.nav_per_share %}<tr><td>NAV per share, {{ p.period }}</td><td>{{ F(p.value) }}</td></tr>{% endfor %}
+  {% for p in pb.ronw_pct %}<tr><td>RoNW, {{ p.period }}</td><td>{{ F(p.value) }}</td></tr>{% endfor %}
+</table>
+{% if pb.kpis %}
+<table>
+  <tr><th>Key performance indicator</th><th>Values</th></tr>
+  {% for k in pb.kpis %}<tr><td>{{ k.name }}</td><td>{% for v in k.values %}{{ v.period }}: {{ F(v.value) }}{% if not loop.last %}; {% endif %}{% else %}<span class="na">no values</span>{% endfor %}</td></tr>{% endfor %}
+</table>
+{% endif %}
+{% if pb.eps %}
+<table>
+  <tr><th>Period</th><th class="n">Basic EPS</th><th class="n">Diluted EPS</th></tr>
+  {% for e in pb.eps %}<tr><td>{{ e.period }}</td><td class="n">{{ F(e.basic) }}</td><td class="n">{{ F(e.diluted) }}</td></tr>{% endfor %}
+</table>
+{% endif %}
+{% if pb.peers %}
+<table>
+  <tr><th>Listed peer (RHP table)</th><th class="n">P/E</th><th class="n">EPS</th><th class="n">RoNW</th><th class="n">NAV / share</th><th class="n">Revenue</th></tr>
+  {% for p in pb.peers %}<tr><td>{{ p.name }}</td><td class="n">{{ F(p.pe) }}</td><td class="n">{{ F(p.eps) }}</td><td class="n">{{ F(p.ronw_pct) }}</td><td class="n">{{ F(p.nav_per_share) }}</td><td class="n">{{ F(p.revenue) }}</td></tr>{% endfor %}
+</table>
+{% endif %}
+{% endif %}
+</section>
+
+{# ---------------------------------------------------------------- 6. Risks #}
+<section class="page" id="risks">
+<h2><span class="num">6</span>Risks and fine print</h2>
+<h3>All red flags raised by the checks</h3>
+{{ flag_callouts(r.flags) }}{{ none_listed(r.flags, "No red flags raised by the checks that could run.") }}
+{% if r.cross_checks %}<h3>Cross-section consistency</h3>{{ checks(r.cross_checks) }}{% endif %}
+
+<h3>Top company-specific risks</h3>
+{% set rf = r.risk_factors %}
+{% if rf is none %}{{ missing_section("the risk factors") }}{% else %}
+{{ summary_of("risk_factors") }}
+{% set top = rf.top_company_specific %}
+{% if top %}
+<table>
+  <tr><th class="n">#</th><th>Risk</th><th>As printed</th><th class="n">Figure</th></tr>
+  {% for x in top %}<tr><td class="n">{{ x.severity_rank }}</td><td>{{ x.topic }}</td><td>{{ Q(x.title) }}</td><td class="n">{% if x.figure %}{{ F(x.figure) }}{% else %}—{% endif %}</td></tr>{% endfor %}
+</table>
+{% else %}{{ none_listed([], "No ranked company-specific risk verified.") }}{% endif %}
+<p class="note">{{ rf.risks|length }} risk factors in all, {{ rf.risks|selectattr("kind", "equalto", "generic")|list|length }} of them generic.</p>
+{% endif %}
+
+{% set lg = r.fine_print_legal %}
+{% if lg is none %}<h3>Litigation and fine print</h3>{{ missing_section("the litigation and fine print") }}{% else %}
+{{ summary_of("fine_print_legal") }}
+<h3>Outstanding litigation</h3>
+{% if lg.litigation %}
+<table>
+  <tr><th>Party</th><th>Type</th><th>Direction</th><th class="n">Cases</th><th class="n">Amount</th></tr>
+  {% for l in lg.litigation %}<tr><td>{{ l.party }}</td><td>{{ l.case_type }}</td><td>{{ l.direction }}</td><td class="n">{{ F(l.count) }}</td><td class="n">{{ F(l.amount) }}</td></tr>{% endfor %}
+</table>
+{% else %}{{ none_listed([], "No outstanding litigation disclosed.") }}{% endif %}
+<p>Contingent liabilities: {{ F(lg.contingent_liabilities) }}</p>
+{{ checks(r.legal_checks) }}
+<h3>Related-party transactions</h3>
+{% if lg.related_party %}
+<table>
+  <tr><th>Counterparty</th><th>Category</th><th>Period</th><th class="n">Amount</th></tr>
+  {% for t in lg.related_party %}<tr><td>{{ t.counterparty }}{% if t.promoter_entity %} <span class="note">(promoter entity)</span>{% endif %}</td><td>{{ t.category }}</td><td>{{ t.period }}</td><td class="n">{{ F(t.amount) }}</td></tr>{% endfor %}
+</table>
+{% else %}{{ none_listed([]) }}{% endif %}
+<h3>Pending or expired approvals</h3>
+{% for a in lg.approvals %}
+{% if a.critical %}{{ red(a.name ~ " — " ~ a.status ~ ", critical to the business", " ") }}{% else %}<p>{{ a.name }} — {{ a.status }}</p>{% endif %}<blockquote>{{ Q(a.source) }}</blockquote>
+{% else %}{{ none_listed([]) }}{% endfor %}
+{% if lg.material_contracts %}<h3>Material contracts with promoters</h3>{% for q in lg.material_contracts %}<blockquote>{{ Q(q) }}</blockquote>{% endfor %}{% endif %}
+{% endif %}
+
+<h3>Other material disclosures</h3>
+{% if r.other is none %}{{ missing_section("the other disclosures") }}
+{% else %}
+{% for i in r.other.items %}<p><b>{{ i.summary }}</b> {{ i.why_material }} <span class="pg">{% if i.source.page %}(p. {{ i.source.page }}){% endif %}</span>
+{% for f in i.figures %}{{ F(f) }}{% if not loop.last %}; {% endif %}{% endfor %}</p>
+{% else %}<p class="na">Nothing material found in the remaining pages.</p>{% endfor %}
+{% endif %}
+</section>
+
+{# ---------------------------------------------------------------- 7. Governance #}
+<section class="page" id="governance">
+<h2><span class="num">7</span>Promoters and governance</h2>
+{% set g = r.governance %}
+{% if g is none %}{{ missing_section("the promoters and governance section") }}{% else %}
+{{ summary_of("promoters_governance") }}
+{{ flag_callouts(section_flags.get("promoters_governance", [])) }}
+<h3>Promoters</h3>
+{% for p in g.promoters %}<p><b>{{ p.name }}</b> — {{ p.background }} {% if p.source.page %}<span class="pg">(p. {{ p.source.page }})</span>{% else %}<span class="na">(could not verify)</span>{% endif %}</p>
+{% else %}{{ none_listed([]) }}{% endfor %}
+<table class="kv">
+  <tr><td>Board size</td><td>{{ F(g.board_size) }}</td></tr>
+  <tr><td>Independent directors</td><td>{{ F(g.independent_directors) }}</td></tr>
+  <tr><td>Promoter shares pledged</td><td>{{ F(g.promoter_shares_pledged) }}</td></tr>
+  <tr><td>Promoter pay as % of PAT</td><td>{{ D(r.calculations.get("promoter_pay_pct_of_pat")) }}</td></tr>
+</table>
+<h3>Remuneration (latest full year)</h3>
+{% if g.remuneration %}
+<table>
+  <tr><th>Name</th><th>Role</th><th class="n">Amount</th></tr>
+  {% for m in g.remuneration %}<tr><td>{{ m.name }}{% if m.is_promoter %} <span class="note">(promoter)</span>{% endif %}</td><td>{{ m.role }}</td><td class="n">{{ F(m.amount) }}</td></tr>{% endfor %}
+</table>
+{% else %}{{ none_listed([]) }}{% endif %}
+<div class="two"><div>
+<h3>Group companies</h3>
+{% for c in g.group_companies %}<p>{{ c.name }}{% if c.same_line_of_business %} <b>— same line of business</b>{% endif %} {{ Q(c.source) }}</p>{% else %}{{ none_listed([]) }}{% endfor %}
+<h3>Subsidiaries</h3>
+{% for s in g.subsidiaries %}<p>{{ CT(s) }}</p>{% else %}{{ none_listed([]) }}{% endfor %}
+</div><div>
+<h3>Dividends</h3>
+{% if g.dividends %}<table>{% for d in g.dividends %}<tr><td>{{ d.period }}</td><td class="n">{{ F(d.per_share) }}</td></tr>{% endfor %}</table>{% else %}{{ none_listed([], "No dividends disclosed.") }}{% endif %}
+<h3>Auditor changes (3 years)</h3>
+{% for c in g.auditor_changes %}<p>{{ CT(c) }}</p>{% else %}{{ none_listed([]) }}{% endfor %}
+<h3>Key management changes (3 years)</h3>
+{% for c in g.kmp_changes %}<p>{{ CT(c) }}</p>{% else %}{{ none_listed([]) }}{% endfor %}
+</div></div>
+{% endif %}
+</section>
+
+{# ---------------------------------------------------------------- 8. Sentiment #}
+<section class="page" id="sentiment">
+<h2><span class="num">8</span>Market sentiment</h2>
+<p class="note">Everything on this page is third-party opinion or data, not from the RHP. GMP is unofficial and never drives the verdict.</p>
+{% set s = r.sentiment %}
+{% if s is none %}{{ missing_section("market sentiment") }}{% else %}
+{% if not s.available %}<p class="na">Sentiment unavailable{% if s.note %}: {{ s.note }}{% endif %}</p>{% elif s.note %}<p class="note">{{ s.note }}</p>{% endif %}
+<table class="kv">
+  <tr><td>Stance tally</td><td>{% for stance, n in s.tally.items() if n %}{{ n }} {{ stance|replace("_", " ") }}{% if not loop.last %} · {% endif %}{% else %}<span class="na">no recent coverage found</span>{% endfor %}</td></tr>
+  <tr><td>Grey market premium (unofficial)</td><td>{{ C(s.gmp) }}</td></tr>
+  {% if s.subscription %}
+  <tr><td>Subscription, total</td><td>{{ C(s.subscription.total) }}</td></tr>
+  <tr><td>QIB / NII / retail</td><td>{{ C(s.subscription.qib) }} / {{ C(s.subscription.nii) }} / {{ C(s.subscription.retail) }}</td></tr>
+  {% else %}<tr><td>Subscription</td><td><span class="na">not available</span></td></tr>{% endif %}
+</table>
+<div class="two"><div>
+<h3>Bull points</h3>
+{% for p in s.bull_points %}{{ green(p) }}{% else %}{{ none_listed([], "None found.") }}{% endfor %}
+</div><div>
+<h3>Bear points</h3>
+{% for p in s.bear_points %}{{ red(p) }}{% else %}{{ none_listed([], "None found.") }}{% endfor %}
+</div></div>
+<h3>Sources</h3>
+{% if s.sources %}
+<table>
+  <tr><th>Published</th><th>Source</th><th>Title</th><th>Stance</th></tr>
+  {% for a in s.sources %}
+  <tr><td>{{ a.published.strftime("%d %b %Y") }}</td><td>{{ a.source_name }}</td>
+      <td>{% if a.url|safe_url %}<a href="{{ a.url|safe_url }}">{{ a.title }}</a>{% else %}{{ a.title }}{% endif %}
+        {% for n in a.claimed_numbers %}<div>{{ n.label or "figure" }}: {{ C(n) }}</div>{% endfor %}</td>
+      <td>{{ a.stance|replace("_", " ") }}</td></tr>
+  {% endfor %}
+</table>
+{% else %}{{ none_listed([], "No dated sources found.") }}{% endif %}
+{% endif %}
+</section>
+
+{# ---------------------------------------------------------------- 9. Appendix #}
+<section class="page" id="appendix">
+<h2><span class="num">9</span>Appendix</h2>
+<h3>Fields that could not be verified or were not disclosed</h3>
+{% if unverified %}
+<table>
+  <tr><th>Field</th><th>Status</th></tr>
+  {% for field, why in unverified %}<tr><td>{{ field }}</td><td>{{ why }}</td></tr>{% endfor %}
+</table>
+{% else %}<p>Every field was verified against its RHP page.</p>{% endif %}
+
+<h3>Third-party data sources</h3>
+{% if sources %}
+<table>
+  <tr><th>Source</th><th>As of</th><th>What</th><th>Link</th></tr>
+  {% for row in sources %}
+  <tr><td>{{ row.name }}</td><td>{{ row.as_of.strftime("%d %b %Y") }}</td><td>{{ row.what|join(", ") }}</td>
+      <td>{% if row.safe_url %}<a href="{{ row.safe_url }}">{{ row.url }}</a>{% else %}{{ row.url }}{% endif %}</td></tr>
+  {% endfor %}
+</table>
+{% else %}<p class="na">No third-party data used.</p>{% endif %}
+
+{% if r.synthesis and r.synthesis.notes %}
+<h3>Synthesizer checks</h3>
+<ul>{% for n in r.synthesis.notes %}<li class="note">{{ n }}</li>{% endfor %}</ul>
+{% endif %}
+
+<h3>RHP</h3>
+<table class="kv">
+  <tr><td>RHP SHA-256</td><td class="hash">{{ r.rhp_sha256 }}</td></tr>
+  <tr><td>RHP link</td><td>{% if ipo.rhp_url|safe_url %}<a href="{{ ipo.rhp_url|safe_url }}">{{ ipo.rhp_url }}</a>{% else %}<span class="na">not recorded</span>{% endif %}</td></tr>
+  <tr><td>Report status</td><td>{{ "PARTIAL — stopped at the budget cap" if partial else "complete" }}</td></tr>
+</table>
+<div class="disclaimer">{{ disclaimer }} Numbers marked (p. N) are copied from that RHP page and checked by Python; numbers marked "claimed by" are third-party and unverified.</div>
+</section>
+</body>
+</html>

@@ -38,6 +38,7 @@ from ipo_agents.fin_calc import financial_flags
 from ipo_agents.flags import offer_flags
 from ipo_agents.ingestion import ingest
 from ipo_agents.legal_calc import legal_checks
+from ipo_agents.report.render import RendererUnavailable, render_pdf
 from ipo_agents.router import estimate_run_usd
 from ipo_agents.section_agent import SectionSpec, run_section, section_chunks
 from ipo_agents.section_calc import compute_sections
@@ -191,8 +192,22 @@ def analyse_rhp(ipo: Ipo, rhp_pdf: Path, adapters: Adapters, config: Config) -> 
             state = graph.invoke(run_input, thread)
         except BudgetExceeded as exc:
             # The checkpoint's state includes every node that finished, siblings of the stopped one too.
-            exc.report = _report(ipo, graph.get_state(thread).values, "partial_budget", rhp_sha256)
+            exc.report = _with_pdf(_report(ipo, graph.get_state(thread).values, "partial_budget", rhp_sha256), config)
             raise
         # A finished run never resumes; drop its checkpoints so they don't pile up (several MB per IPO).
         saver.delete_thread(thread_id)
-    return _report(ipo, state, "complete", rhp_sha256)
+    return _with_pdf(_report(ipo, state, "complete", rhp_sha256), config)
+
+
+def _with_pdf(report: Report, config: Config) -> Report:
+    """The report with its PDF rendered into work_dir/<ipo_id>/. A renderer failure is logged and the
+    report goes out without a PDF: a renderer bug must never lose the analysis."""
+    try:
+        path = render_pdf(report, Path(config.work_dir) / report.ipo.ipo_id)
+    except RendererUnavailable as exc:
+        log.warning("%s: no PDF report: %s", report.ipo.ipo_id, exc)
+        return report
+    except Exception:
+        log.exception("%s: rendering the PDF report failed; sending the summary without it", report.ipo.ipo_id)
+        return report
+    return report.model_copy(update={"pdf_path": str(path)})
