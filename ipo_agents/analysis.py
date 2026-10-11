@@ -84,7 +84,8 @@ def build_graph(adapters: Adapters, config: Config, checkpointer: SqliteSaver | 
             chunks = section_chunks(spec, state["doc"])
             if not chunks:
                 return {}
-            output, failed = run_section(spec, chunks, adapters.llm, spec.max_tokens or config.default_max_tokens)
+            output, failed = run_section(spec, chunks, adapters.llm, spec.max_tokens or config.default_max_tokens,
+                                         config.map_max_tokens)
             if output is not None:
                 # Model-written prose beside the verified facts: no unverified number may reach the report.
                 output, _ = ground_section(output, spec.group)

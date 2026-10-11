@@ -88,14 +88,15 @@ def section_chunks(spec: SectionSpec, doc: SectionedDocument) -> list[Chunk]:
     return sorted(own + borrowed, key=lambda c: c.page_start)
 
 
-def run_section(spec: SectionSpec, chunks: list[Chunk], llm: LLM, max_tokens: int) -> tuple[BaseModel | None, list[str]]:
+def run_section(spec: SectionSpec, chunks: list[Chunk], llm: LLM, max_tokens: int,
+                map_max_tokens: int | None = None) -> tuple[BaseModel | None, list[str]]:
     """Extracts the section, then verifies it against the same pages: (verified output, failed field paths).
 
     Facts that fail are re-asked up to MAX_RETRIES times; a retry's value replaces only a failed field, and
     only if it verifies. What still fails is left "could not verify" and its path returned.
     Failed paths also name any part of the section whose reply couldn't be parsed, as
     "<group>.pages[N-M]: could not read". The output is None only if no part could be read."""
-    output, unread = extract(spec, chunks, llm, max_tokens)
+    output, unread = extract(spec, chunks, llm, max_tokens, map_max_tokens)
     retry_tokens = spec.reduce_max_tokens or max_tokens
     failed = [f"{spec.group}.pages[{first}-{last}]: could not read" for first, last in unread]
     if output is None:
@@ -115,9 +116,12 @@ def run_section(spec: SectionSpec, chunks: list[Chunk], llm: LLM, max_tokens: in
     return verified, [r.path for r in rejections] + failed
 
 
-def extract(spec: SectionSpec, chunks: list[Chunk], llm: LLM, max_tokens: int) -> tuple[BaseModel | None, list[tuple[int, int]]]:
+def extract(spec: SectionSpec, chunks: list[Chunk], llm: LLM, max_tokens: int,
+            map_max_tokens: int | None = None) -> tuple[BaseModel | None, list[tuple[int, int]]]:
     """(output, (first, last) pages of each map part whose reply couldn't be parsed).
-    Map parts get `max_tokens` each; the merge gets spec.reduce_max_tokens if set."""
+    Map calls (on the map model) get `map_max_tokens` each, else `max_tokens`; the section's own merge gets
+    spec.reduce_max_tokens if set, else `max_tokens`."""
+    map_tokens = map_max_tokens or max_tokens
     system = f"{spec.prompt}\n\n{EXTRACT_RULES}"
     parts = _parts(chunks)
     if len(parts) == 1:
@@ -130,7 +134,7 @@ def extract(spec: SectionSpec, chunks: list[Chunk], llm: LLM, max_tokens: int) -
         if failed.is_set():
             return first, last, None
         try:
-            return first, last, _call(llm, MAP_TASK, system, text, spec.schema, max_tokens)
+            return first, last, _call(llm, MAP_TASK, system, text, spec.schema, map_tokens)
         except LLMParseError as e:
             # One unreadable part must not lose the rest of the section; it is reported, not hidden.
             log.warning("%s pages %d-%d: reply could not be parsed (%s); skipping that part", spec.group, first, last, e)
@@ -150,10 +154,11 @@ def extract(spec: SectionSpec, chunks: list[Chunk], llm: LLM, max_tokens: int) -
     unread = [(first, last) for first, last, p in results if p is None]
     if not partials:
         return None, unread
-    return _reduce(spec, partials, llm, spec.reduce_max_tokens or max_tokens), unread
+    return _reduce(spec, partials, llm, spec.reduce_max_tokens or max_tokens, map_tokens), unread
 
 
-def _reduce(spec: SectionSpec, partials: list[tuple[int, int, BaseModel]], llm: LLM, max_tokens: int) -> BaseModel:
+def _reduce(spec: SectionSpec, partials: list[tuple[int, int, BaseModel]], llm: LLM, max_tokens: int,
+            map_tokens: int | None = None) -> BaseModel:
     """Merges partials in one call (the group's task), or, while they don't fit MAX_CALL_CHARS, in rounds of
     batches on the map model. Every batch holds at least two partials, so each round at least halves them."""
     system = f"{spec.prompt}\n\n{REDUCE_RULES}"
@@ -162,7 +167,7 @@ def _reduce(spec: SectionSpec, partials: list[tuple[int, int, BaseModel]], llm: 
         if len(batches) == 1:
             return _call(llm, spec.group, system, _render(batches[0]), spec.schema, max_tokens)
         partials = [batch[0] if len(batch) == 1 else
-                    (batch[0][0], batch[-1][1], _call(llm, MAP_TASK, system, _render(batch), spec.schema, max_tokens))
+                    (batch[0][0], batch[-1][1], _call(llm, MAP_TASK, system, _render(batch), spec.schema, map_tokens or max_tokens))
                     for batch in batches]
 
 

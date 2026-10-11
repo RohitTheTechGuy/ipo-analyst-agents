@@ -379,3 +379,17 @@ def test_a_golden_fact_altered_by_one_is_the_only_one_rejected(slug, field, gold
     report = analyse_golden(slug, golden_rhp, golden_doc, adapters, config, monkeypatch, facts)
 
     assert report.unverified_fields == [f"offer_objects.{field}"]
+
+
+def test_map_calls_get_the_map_output_limit_not_the_sections_own(rhp, adapters, config, monkeypatch):
+    # Live HD Fire run: map parts inherited a section's small output limit (1,500 meant for a Groq-sized
+    # final call) or the 4,000 default, and dense parts were cut off mid-JSON. Map calls run on Luna and
+    # get their own limit; the section's own calls keep theirs.
+    monkeypatch.setattr(section_agent, "MAX_CALL_CHARS", 60)
+    config = config.model_copy(update={"map_max_tokens": 8000, "default_max_tokens": 4000})
+    adapters.llm = llm = ScriptedLLM({OfferObjects: offer_objects(issue_size=ISSUE)}, models=config.models)
+
+    analyse_rhp(make_ipo(), rhp, adapters, config)
+
+    assert {c["max_tokens"] for c in llm.calls if c["task"] == "map_extract"} == {8000}
+    assert {c["max_tokens"] for c in llm.calls if c["task"] == "offer_objects"} == {4000}

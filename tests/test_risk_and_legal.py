@@ -403,7 +403,7 @@ def test_a_long_risk_section_merges_with_the_larger_output_allowance(tmp_path, a
     merges = [c for c in llm.calls if c["user"].startswith("[pages ")]  # batch rounds, then the final merge
     merge = llm.calls[-1]
     assert merge["task"] == "risk_factors"
-    assert reads and {(c["task"], c["max_tokens"]) for c in reads} == {("map_extract", 4000)}
+    assert reads and {(c["task"], c["max_tokens"]) for c in reads} == {("map_extract", config.map_max_tokens)}
     assert {c["max_tokens"] for c in merges} == {8000}
     assert f"at most {MAX_LISTED_RISKS}" in merge["system"]
     assert SECTIONS["financials"].reduce_max_tokens == 8000

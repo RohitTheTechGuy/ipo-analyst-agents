@@ -64,6 +64,9 @@ class Config(BaseModel):
     budget: BudgetConfig
     groq_limits: GroqLimits
     default_max_tokens: int = Field(gt=0)
+    # Map (part-extraction) calls always run on the map model (Luna), whatever the section's own model:
+    # dense parts (peer tables, KPIs) need room, and Luna's worst case at 8k is about $0.01.
+    map_max_tokens: int = Field(default=8000, gt=0)
     db_path: str
     work_dir: str
     sentiment: SentimentConfig = SentimentConfig()

@@ -57,6 +57,7 @@ groq_limits:
   daily_cap_tokens: 200000
 
 default_max_tokens: 4000
+map_max_tokens: 8000  # part extraction on Luna; dense parts were cut off at 4,000 (HD Fire live run)
 db_path: data/ipo.db
 work_dir: data/work
 
