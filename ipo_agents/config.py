@@ -41,6 +41,11 @@ class SentimentConfig(BaseModel):
     denylist_domains: list[str] = []
 
 
+class PeersConfig(BaseModel):
+    # Peer name (as the RHP or the agent writes it) -> NSE symbol, for names NSE's search gets wrong.
+    symbol_overrides: dict[str, str] = {}
+
+
 class Config(BaseModel):
     models: dict[str, ModelConfig]
     routing: dict[str, str]
@@ -50,6 +55,7 @@ class Config(BaseModel):
     db_path: str
     work_dir: str
     sentiment: SentimentConfig = SentimentConfig()
+    peers: PeersConfig = PeersConfig()
 
     @model_validator(mode="after")
     def _routed_models_are_priced(self):

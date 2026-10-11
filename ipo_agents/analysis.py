@@ -32,7 +32,7 @@ from ipo_agents.adapters import Adapters
 from ipo_agents.budget import BudgetExceeded, BudgetMeter, MeteredLLM
 from ipo_agents.calc import compute_offer
 from ipo_agents.config import Config
-from ipo_agents.contracts import Financials, Ipo, Report, SectionedDocument, Sentiment
+from ipo_agents.contracts import Financials, Ipo, Report, SectionedDocument, Sentiment, Valuation
 from ipo_agents.fin_calc import financial_flags
 from ipo_agents.flags import offer_flags
 from ipo_agents.ingestion import ingest
@@ -42,6 +42,7 @@ from ipo_agents.section_agent import SectionSpec, run_section, section_chunks
 from ipo_agents.section_calc import compute_sections
 from ipo_agents.sections import SECTIONS
 from ipo_agents.sentiment import gather_sentiment
+from ipo_agents.valuation import run_peer_valuation, valuation_flags
 
 log = logging.getLogger(__name__)
 
@@ -59,6 +60,7 @@ class AnalysisState(TypedDict, total=False):
     findings: Annotated[dict[str, BaseModel], _merge]  # section group -> verified output
     unverified: Annotated[list[str], operator.add]  # dotted paths of facts that failed verification
     sentiment: Sentiment
+    valuation: Valuation
 
 
 def build_graph(adapters: Adapters, config: Config, checkpointer: SqliteSaver | None = None):
@@ -77,6 +79,12 @@ def build_graph(adapters: Adapters, config: Config, checkpointer: SqliteSaver | 
     def sentiment_node(state: AnalysisState):
         return {"sentiment": gather_sentiment(state["ipo"], adapters, config)}
 
+    def valuation_node(state: AnalysisState):
+        found = {spec.report_field: state.get("findings", {}).get(group) for group, spec in SECTIONS.items()}
+        return {"valuation": run_peer_valuation(
+            state["ipo"], adapters, offer=found.get("offer"), financials=found.get("financials"),
+            price_basis=found.get("price_basis"), business=found.get("business"))}
+
     g = StateGraph(AnalysisState)
     g.add_node("ingest", ingest_node)
     g.add_node("sentiment", sentiment_node)
@@ -88,6 +96,11 @@ def build_graph(adapters: Adapters, config: Config, checkpointer: SqliteSaver | 
         g.add_edge(group, END)
     g.add_edge("ingest", "sentiment")
     g.add_edge("sentiment", END)
+    if adapters.peers is not None:
+        # Peer valuation needs Offer, Financials, Price Basis and Business: it waits for every section.
+        g.add_node("peer_valuation", valuation_node)
+        g.add_edge(list(SECTIONS), "peer_valuation")
+        g.add_edge("peer_valuation", END)
     return g.compile(checkpointer=checkpointer)
 
 
@@ -118,6 +131,7 @@ def _report(ipo: Ipo, state: dict, status: str, rhp_sha256: str) -> Report:
         status=status,
         verdict=None,  # set by the synthesizer (ticket 20)
         sentiment=state.get("sentiment"),
+        valuation=state.get("valuation"),
         unverified_fields=sorted(state.get("unverified", [])),
         **{spec.report_field: findings.get(group) for group, spec in SECTIONS.items()},
         financial_flags=financial_flags(findings["financials"]) if findings.get("financials") else [],
@@ -129,7 +143,8 @@ def _report(ipo: Ipo, state: dict, status: str, rhp_sha256: str) -> Report:
     section_calcs, section_flags = compute_sections(ipo, report.business, report.governance, report.price_basis,
                                                     report.financials)
     return report.model_copy(update={"calculations": {**calcs, **section_calcs}, "legal_checks": checks,
-                                     "flags": offer_flags(report.offer, calcs) + section_flags + legal_flags})
+                                     "flags": offer_flags(report.offer, calcs) + section_flags + legal_flags
+                                              + valuation_flags(report.valuation)})
 
 
 def analyse_rhp(ipo: Ipo, rhp_pdf: Path, adapters: Adapters, config: Config) -> Report:

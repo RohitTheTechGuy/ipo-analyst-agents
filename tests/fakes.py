@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 from ipo_agents.adapters import SearchHit
 from ipo_agents.config import load_config
-from ipo_agents.contracts import ClaimedFact, Fact, Ipo, OfferObjects, SubscriptionStatus
+from ipo_agents.contracts import ClaimedFact, Fact, Ipo, OfferObjects, PeerQuote, SubscriptionStatus
 from ipo_agents.llm import LLMResult
 
 
@@ -100,6 +100,22 @@ class FakeMarketData:
         if self.error is not None:
             raise self.error
         return self.subscription_status
+
+
+@dataclass
+class FakePeerData:
+    """Returns the scripted PeerQuote per name or symbol (None for others: the peer has no data);
+    a scripted exception is raised. Every name asked for is recorded in `asked`."""
+
+    quotes: dict[str, PeerQuote | Exception] = field(default_factory=dict)
+    asked: list[str] = field(default_factory=list)
+
+    def quote(self, symbol_or_name):
+        self.asked.append(symbol_or_name)
+        found = self.quotes.get(symbol_or_name)
+        if isinstance(found, Exception):
+            raise found
+        return found
 
 
 @dataclass
