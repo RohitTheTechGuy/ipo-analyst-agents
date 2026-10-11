@@ -54,8 +54,9 @@ def run_peer_valuation(ipo: Ipo, adapters: Adapters, *, offer: OfferObjects | No
     years = full_years(financials.periods) if financials else None
     latest = _Year(financials, years[-1]) if years else None
     prior = _Year(financials, years[-2]) if years and len(years) > 1 else None
-    mcap = (compute_offer(offer, ipo)["market_cap_cr"] if offer is not None
-            else Derived(value=None, unit="₹ crore", not_computable_reason="offer_objects: section not read"))
+    unread = Derived(value=None, unit="₹ crore", not_computable_reason="offer_objects: section not read")
+    calcs = compute_offer(offer, ipo) if offer is not None else {}
+    mcap, fresh = calcs.get("market_cap_cr", unread), calcs.get("fresh_issue_cr", unread)
 
     rhp_names = [p.name for p in price_basis.peers] if price_basis else []
     plan = _plan(ipo, adapters, business, rhp_names, latest)
@@ -75,7 +76,7 @@ def run_peer_valuation(ipo: Ipo, adapters: Adapters, *, offer: OfferObjects | No
 
     stats = []
     for c in chosen:
-        ipo_x = ipo_multiple(c.multiple, mcap, latest)
+        ipo_x = ipo_multiple(c.multiple, mcap, latest, fresh)
         median, low, high = _spread(c.multiple, peers)
         stats.append(MultipleStats(multiple=c.multiple, reason=c.reason, ipo=ipo_x, median=median, min=low,
                                    max=high, premium_pct=_premium(ipo_x, median)))
@@ -159,8 +160,10 @@ _DENOMINATOR = {"pe": ("pat", "PAT"), "ps": ("revenue", "revenue"), "pb": ("net_
 _IPO_FIELD = {"pat": "pat", "revenue": "revenue_from_operations", "net_worth": "net_worth", "ebitda": "ebitda"}
 
 
-def ipo_multiple(m: str, mcap: Derived, latest: _Year | None) -> Derived:
-    """The IPO's multiple at the upper band on its latest full fiscal year."""
+def ipo_multiple(m: str, mcap: Derived, latest: _Year | None, fresh: Derived | None = None) -> Derived:
+    """The IPO's multiple at the upper band on its latest full fiscal year. P/B is on post-issue net worth
+    (latest full-year net worth + the fresh issue, ₹ crore), falling back to pre-issue net worth, said so in
+    `basis`, when the fresh issue is not computable."""
     if mcap.value is None:
         return _nc(TIMES, f"market cap: {mcap.not_computable_reason}")
     if latest is None:
@@ -180,6 +183,15 @@ def ipo_multiple(m: str, mcap: Derived, latest: _Year | None) -> Derived:
     if denom <= 0:
         return _nc(TIMES, f"{latest.period.label} {label} is {'a loss' if denom < 0 else 'zero'} "
                           f"(₹{denom:,.2f} crore): {MULTIPLE_LABELS[m]} is not meaningful", inputs)
+    if m == "pb":
+        if fresh is not None and fresh.value is not None:
+            # Proceeds of the fresh issue go to the company, so the book it lists with includes them.
+            at = "at upper band" if "upper band" in fresh.basis else "as stated in the RHP"
+            return Derived(value=numerator / (denom + fresh.value), unit=TIMES, inputs=inputs + fresh.inputs,
+                           basis=f"post-issue net worth: FY net worth + fresh issue {at}")
+        why = fresh.not_computable_reason if fresh is not None else "not given"
+        return Derived(value=numerator / denom, unit=TIMES, inputs=inputs,
+                       basis=f"pre-issue net worth (fresh issue not computable: {why})")
     basis = (f"(market cap ₹{mcap.value:,.2f} crore + debt − cash) / " if m == "ev_ebitda"
              else f"market cap ₹{mcap.value:,.2f} crore at the upper band / ")
     return Derived(value=numerator / denom, unit=TIMES, inputs=inputs,

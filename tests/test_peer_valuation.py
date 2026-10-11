@@ -25,6 +25,8 @@ AS_OF = date(2026, 10, 9)
 PEER_NAMES = ["Alpha Motors Limited", "Beta Motors Limited", "Gamma Motors Limited"]
 POST_SHARES = Fact(value=100_000_000, unit="equity shares", page=OFFER,
                    verbatim_quote="Post-Offer equity shares 100,000,000 equity shares")
+PRE_SHARES = Fact(value=90_000_000, unit="equity shares", page=OFFER,
+                  verbatim_quote="Pre-Offer equity shares 90,000,000 equity shares")
 ROWS = {  # FinancialPeriod field -> row label as printed
     "revenue_from_operations": "Revenue from operations",
     "pat": "Restated profit for the year",
@@ -45,7 +47,7 @@ def make_rhp(tmp_path, fy24=FY24, fy23=FY23):
     rows = [f"{ROWS[k]} {_num(fy24[k])}" + (f" {_num(fy23[k])}" if fy23 else "") for k in ROWS]
     fin_page = "\n".join(["RESTATED FINANCIAL INFORMATION",
                           "(Rs. crore) Fiscal 2024" + (" Fiscal 2023" if fy23 else ""), *rows])
-    offer_page = "\n".join([TINY_OFFER_PAGE, POST_SHARES.verbatim_quote])
+    offer_page = "\n".join([TINY_OFFER_PAGE, PRE_SHARES.verbatim_quote, POST_SHARES.verbatim_quote])
     basis_page = "\n".join(["BASIS FOR OFFER PRICE", "Comparison with listed industry peers", *PEER_NAMES])
     return make_tiny_rhp(tmp_path / "val_rhp.pdf", (offer_page, fin_page), extra_pages=(basis_page,))
 
@@ -102,10 +104,11 @@ def plan(*multiples, suggested=()):
                          additional_peers=[SuggestedPeer(name=n, reason=f"{n} also makes scooters") for n in suggested])
 
 
-def analyse(rhp, adapters, config, *, valuation_plan, peers=None, fin=None, peer_names=PEER_NAMES, ipo=None):
+def analyse(rhp, adapters, config, *, valuation_plan, peers=None, fin=None, peer_names=PEER_NAMES, ipo=None,
+            offer=None):
     adapters.peers = FakePeerData(dict(PEERS) if peers is None else peers)
     adapters.llm = ScriptedLLM({
-        OfferObjects: offer_objects(post_issue_shares=POST_SHARES),
+        OfferObjects: offer or offer_objects(post_issue_shares=POST_SHARES),
         Financials: fin or fin_answer(),
         OfferPriceBasis: found_nothing(OfferPriceBasis).model_copy(update={"peers": [peer(n) for n in peer_names]}),
         BusinessIndustry: found_nothing(BusinessIndustry).model_copy(update={"what_it_sells": "Petrol scooters for commuters"}),
@@ -225,17 +228,37 @@ def test_a_loss_maker_has_no_pe_and_is_valued_on_price_to_sales(tmp_path, adapte
     assert "Fiscal 2024): loss" in call["user"]
 
 
-def test_a_lender_is_valued_on_price_to_book_with_roe(rhp, adapters, config):
-    report = analyse(rhp, adapters, config, valuation_plan=plan("pb"))
+def test_a_lender_is_valued_on_price_to_book_on_post_issue_net_worth_with_roe(rhp, adapters, config):
+    offer = offer_objects(pre_issue_shares=PRE_SHARES, post_issue_shares=POST_SHARES)  # fresh issue is [●]
 
+    report = analyse(rhp, adapters, config, valuation_plan=plan("pb"), offer=offer)
+
+    assert report.unverified_fields == []
     pb = stats(report, "pb")
-    # ₹1,050 crore / net worth ₹350 crore = 3.0x vs median 3.0x -> 0%.
-    assert (pb.ipo.value, pb.median.value, pb.premium_pct.value) == pytest.approx((3.0, 3.0, 0.0))
+    # Fresh issue = (100,000,000 - 90,000,000) shares x ₹105 = ₹1,050,000,000 = ₹105 crore (at upper band).
+    # Post-issue net worth = FY2024 ₹350 crore + ₹105 crore = ₹455 crore.
+    # P/B = ₹1,050 crore / ₹455 crore = 2.3077x vs median 3.0x -> 2.3077/3 - 1 = -23.08%.
+    assert pb.ipo.value == pytest.approx(1050 / 455)
+    assert pb.median.value == pytest.approx(3.0)
+    assert pb.premium_pct.value == pytest.approx(100 * (1050 / 455 / 3 - 1))
+    assert pb.ipo.basis == "post-issue net worth: FY net worth + fresh issue at upper band"
+    fields = [i.field for i in pb.ipo.inputs]
+    assert "financials.periods[0].net_worth" in fields and "offer_objects.pre_issue_shares" in fields
     # RoE: 35 / 350 = 10% vs peer median 12.5%.
     assert report.valuation.checks["ipo_roe_pct"].value == pytest.approx(10.0)
     assert report.valuation.checks["peer_median_roe_pct"].value == pytest.approx(12.5)
     [alpha] = [r for r in report.valuation.rhp_peers if r.name == "Alpha Motors Limited"]
     assert alpha.multiples["roe_pct"].value == pytest.approx(12.5)
+
+
+def test_price_to_book_falls_back_to_pre_issue_net_worth_when_the_fresh_issue_is_not_computable(rhp, adapters, config):
+    # Only the post-issue count is known: no fresh issue amount or share count, so no fresh issue.
+    report = analyse(rhp, adapters, config, valuation_plan=plan("pb"))
+
+    pb = stats(report, "pb")
+    # ₹1,050 crore / FY2024 net worth ₹350 crore = 3.0x.
+    assert pb.ipo.value == pytest.approx(3.0)
+    assert pb.ipo.basis.startswith("pre-issue net worth (fresh issue not computable:")
 
 
 def test_agent_suggested_peers_are_listed_separately_with_reasons_and_not_in_the_median(rhp, adapters, config):
@@ -390,8 +413,12 @@ def test_bajaj_housing_finance_price_to_book_at_the_upper_band(golden_rhp, golde
     # Post-issue shares = 7,819,575,273 + ₹35,600 million / ₹70 = 7,819,575,273 + 508,571,428.6 shares;
     # x ₹70 = ₹547,370,269,110 + ₹35,600,000,000 = ₹582,970,269,110 = ₹58,297.03 crore.
     assert report.valuation.ipo_market_cap.value == pytest.approx(58297.03, abs=0.01)
-    # FY2024 net worth ₹122,335.0 million = ₹12,233.5 crore; 58,297.03 / 12,233.5 = 4.765x.
-    assert stats(report, "pb").ipo.value == pytest.approx(4.765, abs=0.0005)
+    # Post-issue net worth = FY2024 net worth ₹122,335.0 million (₹12,233.5 crore) + fresh issue ₹35,600
+    # million (₹3,560.0 crore, stated in the RHP) = ₹15,793.5 crore.
+    # P/B = 58,297.03 / 15,793.5 = 3.6912x (on pre-issue net worth it would be 58,297.03 / 12,233.5 = 4.765x).
+    pb = stats(report, "pb").ipo
+    assert pb.value == pytest.approx(3.6912, abs=0.0005)
+    assert pb.basis == "post-issue net worth: FY net worth + fresh issue as stated in the RHP"
 
 
 @pytest.mark.sections("offer_objects", "financials")
