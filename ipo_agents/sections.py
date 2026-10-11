@@ -131,14 +131,15 @@ OTHER_DISCLOSURES_PROMPT = (
     "(general information, key regulations, offer procedure, statutory and regulatory disclosures and the "
     "like) for anything an investor should know that is not standard boilerplate: e.g. regulatory action "
     "or penalties, a refused or withdrawn earlier offer, a change in business, unusual terms of the offer, "
-    "or dependence on a licence. List only material items, each with its page, why it is material, and "
+    "or dependence on a licence. List only material items, at most 10, most material first, each with its "
+    "page, why it is material, and "
     "any numbers it cites. Returning no items (nothing material) is a valid and common answer; never list "
     "boilerplate to fill the answer. When merging parts: the same item in several parts is one item."
 )
 
 # Output tokens for the merge (reduce), final and re-ask calls of the largest sections, whose answer covers
 # the whole section; their map calls keep config.default_max_tokens.
-LARGE_SECTION_MAX_TOKENS = 8000
+LARGE_SECTION_MAX_TOKENS = 24_000
 
 SECTIONS: dict[str, SectionSpec] = {
     spec.group: spec for spec in [

@@ -11,7 +11,7 @@ import ipo_agents.section_agent as section_agent
 from ipo_agents.analysis import analyse_rhp
 from ipo_agents.contracts import (MAX_LISTED_RISKS, Fact, FinancialPeriod, Financials, FinePrintLegal, LitigationLine,
                                   PendingApproval, Quote, RelatedPartyLine, RiskFactor, RiskFactors)
-from ipo_agents.sections import SECTIONS
+from ipo_agents.sections import LARGE_SECTION_MAX_TOKENS, SECTIONS
 from tests.conftest import REPO_ROOT, TINY_OFFER_PAGE, make_tiny_rhp
 from tests.fakes import NOT_DISCLOSED, ScriptedLLM, make_ipo
 
@@ -404,9 +404,11 @@ def test_a_long_risk_section_merges_with_the_larger_output_allowance(tmp_path, a
     merge = llm.calls[-1]
     assert merge["task"] == "risk_factors"
     assert reads and {(c["task"], c["max_tokens"]) for c in reads} == {("map_extract", config.map_max_tokens)}
-    assert {c["max_tokens"] for c in merges} == {8000}
+    # Intermediate batch merges run on the map model with the map limit; the final merge gets the large one.
+    assert {c["max_tokens"] for c in merges if c["task"] == "map_extract"} <= {config.map_max_tokens}
+    assert merge["max_tokens"] == LARGE_SECTION_MAX_TOKENS
     assert f"at most {MAX_LISTED_RISKS}" in merge["system"]
-    assert SECTIONS["financials"].reduce_max_tokens == 8000
+    assert SECTIONS["financials"].reduce_max_tokens == LARGE_SECTION_MAX_TOKENS
 
 
 @pytest.mark.sections("risk_factors")

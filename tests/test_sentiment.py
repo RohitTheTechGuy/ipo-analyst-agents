@@ -8,7 +8,7 @@ from ipo_agents.adapters import SearchHit
 from ipo_agents.analysis import analyse_rhp
 from ipo_agents.budget import BudgetMeter, _count
 from ipo_agents.contracts import ClaimedFact, Fact, OfferObjects
-from ipo_agents.sentiment import ClaimedNumber, SentimentPoints, StanceTag
+from ipo_agents.sentiment import AGGREGATE_MAX_TOKENS, ClaimedNumber, SentimentPoints, StanceTag
 from ipo_agents.runner import run_daily
 from tests.fakes import FakeExchange, FakeSearch, ScriptedLLM, make_ipo, offer_objects
 
@@ -201,7 +201,7 @@ def test_aggregate_call_is_small_and_reasons_are_capped(tiny_rhp, adapters, conf
     analyse_rhp(make_ipo(), tiny_rhp, adapters, config)
 
     [agg] = [c for c in llm.calls if c["task"] == "sentiment_agent"]
-    assert agg["max_tokens"] == 800
+    assert agg["max_tokens"] == AGGREGATE_MAX_TOKENS
     assert "x" * 200 in agg["user"] and "x" * 201 not in agg["user"]
 
 

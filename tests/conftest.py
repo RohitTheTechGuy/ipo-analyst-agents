@@ -138,7 +138,14 @@ def config(tmp_path):
     from ipo_agents.config import load_config
 
     cfg = load_config(REPO_ROOT / "config.yaml")
-    return cfg.model_copy(update={"db_path": str(tmp_path / "ipo.db"), "work_dir": str(tmp_path / "work")})
+    # Tests pin the budget and output limits their hand-worked arithmetic uses, so tuning production
+    # limits in config.yaml (e.g. the $5/IPO revision) doesn't silently change what the tests prove.
+    return cfg.model_copy(update={
+        "db_path": str(tmp_path / "ipo.db"), "work_dir": str(tmp_path / "work"),
+        "default_max_tokens": 4000, "map_max_tokens": 8000,
+        "budget": cfg.budget.model_copy(update={"cap_usd": 1.50, "synth_reserve_usd": 0.15}),
+        "advisor": cfg.advisor.model_copy(update={"cap_usd": 0.50, "max_tokens": 12000}),
+    })
 
 
 @pytest.fixture

@@ -30,7 +30,7 @@ from ipo_agents.verifier import COULD_NOT_VERIFY
 log = logging.getLogger(__name__)
 
 TASK = SECTION = "peer_valuation"
-MAX_TOKENS = 1_000
+MAX_TOKENS = 4_000  # Terra reasons (effort low) before answering
 MAX_SUGGESTED = 3
 RICH_PREMIUM_PCT = 30.0  # premium to the peer median above which an advantage must justify it
 TIMES, PCT = "×", "%"

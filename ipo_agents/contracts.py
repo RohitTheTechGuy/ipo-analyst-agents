@@ -482,10 +482,21 @@ class MaterialItem(BaseModel):
     figures: list[Fact] = Field(description="Any numbers the item cites; empty if none")
 
 
+# HD Fire live run: Other Disclosures listed so much that its merge ran past the output limit.
+MAX_MATERIAL_ITEMS = 10
+
+
 class OtherDisclosures(BaseModel):
     """Every page no other section reads (General Information, Key Regulations, Offer Procedure...)."""
 
-    items: list[MaterialItem] = Field(description="Material items only; empty when nothing is material")
+    items: list[MaterialItem] = Field(description=f"At most {MAX_MATERIAL_ITEMS} material items, most material "
+                                                  "first; empty when nothing is material")
+
+    @model_validator(mode="after")
+    def _cap(self):
+        """A reply listing more is trimmed to the first MAX_MATERIAL_ITEMS (the model lists most material first)."""
+        del self.items[MAX_MATERIAL_ITEMS:]
+        return self
 
     @computed_field
     @property

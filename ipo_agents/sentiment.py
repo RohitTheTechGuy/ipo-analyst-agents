@@ -29,8 +29,8 @@ MAX_SOURCES = 8
 MAX_SOURCES_DEGRADED = 4  # past the degrade threshold (spec: Budget rules)
 # Article text sent per stance call: enough for a review's argument, and bounded whatever the page size.
 MAX_ARTICLE_TOKENS = 3_000
-STANCE_MAX_TOKENS = 800
-AGGREGATE_MAX_TOKENS = 800
+STANCE_MAX_TOKENS = 3_000  # a real article with many quoted numbers was cut off at 800
+AGGREGATE_MAX_TOKENS = 2_000
 # List and length limits are applied in Python, not in the schemas: an extra item should be trimmed, not
 # fail the parse.
 MAX_REASONS = 3

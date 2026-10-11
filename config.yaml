@@ -25,7 +25,7 @@ routing:
   advisor:              sol
 
 budget:
-  cap_usd: 1.50
+  cap_usd: 4.00  # analysis ledger; with the advisor's $1.00, $5.00 per IPO in all
   degrade_pct: 70
   # Pre-run estimate: pages x (tokens_per_page in + output_tokens_per_page out) at Luna prices + fixed_usd.
   # Over degrade_pct of the cap => the run starts degraded.
@@ -39,7 +39,7 @@ budget:
   estimate: { tokens_per_page: 1600, output_tokens_per_page: 350, fixed_usd: 0.55 }
   # Held back for the synthesizer: verifier re-asks stop once spent + in flight > cap - synth_reserve_usd,
   # leaving the remaining fields "could not verify". One Terra synthesizer call is ~$0.07-0.10.
-  synth_reserve_usd: 0.15
+  synth_reserve_usd: 0.40
 
 # The Financial Advisor (ticket 27): BUY / NO BUY from the verified report, on its own ledger per IPO
 # ("<ipo_id>:advisor"), on top of the analysis cap above, so the worst case is $1.50 + $0.50 = $2.00 per IPO.
@@ -47,8 +47,8 @@ budget:
 #   analysis day + closing-day refresh: 2 x $0.17 = $0.34, plus the refresh's stance tags (Groq $0; on the
 #   Luna fallback ~8 x $0.002 + ~$0.002 for the bull/bear points = ~$0.02) = ~$0.36, under the $0.50 cap.
 advisor:
-  cap_usd: 0.50
-  max_tokens: 12000  # reasoning (effort high, billed as output) + the answer
+  cap_usd: 1.00  # advisor ledger: analysis day + closing-day refresh
+  max_tokens: 24000  # reasoning (effort high, billed as output) + the answer
   closing_day_refresh: true  # on close day: re-gather sentiment and re-advise before the last update
 
 groq_limits:
@@ -56,8 +56,8 @@ groq_limits:
   daily_budget_pct: 80
   daily_cap_tokens: 200000
 
-default_max_tokens: 4000
-map_max_tokens: 8000  # part extraction on Luna; dense parts were cut off at 4,000 (HD Fire live run)
+default_max_tokens: 16000  # a section's own calls (single read, merge, re-ask): real merges ran past 4,000, and Terra reasons on top (HD Fire live run)
+map_max_tokens: 12000  # part extraction on Luna; dense parts were cut off at 4,000 (HD Fire live run)
 db_path: data/ipo.db
 work_dir: data/work
 

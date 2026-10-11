@@ -36,7 +36,7 @@ from ipo_agents.verifier import COULD_NOT_VERIFY
 log = logging.getLogger(__name__)
 
 TASK = "synthesizer"
-MAX_TOKENS = 2_000
+MAX_TOKENS = 12_000  # Terra reasons (effort low) before answering
 MAX_REASONS = MAX_RED_FLAGS = MAX_POSITIVES = 5
 MIN_REASONS = 2  # fewer surviving reasons than this: confidence is low
 MAX_QUOTE_CHARS = 200
