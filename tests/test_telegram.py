@@ -107,3 +107,18 @@ def test_notifier_from_env_refuses_to_start_without_credentials(monkeypatch):
 
     with pytest.raises(RuntimeError, match="TELEGRAM_BOT_TOKEN"):
         telegram_notifier_from_env()
+
+
+def test_a_summary_longer_than_telegrams_limit_is_sent_as_several_messages_split_at_line_breaks():
+    # Telegram rejects a message over 4,096 characters; nothing may be cut or lost.
+    requests = []
+    notifier = telegram(requests)
+    lines = [f"• Reason {i}: " + "detail " * 40 for i in range(40)]  # ~11,600 characters
+    text = "\n".join(lines)
+
+    notifier.send_message(text)
+
+    sent = [json.loads(r.content)["text"] for r in requests]
+    assert len(sent) > 1
+    assert all(len(part) <= 4096 for part in sent)
+    assert "\n".join(sent) == text  # split only between lines, in order

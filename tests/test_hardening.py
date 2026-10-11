@@ -287,11 +287,18 @@ def test_section_summaries_are_checked_against_their_own_section_without_page_nu
 
 # --- S4: bullets ----------------------------------------------------------------------------------
 
-def test_a_long_bullet_is_cut_at_a_word_boundary_never_inside_a_figure():
-    text = "x" * 110 + " rev ₹1,234,567 crore in Fiscal 2024"  # a cut at 119 characters would leave "₹1,2"
+def test_a_reason_is_shown_in_full_in_the_summary():
+    # Reasons and risks were cut at 120 characters ("…"); they are shown whole, up to a safety ceiling.
+    text = "The full-year cash conversion cycle lengthened from 83.0 days to 102.0 days, while full-year " \
+           "operating cash flow and PAT diverged, so profits are not turning into cash at the same pace."
+    assert runner._bullet(text) == "• " + text
+
+
+def test_a_runaway_bullet_is_cut_at_a_word_boundary_never_inside_a_figure():
+    text = "x" * (runner.BULLET_CHARS - 10) + " rev ₹1,234,567 crore in Fiscal 2024"  # a raw cut would split the figure
     bullet = runner._bullet(text)
 
-    assert bullet == "• " + "x" * 110 + " rev…"
+    assert bullet == "• " + "x" * (runner.BULLET_CHARS - 10) + " rev…"
     assert len(bullet) <= runner.BULLET_CHARS + 2
 
 

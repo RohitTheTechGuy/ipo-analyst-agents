@@ -329,8 +329,8 @@ def test_summary_shows_the_verdict_why_and_the_top_three_red_flags(adapters, con
     run_daily(TODAY, adapters, config)
 
     [msg] = adapters.notifier.messages
-    assert len(LONG) > 120
-    truncated = LONG[:119].rstrip() + "…"
+    assert len(LONG) > 120  # longer than the old 120-character cut: now shown in full
+    truncated = LONG
     assert "\n".join([
         "Analyst view: AVOID (confidence: medium)",
         "Why:",

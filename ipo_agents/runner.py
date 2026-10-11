@@ -23,7 +23,7 @@ from ipo_agents.verifier import COULD_NOT_VERIFY
 log = logging.getLogger(__name__)
 
 NO_SOURCE_ALERT = "⚠️ Could not list open IPOs from any source today"
-BULLET_CHARS = 120  # one line on a phone screen, roughly
+BULLET_CHARS = 500  # a reason or risk is shown whole; this only stops a runaway one (Telegram splits long messages)
 SUMMARY_RED_FLAGS = 3
 SUMMARY_ADVICE_REASONS = 3
 SUMMARY_ADVICE_RISKS = 2

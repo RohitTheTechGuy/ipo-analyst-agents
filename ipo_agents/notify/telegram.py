@@ -17,6 +17,9 @@ class TelegramError(RuntimeError):
     pass
 
 
+MAX_MESSAGE_CHARS = 4096  # Telegram's sendMessage limit
+
+
 class TelegramNotifier:
     def __init__(self, token: str, chat_id: str, client: httpx.Client | None = None):
         self._token = token
@@ -24,7 +27,9 @@ class TelegramNotifier:
         self._client = client or httpx.Client(timeout=60)
 
     def send_message(self, text: str) -> None:
-        self._call("sendMessage", json={"chat_id": self._chat_id, "text": text})
+        """Sends `text`, as several messages in order if it is over Telegram's limit, split between lines."""
+        for part in split_message(text):
+            self._call("sendMessage", json={"chat_id": self._chat_id, "text": part})
 
     def send_document(self, path: Path, caption: str = "") -> None:
         path = Path(path)
@@ -52,3 +57,25 @@ def telegram_notifier_from_env(client: httpx.Client | None = None) -> TelegramNo
     if missing:
         raise RuntimeError(f"missing env vars: {', '.join(missing)}")
     return TelegramNotifier(os.environ["TELEGRAM_BOT_TOKEN"], os.environ["TELEGRAM_CHAT_ID"], client=client)
+
+
+def split_message(text: str, limit: int = MAX_MESSAGE_CHARS) -> list[str]:
+    """Parts of at most `limit` characters, split between lines; a single over-long line is split inside it.
+    Joining the parts with newlines gives back the text."""
+    parts, current = [], ""
+    for line in text.split("\n"):
+        while len(line) > limit:  # a line on its own over the limit: hard-split it
+            if current:
+                parts.append(current)
+                current = ""
+            parts.append(line[:limit])
+            line = line[limit:]
+        candidate = f"{current}\n{line}" if current else line
+        if current and len(candidate) > limit:
+            parts.append(current)
+            current = line
+        else:
+            current = candidate
+    if current or not parts:
+        parts.append(current)
+    return parts
