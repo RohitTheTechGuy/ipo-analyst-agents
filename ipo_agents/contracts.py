@@ -200,8 +200,8 @@ class RiskFactors(BaseModel):
                   and r.title.page is not None]
         return sorted(ranked, key=lambda r: r.severity_rank)[:TOP_RISKS]
 
-    # TODO(ticket 20, synthesizer): cross-check risks that cite a number (RiskFactor.figure) against the
-    # same number in Fine Print litigation / contingent liabilities and in Financials; flag mismatches.
+    # A quantified risk whose figure is also printed in Financials or Fine Print litigation is marked
+    # "corroborated" by cross_checks.py (risk_figures_corroborated).
 
 
 class LitigationLine(BaseModel):
@@ -586,6 +586,38 @@ class Valuation(BaseModel):
         return next((m for m in self.multiples if m.premium_pct.value is not None), None)
 
 
+# --- Synthesizer ----------------------------------------------------------------------------
+
+Confidence = Literal["low", "medium", "high"]
+
+
+class EvidencedPoint(BaseModel):
+    text: str = Field(description="One sentence. Any number in it must be copied from the items it cites")
+    evidence: list[str] = Field(description="IDs of the digest items it rests on, e.g. ['D:ofs_pct', 'G:OFS_HEAVY']")
+
+
+class SectionSummary(BaseModel):
+    section: str = Field(description="The section's key in the digest, e.g. 'offer_objects'")
+    text: str = Field(description="One short paragraph; any number in it must be copied from the digest")
+
+
+class Synthesis(BaseModel):
+    """The synthesizer's answer. Python then checks every cited ID and number (synthesizer.py)."""
+
+    verdict: Verdict
+    confidence: Confidence
+    reasons: list[EvidencedPoint] = Field(description="The 3-5 reasons that drove the verdict, most important first")
+    top_red_flags: list[EvidencedPoint] = Field(description="Up to 5 red flags, most serious first")
+    top_positives: list[EvidencedPoint] = Field(description="Up to 5 positives, strongest first")
+    section_summaries: list[SectionSummary] = Field(description="One short paragraph per section in the digest")
+
+
+class CheckedSynthesis(Synthesis):
+    """A Synthesis after Python's checks: what was dropped or downgraded, and why, is in `notes`."""
+
+    notes: list[str] = []
+
+
 class Report(BaseModel):
     ipo: Ipo
     status: Literal["complete", "partial_budget"]
@@ -596,6 +628,7 @@ class Report(BaseModel):
     risk_factors: RiskFactors | None = None
     fine_print_legal: FinePrintLegal | None = None
     legal_checks: list[FinancialCheck] = []  # legal_calc.py
+    cross_checks: list[FinancialCheck] = []  # cross_checks.py: consistency between sections
     business: BusinessIndustry | None = None
     governance: PromotersGovernance | None = None
     price_basis: OfferPriceBasis | None = None
@@ -605,6 +638,7 @@ class Report(BaseModel):
     calculations: dict[str, Derived] = {}  # name -> derived number (calc.py, section_calc.py)
     flags: list[Flag] = []  # red flags (flags.py, section_calc.py)
     unverified_fields: list[str] = []
+    synthesis: CheckedSynthesis | None = None  # None: the synthesizer did not run (budget stop, nothing verified)
     rhp_sha256: str
     pdf_path: str | None = None
 
