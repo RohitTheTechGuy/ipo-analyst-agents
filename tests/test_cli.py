@@ -148,7 +148,7 @@ def test_dry_run_shows_done_ipos_as_skipped_with_their_reminders_and_force_as_an
     forced = capsys.readouterr().out
 
     assert "skip (done): ACME-2026-10-13  Acme Ltd" in plain
-    assert "remind (closes 15 Oct): ACME-2026-10-13  Acme Ltd" in plain
+    assert "update (GMP + subscription, closes 15 Oct): ACME-2026-10-13  Acme Ltd" in plain
     assert "analyse: ACME-2026-10-13  Acme Ltd" in forced
     assert len(adapters.llm.calls) == 1 and len(adapters.notifier.messages) == 1
 

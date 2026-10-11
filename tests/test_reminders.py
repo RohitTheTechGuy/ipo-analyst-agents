@@ -14,7 +14,8 @@ def offer_llm():
 
 
 def reminders(notifier):
-    return [m for m in notifier.messages if m.startswith("⏰")]
+    # The closing reminder is the first line of that day's update (the rest is GMP and subscription).
+    return [m.splitlines()[0] for m in notifier.messages if m.startswith("⏰")]
 
 
 def test_analysed_ipo_gets_one_reminder_the_day_before_and_one_on_close_day(adapters, config):
@@ -26,14 +27,14 @@ def test_analysed_ipo_gets_one_reminder_the_day_before_and_one_on_close_day(adap
 
     run_daily(DAY_BEFORE_CLOSE, adapters, config)
     run_daily(DAY_BEFORE_CLOSE, adapters, config)
-    assert reminders(adapters.notifier) == ["⏰ Acme Ltd IPO closes TOMORROW. Verdict was: N/A"]
+    assert reminders(adapters.notifier) == ["⏰ Acme Ltd IPO closes TOMORROW"]
 
     run_daily(CLOSE_DAY, adapters, config)
     run_daily(CLOSE_DAY, adapters, config)
     run_daily(date(2026, 10, 16), adapters, config)
     assert reminders(adapters.notifier) == [
-        "⏰ Acme Ltd IPO closes TOMORROW. Verdict was: N/A",
-        "⏰ Acme Ltd IPO closes TODAY. Verdict was: N/A",
+        "⏰ Acme Ltd IPO closes TOMORROW",
+        "⏰ Acme Ltd IPO closes TODAY",
     ]
     assert len(adapters.llm.calls) == 1
 
@@ -47,7 +48,7 @@ def test_ipo_analysed_the_day_before_close_gets_its_summary_not_a_reminder_that_
     assert reminders(adapters.notifier) == []
 
     run_daily(CLOSE_DAY, adapters, config)
-    assert reminders(adapters.notifier) == ["⏰ Acme Ltd IPO closes TODAY. Verdict was: N/A"]
+    assert reminders(adapters.notifier) == ["⏰ Acme Ltd IPO closes TODAY"]
 
 
 class DownNotifier:
@@ -87,4 +88,4 @@ def test_failed_reminder_is_retried_on_the_next_run_that_day(adapters, config):
 
     adapters.notifier = working
     run_daily(DAY_BEFORE_CLOSE, adapters, config)
-    assert reminders(working) == ["⏰ Acme Ltd IPO closes TOMORROW. Verdict was: N/A"]
+    assert reminders(working) == ["⏰ Acme Ltd IPO closes TOMORROW"]

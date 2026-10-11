@@ -13,8 +13,8 @@ from ipo_agents.config import Config
 from ipo_agents.contracts import Fact, Ipo, Report, RunSummary, Sentiment, SubscriptionStatus
 from ipo_agents.discovery import DiscoveryError
 from ipo_agents.flags import summary_line as offer_summary_line
-from ipo_agents.notify.reminders import send_closing_reminders
-from ipo_agents.report.labels import DISCLAIMER, VERDICT_LABELS
+from ipo_agents.notify.reminders import send_daily_updates
+from ipo_agents.report.labels import DISCLAIMER, VERDICT_LABELS, subscription_text
 from ipo_agents.store import TERMINAL, Store, same_company
 from ipo_agents.valuation import summary_line as valuation_summary_line
 from ipo_agents.verifier import COULD_NOT_VERIFY
@@ -35,9 +35,7 @@ def _sentiment_line(s: Sentiment) -> str:
 
 
 def _subscription_line(sub: SubscriptionStatus) -> str:
-    parts = [f"{name} {f.value:.1f}×" for name, f in (("QIB", sub.qib), ("NII", sub.nii), ("Retail", sub.retail))
-             if f and f.value is not None]
-    return f"Subscription: {sub.total.value:.1f}× total" + (f" ({', '.join(parts)})" if parts else "")
+    return f"Subscription: {subscription_text(sub)}"
 
 
 def _fact_text(f: Fact) -> str:
@@ -122,7 +120,7 @@ class RunPlan:
     analyse: list[Ipo] = field(default_factory=list)
     hold: list[Ipo] = field(default_factory=list)  # no final RHP yet
     skip: list[tuple[Ipo, str]] = field(default_factory=list)  # (ipo, its terminal status)
-    remind: list[tuple[str, str, date, str | None]] = field(default_factory=list)  # store.due_reminders rows
+    remind: list[tuple[Ipo, str | None]] = field(default_factory=list)  # store.due_updates: daily GMP/subscription
     discovery_error: str | None = None  # every source failed to list today's IPOs
 
 
@@ -162,7 +160,7 @@ def plan(today: date, adapters: Adapters, config: Config, force_ipo: str | None 
                 result.hold.append(ipo)
             else:
                 result.analyse.append(ipo)
-        result.remind = store.due_reminders(today)
+        result.remind = store.due_updates(today)
     finally:
         store.close()
     return result
@@ -222,6 +220,6 @@ def run_daily(today: date, adapters: Adapters, config: Config, force_ipo: str | 
         # The summary is today's notice, even if sending fails: no reminder on top of it.
         store.mark_reminded(ipo.ipo_id, today)
         _send(ipo, _summary_text(report), report.pdf_path, adapters, summary)
-    summary.notify_failed += send_closing_reminders(today, store, adapters.notifier, VERDICT_LABELS)
+    summary.notify_failed += send_daily_updates(today, store, adapters.notifier, adapters.market, VERDICT_LABELS)
     store.close()
     return summary

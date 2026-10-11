@@ -99,8 +99,8 @@ def dry_run(today: date, adapters: Adapters, config: Config, only: str | None = 
         print(f"  hold (waiting for RHP): {ipo.ipo_id}  {ipo.name}")
     for ipo in todo.analyse:
         print(f"  analyse: {ipo.ipo_id}  {ipo.name}")
-    for ipo_id, name, close_date, _ in todo.remind:
-        print(f"  remind (closes {close_date:%d %b}): {ipo_id}  {name}")
+    for ipo, _ in todo.remind:
+        print(f"  update (GMP + subscription, closes {ipo.close_date:%d %b}): {ipo.ipo_id}  {ipo.name}")
 
 
 def remaining_budget(ipo: Ipo, config: Config) -> tuple[float, float]:
