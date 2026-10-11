@@ -24,8 +24,9 @@ REQUEST_OVERHEAD_TOKENS = 200
 PROMPT_SAFETY = 1.1
 
 # Transient OpenAI errors (429/5xx) are retried here, not by the client, so each attempt is metered.
-MAX_RETRIES = 2
-BACKOFF_S = 0.5  # waits 0.5s, then 1s
+MAX_ATTEMPTS = 5
+BACKOFF_S = 0.5  # waits 0.5s, 1s, 2s, 4s, unless the provider says how long (Retry-After)
+MAX_BACKOFF_S = 30.0  # never waits longer than this, whatever the provider asks
 
 # The call log is the meter's own table: spend per ipo_id survives restarts (crash-resume).
 SCHEMA = """
@@ -88,6 +89,20 @@ def _transient(e: Exception) -> bool:
     return status is not None and status >= 500
 
 
+def _wait_s(e: Exception, attempt: int) -> float:
+    """How long to wait before the next attempt: the provider's retry-after-ms / retry-after (seconds)
+    header when it sends one, else exponential backoff; capped at MAX_BACKOFF_S either way."""
+    headers = getattr(getattr(e, "response", None), "headers", None) or {}
+    for name, scale in (("retry-after-ms", 1000), ("retry-after", 1)):
+        try:
+            asked = float(headers.get(name)) / scale
+        except (TypeError, ValueError):
+            continue  # absent, or an HTTP date: fall through to backoff
+        if asked >= 0:
+            return min(asked, MAX_BACKOFF_S)
+    return min(BACKOFF_S * 2**attempt, MAX_BACKOFF_S)
+
+
 def _rejected(e: Exception) -> bool:
     """The server answered 4xx: it refused the request, so it was not billed."""
     status = _status(e)
@@ -123,6 +138,12 @@ class BudgetMeter:
         threshold = self.cap * self.config.budget.degrade_pct / 100
         # Tolerance: summed float costs can land a hair under a threshold they exactly reach.
         return self.spent >= threshold - 1e-9 or self.estimate_usd > threshold
+
+    def leaves_synth_reserve(self) -> bool:
+        """Spend plus calls in flight is still within cap - synth_reserve_usd: optional calls (verifier
+        re-asks) may go ahead without eating into what the synthesizer needs."""
+        with self._lock:
+            return self.spent + self.reserved <= self.cap - self.config.budget.synth_reserve_usd + 1e-9
 
     def tokens_last_24h(self, models: list[str]) -> int:
         """Tokens logged in the last 24 hours on these model keys, across all IPOs (Groq's limit is per
@@ -215,14 +236,19 @@ class MeteredLLM:
                 # Rate limit (429) or any other Groq failure: nothing ever waits on Groq.
                 log.warning("%s on groq failed (%s); falling back to %s", task, e, FALLBACK)
                 model = FALLBACK
-        for attempt in range(MAX_RETRIES + 1):
+        for attempt in range(MAX_ATTEMPTS):
             try:
                 return self._metered_call(model, prompt_tokens, **call)
             except Exception as e:
-                if attempt == MAX_RETRIES or not _transient(e):
+                if attempt == MAX_ATTEMPTS - 1 or not _transient(e):
                     raise
-                log.warning("%s on %s failed (%s); retry %d", task, model, e, attempt + 1)
-                self._sleep(BACKOFF_S * 2**attempt)
+                wait = _wait_s(e, attempt)
+                log.warning("%s on %s failed (%s); retry %d in %.1fs", task, model, e, attempt + 1, wait)
+                self._sleep(wait)
+
+    def may_retry(self) -> bool:
+        """Whether an optional re-ask fits outside the synthesizer's reserve (BudgetMeter.leaves_synth_reserve)."""
+        return self.meter.leaves_synth_reserve()
 
     def _metered_call(self, model, prompt_tokens, *, task, system, user, schema, max_tokens):
         """One provider call: reserve its worst case, call, settle what it actually cost."""
@@ -233,8 +259,13 @@ class MeteredLLM:
             )
         except LLMParseError as e:
             # The provider billed for the unparseable reply: record it, then let the caller retry or fail.
-            self.meter.settle(held, task=task, model=model, input_tokens=e.input_tokens,
-                              cached_tokens=e.cached_tokens, output_tokens=e.output_tokens)
+            if e.input_tokens is None:
+                # Its usage was lost with the reply: charge the worst case, as for a timeout.
+                self.meter.settle(held, task=task, model=model, input_tokens=prompt_tokens,
+                                  cached_tokens=0, output_tokens=max_tokens)
+            else:
+                self.meter.settle(held, task=task, model=model, input_tokens=e.input_tokens,
+                                  cached_tokens=e.cached_tokens or 0, output_tokens=e.output_tokens or 0)
             raise
         except Exception as e:
             if _rejected(e):

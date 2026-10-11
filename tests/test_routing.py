@@ -61,12 +61,12 @@ def rhp_with_pages(tmp_path, tiny_rhp, n):
 
 
 @pytest.mark.parametrize("pages, model", [
-    # Pre-run estimate (config.yaml budget.estimate): per page 1,300 in x $0.20/1M + 150 out x $1.20/1M
-    # = $0.00044 on luna, plus a fixed $0.47 for the Terra and other Luna steps.
-    # 1,400 pages: $0.616 + $0.47 = $1.086 > $1.05 (70% of $1.50): starts degraded.
-    (1_400, "luna"),
-    # 1,300 pages: $0.572 + $0.47 = $1.042 <= $1.05: normal routing.
-    (1_300, "terra"),
+    # Pre-run estimate (config.yaml budget.estimate): per page 1,600 in x $0.20/1M + 350 out x $1.20/1M
+    # = $0.00032 + $0.00042 = $0.00074 on luna, plus a fixed $0.55 for the Terra and other Luna steps.
+    # 700 pages: $0.518 + $0.55 = $1.068 > $1.05 (70% of $1.50): starts degraded.
+    (700, "luna"),
+    # 650 pages: $0.481 + $0.55 = $1.031 <= $1.05: normal routing.
+    (650, "terra"),
 ])
 def test_large_rhp_starts_in_degraded_mode(tmp_path, tiny_rhp, adapters, config, pages, model):
     adapters.llm = offer_llm(config)
@@ -158,14 +158,14 @@ def test_transient_openai_error_is_retried_with_backoff(tiny_rhp, adapters, conf
     assert sleeps == [0.5, 1.0]
 
 
-def test_transient_openai_error_gives_up_after_two_retries(tiny_rhp, adapters, config, sleeps):
-    adapters.llm = offer_llm(config, errors=[ProviderError(429)] * 3)
+def test_transient_openai_error_gives_up_after_five_attempts(tiny_rhp, adapters, config, sleeps):
+    adapters.llm = offer_llm(config, errors=[ProviderError(429)] * 5)
 
     with pytest.raises(ProviderError):
         analyse_rhp(make_ipo(), tiny_rhp, adapters, config)
 
-    assert len(adapters.llm.calls) == 3
-    assert sleeps == [0.5, 1.0]
+    assert len(adapters.llm.calls) == 5
+    assert sleeps == [0.5, 1.0, 2.0, 4.0]
 
 
 @pytest.mark.parametrize("error", [ProviderError(400), TimeoutError("read timed out")])
@@ -236,10 +236,26 @@ def test_a_call_log_failure_does_not_mask_the_provider_error(tiny_rhp, adapters,
         analyse_rhp(make_ipo(), tiny_rhp, adapters, config)
 
 
-def openai_429(code):
+def openai_429(code, headers=None):
     """A real openai.RateLimitError, shaped as the client builds it (body = the response's `error` object)."""
-    response = httpx.Response(429, request=httpx.Request("POST", "https://api.openai.com/v1/chat/completions"))
+    response = httpx.Response(429, headers=headers or {},
+                              request=httpx.Request("POST", "https://api.openai.com/v1/chat/completions"))
     return openai.RateLimitError("rate limited", response=response, body={"code": code, "message": "rate limited"})
+
+
+@pytest.mark.parametrize("headers, wait", [
+    ({"retry-after-ms": "1500"}, 1.5),
+    ({"retry-after": "7"}, 7.0),
+    ({"retry-after-ms": "250", "retry-after": "7"}, 0.25),  # the finer one wins
+    ({"retry-after": "120"}, 30.0),  # never waits more than 30s
+    ({"retry-after": "Wed, 21 Oct 2026 07:28:00 GMT"}, 0.5),  # a date is not read: normal backoff
+])
+def test_a_rate_limit_waits_as_long_as_the_provider_asks(tiny_rhp, adapters, config, sleeps, headers, wait):
+    adapters.llm = offer_llm(config, errors=[openai_429("rate_limit_exceeded", headers)])
+
+    analyse_rhp(make_ipo(), tiny_rhp, adapters, config)
+
+    assert sleeps == [wait]
 
 
 def test_real_openai_rate_limit_is_retried(tiny_rhp, adapters, config, sleeps):

@@ -1,8 +1,8 @@
 """Section agent registry: one SectionSpec (prompt + schema) per section group. The graph runs every entry."""
 from __future__ import annotations
 
-from ipo_agents.contracts import (BusinessIndustry, Financials, FinePrintLegal, OfferObjects, OfferPriceBasis,
-                                  OtherDisclosures, PromotersGovernance, RiskFactors)
+from ipo_agents.contracts import (MAX_LISTED_RISKS, BusinessIndustry, Financials, FinePrintLegal, OfferObjects,
+                                  OfferPriceBasis, OtherDisclosures, PromotersGovernance, RiskFactors)
 from ipo_agents.section_agent import SectionSpec
 
 OFFER_OBJECTS_PROMPT = (
@@ -43,8 +43,11 @@ FINANCIALS_PROMPT = (
 )
 
 RISK_FACTORS_PROMPT = (
-    "You extract the Risk Factors section of an Indian IPO red herring prospectus (RHP). List every risk "
-    "factor once, in the order printed. Keep each one compact: a few-word topic, and its heading copied "
+    "You extract the Risk Factors section of an Indian IPO red herring prospectus (RHP). List at most "
+    f"{MAX_LISTED_RISKS} risk factors, each once, in the order printed: every quantified risk, then the most "
+    "severe company-specific ones. Do not list generic risks; count them. Give total_count, the number of risk "
+    "factors the section prints in all (listed or not), and generic_count, how many of those are generic. "
+    "Keep each listed risk compact: a few-word topic, and its heading copied "
     "verbatim as the title quote with its page (the first sentence if the heading is very long); never the "
     "whole paragraph. Classify each as 'generic' (boilerplate that could sit in any RHP: the Indian economy, "
     "politics, regulation in general, natural calamities, the market for and price of the equity shares, "
@@ -54,7 +57,8 @@ RISK_FACTORS_PROMPT = (
     "as figure. Rank the company-specific risks by severity (1 = most severe), weighing how likely the risk "
     "is and how much of revenue, profit or the business it could hit; quantified, concentrated risks rank "
     "above vague ones. Generic risks get no rank. When merging parts: the same risk appears once; re-rank "
-    "all company-specific risks from 1 across the whole section."
+    "all company-specific risks from 1 across the whole section; keep at most "
+    f"{MAX_LISTED_RISKS} as above; total_count and generic_count are the sums over the parts."
 )
 
 FINE_PRINT_LEGAL_PROMPT = (
@@ -135,12 +139,17 @@ OTHER_DISCLOSURES_PROMPT = (
 # Output tokens for the sections routed to Groq: prompt + schema + pages + this must fit Groq's
 # per-call limit (groq_limits.max_call_tokens, 6,000), or the call falls back to Luna.
 GROQ_MAX_TOKENS = 1500
+# Output tokens for the merge (reduce), final and re-ask calls of the largest sections, whose answer covers
+# the whole section; their map calls keep config.default_max_tokens.
+LARGE_SECTION_MAX_TOKENS = 8000
 
 SECTIONS: dict[str, SectionSpec] = {
     spec.group: spec for spec in [
         SectionSpec(group="offer_objects", schema=OfferObjects, prompt=OFFER_OBJECTS_PROMPT, report_field="offer"),
-        SectionSpec(group="financials", schema=Financials, prompt=FINANCIALS_PROMPT, report_field="financials"),
-        SectionSpec(group="risk_factors", schema=RiskFactors, prompt=RISK_FACTORS_PROMPT, report_field="risk_factors"),
+        SectionSpec(group="financials", schema=Financials, prompt=FINANCIALS_PROMPT, report_field="financials",
+                    reduce_max_tokens=LARGE_SECTION_MAX_TOKENS),
+        SectionSpec(group="risk_factors", schema=RiskFactors, prompt=RISK_FACTORS_PROMPT, report_field="risk_factors",
+                    reduce_max_tokens=LARGE_SECTION_MAX_TOKENS),
         SectionSpec(group="fine_print_legal", schema=FinePrintLegal, prompt=FINE_PRINT_LEGAL_PROMPT,
                     report_field="fine_print_legal", borrow_from=("offer_objects", "financials"),
                     borrow_if=FINE_PRINT_BORROW),

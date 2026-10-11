@@ -9,8 +9,9 @@ import ipo_agents.analysis as analysis
 import ipo_agents.ingestion as ingestion
 import ipo_agents.section_agent as section_agent
 from ipo_agents.analysis import analyse_rhp
-from ipo_agents.contracts import (Fact, FinancialPeriod, Financials, FinePrintLegal, LitigationLine, PendingApproval,
-                                  Quote, RelatedPartyLine, RiskFactor, RiskFactors)
+from ipo_agents.contracts import (MAX_LISTED_RISKS, Fact, FinancialPeriod, Financials, FinePrintLegal, LitigationLine,
+                                  PendingApproval, Quote, RelatedPartyLine, RiskFactor, RiskFactors)
+from ipo_agents.sections import SECTIONS
 from tests.conftest import REPO_ROOT, TINY_OFFER_PAGE, make_tiny_rhp
 from tests.fakes import NOT_DISCLOSED, ScriptedLLM, make_ipo
 
@@ -358,3 +359,67 @@ def test_golden_contingent_liabilities_altered_by_one_are_rejected(slug, golden_
     report = analyse_golden(slug, golden_rhp, golden_doc, adapters, config, monkeypatch, contingent)
 
     assert report.unverified_fields == ["fine_print_legal.contingent_liabilities"]
+
+
+# --- output size: risk factors are capped, large merges get more output tokens ------------------
+
+def test_a_risk_list_over_the_cap_keeps_every_quantified_risk_then_the_most_severe():
+    # 40 risks: 5 generic, 30 company-specific ranked 30..1, and 5 quantified ones ranked 31-35.
+    # Kept (25): the 5 quantified, then ranks 1-20; in printed order; the counts are of all 40.
+    share = Fact(value=10.0, unit="%", page=3, verbatim_quote="10%")
+    printed = ([risk(f"generic {k}", 3, kind="generic") for k in range(5)]
+               + [risk(f"ranked {k}", 3, rank=k) for k in range(30, 0, -1)]
+               + [risk(f"quantified {k}", 3, rank=30 + k, figure=share) for k in range(1, 6)])
+
+    rf = RiskFactors(risks=printed)
+
+    assert len(rf.risks) == MAX_LISTED_RISKS == 25
+    assert [r.title.verbatim_quote for r in rf.risks] == (
+        [f"ranked {k}" for k in range(20, 0, -1)] + [f"quantified {k}" for k in range(1, 6)])
+    assert (rf.total_count, rf.generic_count) == (40, 5)
+
+
+def test_risk_counts_the_model_gives_are_kept_and_a_short_list_is_untouched():
+    risks = [risk(GENERIC, 3, kind="generic"), risk(PLANT, 3, rank=1)]
+
+    rf = RiskFactors(risks=risks, total_count=48, generic_count=31)
+
+    assert rf.risks == risks
+    assert (rf.n_risks, rf.n_generic) == (48, 31)
+    uncounted = RiskFactors(risks=risks)
+    assert (uncounted.n_risks, uncounted.n_generic) == (2, 1)  # no counts given: the list's own
+
+
+@pytest.mark.sections("risk_factors")
+def test_a_long_risk_section_merges_with_the_larger_output_allowance(tmp_path, adapters, config, monkeypatch):
+    monkeypatch.setattr(ingestion, "MAX_CHUNK_CHARS", 100)
+    monkeypatch.setattr(section_agent, "MAX_CALL_CHARS", 100)
+    rhp = risk_rhp(tmp_path, [[GENERIC], [PLANT]])
+    adapters.llm = llm = ScriptedLLM({}, models=config.models)
+
+    analyse_rhp(make_ipo(), rhp, adapters, config)
+
+    reads = [c for c in llm.calls if not c["user"].startswith("[pages ")]
+    merges = [c for c in llm.calls if c["user"].startswith("[pages ")]  # batch rounds, then the final merge
+    merge = llm.calls[-1]
+    assert merge["task"] == "risk_factors"
+    assert reads and {(c["task"], c["max_tokens"]) for c in reads} == {("map_extract", 4000)}
+    assert {c["max_tokens"] for c in merges} == {8000}
+    assert f"at most {MAX_LISTED_RISKS}" in merge["system"]
+    assert SECTIONS["financials"].reduce_max_tokens == 8000
+
+
+@pytest.mark.sections("risk_factors")
+def test_a_failing_map_part_stops_the_parts_still_queued(tmp_path, adapters, config, monkeypatch):
+    # Four parts, one worker: the first part's call fails (not a parse error), so the other three are
+    # never sent. (With pool.map they all ran, and spent, before the error surfaced.)
+    monkeypatch.setattr(ingestion, "MAX_CHUNK_CHARS", 100)
+    monkeypatch.setattr(section_agent, "MAX_CALL_CHARS", 100)
+    monkeypatch.setattr(section_agent, "MAP_WORKERS", 1)
+    rhp = risk_rhp(tmp_path, [[GENERIC], [PLANT], [CUSTOMER]])
+    adapters.llm = llm = ScriptedLLM({}, models=config.models, errors=[TimeoutError("read timed out")])
+
+    with pytest.raises(TimeoutError):
+        analyse_rhp(make_ipo(), rhp, adapters, config)
+
+    assert len(llm.calls) == 1

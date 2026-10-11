@@ -360,7 +360,7 @@
   {% for x in top %}<tr><td class="n">{{ x.severity_rank }}</td><td>{{ x.topic }}</td><td>{{ Q(x.title) }}</td><td class="n">{% if x.figure %}{{ F(x.figure) }}{% else %}—{% endif %}</td></tr>{% endfor %}
 </table>
 {% else %}{{ none_listed([], "No ranked company-specific risk verified.") }}{% endif %}
-<p class="note">{{ rf.risks|length }} risk factors in all, {{ rf.risks|selectattr("kind", "equalto", "generic")|list|length }} of them generic.</p>
+<p class="note">{{ rf.n_risks }} risk factors in all, {{ rf.n_generic }} of them generic.</p>
 {% endif %}
 
 {% set lg = r.fine_print_legal %}

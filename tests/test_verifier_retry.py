@@ -157,3 +157,23 @@ def test_a_multi_part_section_retries_against_the_cited_chunk_and_its_neighbours
     assert report.offer.objects[0].amount == fact(800.0, 4, quote)
     assert report.offer.issue_size == ISSUE
     assert report.unverified_fields == []
+
+
+@pytest.mark.parametrize("input_tokens, calls", [
+    # 680,000 in x $2/1M = $1.36 spent (terra) > $1.50 - $0.15 synthesizer reserve = $1.35: no re-ask.
+    (680_000, 1),
+    # 670,000 in x $2/1M = $1.34 <= $1.35: both re-asks are sent (degraded to luna, ~$0.0004 each, so
+    # spend stays at ~$1.3409 <= $1.35 before the second).
+    (670_000, 3),
+])
+def test_re_asks_stop_short_of_the_synthesizer_reserve(rhp, adapters, config, caplog, input_tokens, calls):
+    adapters.llm = llm = ScriptedLLM({OfferObjects: offer_objects(issue_size=WRONG_ISSUE)},
+                                     models=config.models, usage=[(input_tokens, 0, 0)])
+
+    report = analyse_rhp(make_ipo(), rhp, adapters, config)
+
+    assert len(llm.calls) == calls
+    assert report.status == "complete"
+    assert report.offer.issue_size == COULD_NOT_VERIFY
+    assert report.unverified_fields == ["offer_objects.issue_size"]
+    assert ("synthesizer reserve" in caplog.text) == (calls == 1)

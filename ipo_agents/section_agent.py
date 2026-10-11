@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
@@ -24,7 +25,7 @@ from ipo_agents.verifier import Rejection, check_facts
 log = logging.getLogger(__name__)
 
 MAP_TASK = "map_extract"
-MAP_WORKERS = 4  # map calls in flight at once; the budget meter is thread-safe
+MAP_WORKERS = 2  # map calls in flight at once per section; kept low for provider rate limits
 MAX_CALL_CHARS = MAX_CHUNK_CHARS  # section text per call; more than this is read map -> reduce
 MAX_RETRIES = 2  # re-asks for facts that failed verification, per section
 
@@ -70,6 +71,8 @@ class SectionSpec:
     borrow_from: tuple[str, ...] = ()
     borrow_if: str = ""
     max_tokens: int | None = None  # output tokens per call; None: config.default_max_tokens
+    # Output tokens for the calls whose answer covers the whole section (merges and re-asks); None: max_tokens.
+    reduce_max_tokens: int | None = None
 
 
 def section_chunks(spec: SectionSpec, doc: SectionedDocument) -> list[Chunk]:
@@ -93,41 +96,61 @@ def run_section(spec: SectionSpec, chunks: list[Chunk], llm: LLM, max_tokens: in
     Failed paths also name any part of the section whose reply couldn't be parsed, as
     "<group>.pages[N-M]: could not read". The output is None only if no part could be read."""
     output, unread = extract(spec, chunks, llm, max_tokens)
+    retry_tokens = spec.reduce_max_tokens or max_tokens
     failed = [f"{spec.group}.pages[{first}-{last}]: could not read" for first, last in unread]
     if output is None:
         return None, failed
     pages = page_texts(chunks)
     verified, rejections = check_facts(output, pages, spec.group)
+    # A metered LLM says when re-asking would eat into the synthesizer's reserve; an unmetered one never stops.
+    may_retry = getattr(llm, "may_retry", lambda: True)
     for _ in range(MAX_RETRIES):
         if not rejections:
             break
-        verified, rejections = _retry(spec, chunks, pages, verified, rejections, llm, max_tokens)
+        if not may_retry():
+            log.warning("%s: %d field(s) left could not verify; re-asking would eat into the synthesizer "
+                        "reserve", spec.group, len(rejections))
+            break
+        verified, rejections = _retry(spec, chunks, pages, verified, rejections, llm, retry_tokens)
     return verified, [r.path for r in rejections] + failed
 
 
 def extract(spec: SectionSpec, chunks: list[Chunk], llm: LLM, max_tokens: int) -> tuple[BaseModel | None, list[tuple[int, int]]]:
-    """(output, (first, last) pages of each map part whose reply couldn't be parsed)."""
+    """(output, (first, last) pages of each map part whose reply couldn't be parsed).
+    Map parts get `max_tokens` each; the merge gets spec.reduce_max_tokens if set."""
     system = f"{spec.prompt}\n\n{EXTRACT_RULES}"
     parts = _parts(chunks)
     if len(parts) == 1:
         return _call(llm, spec.group, system, parts[0][2], spec.schema, max_tokens), []
 
+    failed = threading.Event()  # set by the first part that fails outright: queued parts then never call
+
     def read(part):
         first, last, text = part
+        if failed.is_set():
+            return first, last, None
         try:
             return first, last, _call(llm, MAP_TASK, system, text, spec.schema, max_tokens)
         except LLMParseError as e:
             # One unreadable part must not lose the rest of the section; it is reported, not hidden.
             log.warning("%s pages %d-%d: reply could not be parsed (%s); skipping that part", spec.group, first, last, e)
             return first, last, None
+        except BaseException:
+            failed.set()  # BudgetExceeded or a provider failure: the section is lost, stop spending on it
+            raise
 
-    with ThreadPoolExecutor(max_workers=MAP_WORKERS) as pool:
-        results = list(pool.map(read, parts))  # re-raises BudgetExceeded and any other failure
+    pool = ThreadPoolExecutor(max_workers=MAP_WORKERS)
+    try:
+        futures = [pool.submit(read, part) for part in parts]
+        results = [f.result() for f in futures]  # re-raises the first failure in part order
+    finally:
+        # On a failure: drop the parts not yet started; parts in flight finish (and are metered).
+        pool.shutdown(wait=True, cancel_futures=True)
     partials = [(first, last, p) for first, last, p in results if p is not None]
     unread = [(first, last) for first, last, p in results if p is None]
     if not partials:
         return None, unread
-    return _reduce(spec, partials, llm, max_tokens), unread
+    return _reduce(spec, partials, llm, spec.reduce_max_tokens or max_tokens), unread
 
 
 def _reduce(spec: SectionSpec, partials: list[tuple[int, int, BaseModel]], llm: LLM, max_tokens: int) -> BaseModel:

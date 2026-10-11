@@ -1,8 +1,9 @@
 # Model IDs, prices (USD per 1M tokens), routing per task, budget and paths.
 # A model used in `routing` without a price makes the run refuse to start.
+# reasoning_effort is sent only where set (reasoning tokens bill as output and count against max_tokens).
 models:
-  luna:  { provider: openai, id: gpt-5.6-luna,        price_in: 0.20, price_cached: 0.02, price_out: 1.20 }
-  terra: { provider: openai, id: gpt-5.6-terra,       price_in: 2.00, price_cached: 0.20, price_out: 12.00 }
+  luna:  { provider: openai, id: gpt-5.6-luna,        price_in: 0.20, price_cached: 0.02, price_out: 1.20, reasoning_effort: low }
+  terra: { provider: openai, id: gpt-5.6-terra,       price_in: 2.00, price_cached: 0.20, price_out: 12.00, reasoning_effort: low }
   groq:  { provider: groq,   id: openai/gpt-oss-120b, price_in: 0.0,  price_cached: 0.0,  price_out: 0.0 }
 
 routing:
@@ -26,7 +27,17 @@ budget:
   degrade_pct: 70
   # Pre-run estimate: pages x (tokens_per_page in + output_tokens_per_page out) at Luna prices + fixed_usd.
   # Over degrade_pct of the cap => the run starts degraded.
-  estimate: { tokens_per_page: 1300, output_tokens_per_page: 150, fixed_usd: 0.47 }
+  #   in:  ~1,300 tokens of page text + ~300 per page of per-call overhead (each ~24k-char map call also
+  #        sends ~1,500-2,200 tokens of prompt + schema, over ~6 pages)                  = 1,600/page
+  #   out: ~170 visible + ~180 reasoning tokens (effort low; billed as output)          =   350/page
+  #   per page: 1,600 x $0.20/1M + 350 x $1.20/1M = $0.00032 + $0.00042            = $0.00074
+  #   fixed: Terra reduce/final calls (offer, financials at 8k out, fine print, price basis), peer
+  #          valuation, synthesizer, plus reasoning on them, plus Luna reduce/sentiment = $0.55
+  #   520-page RHP: 520 x $0.00074 = $0.385 + $0.55 = $0.93 (starts degraded above ~675 pages)
+  estimate: { tokens_per_page: 1600, output_tokens_per_page: 350, fixed_usd: 0.55 }
+  # Held back for the synthesizer: verifier re-asks stop once spent + in flight > cap - synth_reserve_usd,
+  # leaving the remaining fields "could not verify". One Terra synthesizer call is ~$0.07-0.10.
+  synth_reserve_usd: 0.15
 
 groq_limits:
   max_call_tokens: 6000

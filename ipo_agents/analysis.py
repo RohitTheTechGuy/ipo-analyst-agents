@@ -51,6 +51,9 @@ from ipo_agents.valuation import run_peer_valuation, valuation_flags
 log = logging.getLogger(__name__)
 
 CHECKPOINT_DB = "checkpoints.db"
+# Graph nodes (section agents, sentiment) running at once, at most; with section_agent.MAP_WORKERS map
+# calls per section this bounds the calls in flight, keeping a run inside the provider's rate limits.
+MAX_CONCURRENCY = 4
 
 
 def _merge(a: dict, b: dict) -> dict:
@@ -227,7 +230,7 @@ def analyse_rhp(ipo: Ipo, rhp_pdf: Path, adapters: Adapters, config: Config) -> 
                 saver.delete_thread(thread_id)
             run_input = {"ipo": ipo, "rhp_pdf": str(rhp_pdf)}
         try:
-            state = graph.invoke(run_input, thread)
+            state = graph.invoke(run_input, {**thread, "max_concurrency": MAX_CONCURRENCY})
         except BudgetExceeded as exc:
             # The checkpoint's state includes every node that finished, siblings of the stopped one too.
             exc.report = _with_pdf(_report(ipo, graph.get_state(thread).values, "partial_budget", rhp_sha256), config)
