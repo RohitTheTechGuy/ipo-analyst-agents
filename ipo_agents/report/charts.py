@@ -13,6 +13,7 @@ from matplotlib.figure import Figure
 
 from ipo_agents.calc import to_crore
 from ipo_agents.contracts import MULTIPLE_LABELS, Fact, Financials, Valuation
+from ipo_agents.fin_calc import _YEAR, _is_stub
 
 # Categorical slots 1-3 of the validated reference palette (dataviz skill), print/light mode.
 SERIES = ("#2a78d6", "#eb6834", "#1baf7a")
@@ -64,8 +65,15 @@ def _grouped_bars(labels: list[str], series: list[tuple[str, list[float | None]]
 
 
 def _chronological(financials: Financials):
-    # RHPs print the latest period first; charts read left to right, oldest first.
-    return list(reversed(financials.periods))
+    """Oldest first, by the year printed in each period's end date (else its label); a stub sorts after
+    the full year it falls in. If any period has no readable year, assume the RHP's usual latest-first order."""
+    keyed = []
+    for p in financials.periods:
+        years = _YEAR.findall(p.end_date) or _YEAR.findall(p.label)
+        if not years:
+            return list(reversed(financials.periods))
+        keyed.append(((int(years[-1]), _is_stub(p)), p))
+    return [p for _, p in sorted(keyed, key=lambda kp: kp[0])]
 
 
 def financial_trend(financials: Financials | None) -> str | None:

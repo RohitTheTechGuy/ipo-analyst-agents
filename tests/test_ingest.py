@@ -2,7 +2,7 @@ import hashlib
 import logging
 import re
 
-import fitz
+import pymupdf as fitz
 import pytest
 
 import ipo_agents.ingestion as ingestion

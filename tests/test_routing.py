@@ -5,7 +5,7 @@ import sqlite3
 from contextlib import closing
 from dataclasses import dataclass
 
-import fitz
+import pymupdf as fitz
 import httpx
 import openai
 import pytest

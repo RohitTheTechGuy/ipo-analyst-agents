@@ -11,7 +11,7 @@ from collections import Counter
 from difflib import SequenceMatcher
 from pathlib import Path
 
-import fitz
+import pymupdf as fitz
 import pytesseract
 from PIL import Image
 
