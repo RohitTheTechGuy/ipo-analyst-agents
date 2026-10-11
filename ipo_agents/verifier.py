@@ -126,7 +126,9 @@ def _quoted(q: Quote, pages: dict[int, str]) -> bool:
     if page is None or not q.verbatim_quote:
         return False
     quote = _normalise(q.verbatim_quote)
-    return len(quote) >= MIN_QUOTE_CHARS and bool(_WORD.search(quote)) and bool(_occurrences(quote, _normalise(page)))
+    # Cited text has no number to cross-check, so it must be printed exactly (whitespace and case aside):
+    # a fuzzy match would accept a real line with a different firm or person named in it.
+    return len(quote) >= MIN_QUOTE_CHARS and bool(_WORD.search(quote)) and quote in _normalise(page)
 
 
 def _in_quote(fact: Fact, quote: str) -> bool:

@@ -220,8 +220,6 @@ def test_one_auditor_change_is_quiet(rhp, adapters, config):
 
 
 def test_a_made_up_auditor_change_does_not_count(rhp, adapters, config):
-    # (A near-copy of a real line, e.g. "M/s PQR & Co. resigned as statutory auditors", would still pass:
-    # the quote check is fuzzy, so it can't tell one firm name from another of the same shape.)
     made_up = CitedText(text="PQR LLP appointed", source=quote("PQR LLP was appointed statutory auditor in 2024", 8))
 
     report = analyse(rhp, adapters, config, governance(auditor_changes=[AUDITOR_CHANGES[0], made_up]))
@@ -234,3 +232,14 @@ def test_an_empty_section_raises_no_governance_flag(rhp, adapters, config):
     report = analyse(rhp, adapters, config, governance())
 
     assert [f for f in report.flags if f.section == "promoters_governance"] == []
+
+
+def test_a_near_copy_of_a_real_line_naming_a_different_firm_is_not_verified(rhp, adapters, config):
+    # Page 8 prints "M/s ABC & Co. resigned as statutory auditors on June 1, 2022"; only the firm differs.
+    near_copy = CitedText(text="PQR & Co. resigned",
+                          source=quote("M/s PQR & Co. resigned as statutory auditors on June 1, 2022", 8))
+
+    report = analyse(rhp, adapters, config, governance(auditor_changes=[AUDITOR_CHANGES[1], near_copy]))
+
+    assert report.unverified_fields == ["promoters_governance.auditor_changes[1].source"]
+    assert flags(report, "FREQUENT_AUDITOR_CHANGES") == []
