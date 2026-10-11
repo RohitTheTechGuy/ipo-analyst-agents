@@ -52,15 +52,25 @@ def _fact_text(f: Fact) -> str:
 
 
 def _bullet(text: str) -> str:
+    """One bullet of at most BULLET_CHARS characters, cut at a word boundary so a figure is never cut."""
     text = " ".join(text.split())
-    return "• " + (text if len(text) <= BULLET_CHARS else text[:BULLET_CHARS - 1].rstrip() + "…")
+    if len(text) <= BULLET_CHARS:
+        return "• " + text
+    cut = text[:BULLET_CHARS]  # one more than fits: if it ends in a space, the word before it is whole
+    head = cut.rsplit(" ", 1)[0] if " " in cut else ""
+    return "• " + head.rstrip(" ,;:–-") + "…"
 
 
 def _verdict_lines(report: Report) -> list[str]:
     """Plan 10: the verdict with its confidence, then why, then the top red flags."""
     s = report.synthesis
     if s is None:
-        why = "budget cap" if report.status == "partial_budget" else "nothing verified"
+        if report.status == "partial_budget":
+            why = "budget cap"
+        elif report.synthesis_error:
+            why = "synthesizer failed"
+        else:
+            why = "nothing verified"
         return [f"Verdict: not reached ({why})"]
     lines = [f"Verdict: {VERDICT_LABELS[s.verdict]} (confidence: {s.confidence})"]
     if s.reasons:
@@ -89,6 +99,15 @@ def format_summary(report: Report) -> str:
             lines.append(_subscription_line(sub))
     lines += ["", DISCLAIMER]
     return "\n".join(lines)
+
+
+def _summary_text(report: Report) -> str:
+    """format_summary, or a minimal stand-in if it raises: a formatting bug must not stop the run."""
+    try:
+        return format_summary(report)
+    except Exception:
+        log.exception("formatting the summary failed for %s", report.ipo.ipo_id)
+        return f"📄 {report.ipo.name} IPO\nsummary could not be formatted; see report"
 
 
 def partial_marker(config: Config) -> str:
@@ -190,7 +209,7 @@ def run_daily(today: date, adapters: Adapters, config: Config, force_ipo: str | 
             store.upsert(ipo, "failed_budget")
             summary.failed.append(ipo.ipo_id)
             partial = exc.report  # None only if the stop came from outside the graph
-            text = format_summary(partial) if partial else f"{ipo.name}: nothing was verified"
+            text = _summary_text(partial) if partial else f"{ipo.name}: nothing was verified"
             _send(ipo, f"{partial_marker(config)}\n{text}", partial and partial.pdf_path, adapters, summary)
             continue
         except Exception:
@@ -202,7 +221,7 @@ def run_daily(today: date, adapters: Adapters, config: Config, force_ipo: str | 
         summary.analysed.append(ipo.ipo_id)
         # The summary is today's notice, even if sending fails: no reminder on top of it.
         store.mark_reminded(ipo.ipo_id, today)
-        _send(ipo, format_summary(report), report.pdf_path, adapters, summary)
+        _send(ipo, _summary_text(report), report.pdf_path, adapters, summary)
     summary.notify_failed += send_closing_reminders(today, store, adapters.notifier, VERDICT_LABELS)
     store.close()
     return summary

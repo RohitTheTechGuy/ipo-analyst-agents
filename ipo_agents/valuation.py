@@ -23,6 +23,7 @@ from ipo_agents.contracts import (MULTIPLE_LABELS, BusinessIndustry, CalcInput, 
                                   OfferObjects, OfferPriceBasis, PeerQuote, PeerRow, Report, Valuation,
                                   ValuationPlan)
 from ipo_agents.fin_calc import full_years
+from ipo_agents.grounding import grounded_or_blank
 from ipo_agents.peers import name_key
 from ipo_agents.verifier import COULD_NOT_VERIFY
 
@@ -66,7 +67,7 @@ def run_peer_valuation(ipo: Ipo, adapters: Adapters, *, offer: OfferObjects | No
     for s in plan.additional_peers:
         if s.name.strip() and name_key(s.name) not in taken and len(suggested) < MAX_SUGGESTED:
             taken.add(name_key(s.name))
-            suggested.append(s)
+            suggested.append(s.model_copy(update={"reason": _no_numbers(s.reason)}))
 
     keys = [c.multiple for c in chosen] + (["roe_pct"] if any(c.multiple == "pb" for c in chosen) else [])
     rhp_rows = [_row(n, "rhp", None, adapters, keys) for n in rhp_names]
@@ -112,8 +113,18 @@ def _choices(plan: ValuationPlan) -> list[MultipleChoice]:
     for c in plan.multiples_to_use:
         if c.multiple not in seen:
             seen.add(c.multiple)
-            out.append(c)
+            out.append(c.model_copy(update={"reason": _no_numbers(c.reason)}))
     return out or [DEFAULT_CHOICE]
+
+
+def _no_numbers(reason: str) -> str:
+    """The model is told never to write a number, and none of its numbers is verified: a reason with one
+    is dropped (prose grounding, ticket 26)."""
+    if kept := grounded_or_blank(reason, set()):
+        return kept
+    if reason:
+        log.warning("peer valuation: dropped the reason %r: it holds a number", reason)
+    return ""
 
 
 def _row(name: str, origin: str, reason: str | None, adapters: Adapters, keys: list[str]) -> PeerRow:
@@ -185,6 +196,9 @@ def ipo_multiple(m: str, mcap: Derived, latest: _Year | None, fresh: Derived | N
                           f"(₹{denom:,.2f} crore): {MULTIPLE_LABELS[m]} is not meaningful", inputs)
     if m == "pb":
         if fresh is not None and fresh.value is not None:
+            if denom + fresh.value <= 0:
+                return _nc(TIMES, f"post-issue net worth (₹{denom:,.2f} crore + fresh issue ₹{fresh.value:,.2f} "
+                                  "crore) is zero or negative: P/B is not meaningful", inputs + fresh.inputs)
             # Proceeds of the fresh issue go to the company, so the book it lists with includes them.
             at = "at upper band" if "upper band" in fresh.basis else "as stated in the RHP"
             return Derived(value=numerator / (denom + fresh.value), unit=TIMES, inputs=inputs + fresh.inputs,
