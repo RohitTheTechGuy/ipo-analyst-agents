@@ -206,16 +206,21 @@ class RiskFactors(BaseModel):
         description=f"At most {MAX_LISTED_RISKS}, in the order printed: every quantified risk, then the most "
                     "severe company-specific ones. Generic risks are counted, not listed")
     # Counted by the model, not printed in the RHP: shown as counts only, never used in a calculation.
-    total_count: int | None = Field(default=None, ge=0,
+    total_count: int | None = Field(default=None,
                                     description="How many risk factors the section prints in all, listed or not")
-    generic_count: int | None = Field(default=None, ge=0,
+    generic_count: int | None = Field(default=None,
                                       description="How many of them are generic boilerplate")
 
     @model_validator(mode="after")
     def _cap(self):
         """Enforces MAX_LISTED_RISKS on a reply that lists more: keeps every quantified risk, then the
         company-specific ones by severity rank (unranked, then generic, last), in the order printed. The
-        counts, if the model gave none, are taken from the full list first."""
+        counts, if the model gave none, are taken from the full list first. A negative count (no `ge=0` in
+        the schema: OpenAI strict mode rejects `minimum`) is treated as not given."""
+        if self.total_count is not None and self.total_count < 0:
+            self.total_count = None
+        if self.generic_count is not None and self.generic_count < 0:
+            self.generic_count = None
         if len(self.risks) <= MAX_LISTED_RISKS:
             return self
         if self.total_count is None:
