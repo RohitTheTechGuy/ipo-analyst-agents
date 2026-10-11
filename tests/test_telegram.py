@@ -64,8 +64,8 @@ def test_telegram_rejecting_the_summary_is_reported_without_leaking_the_token(ad
     assert TOKEN not in caplog.text
 
 
-def test_report_pdf_is_uploaded_with_send_document_after_the_summary(adapters, config, rendered_pdf):
-    pdf = rendered_pdf
+@pytest.mark.renderer
+def test_report_pdf_is_uploaded_with_send_document_after_the_summary(adapters, config):
     requests = []
     adapters.notifier = telegram(requests)
     adapters.exchange = FakeExchange([make_ipo()])
@@ -80,8 +80,8 @@ def test_report_pdf_is_uploaded_with_send_document_after_the_summary(adapters, c
     body = doc.read()
     assert b'name="chat_id"\r\n\r\n-1001\r\n' in body
     assert b'name="caption"\r\n\r\nAcme Ltd IPO report\r\n' in body
-    assert b'name="document"; filename="report_acme.pdf"' in body
-    assert b"%PDF-1.4" in body
+    assert b'name="document"; filename="report_ACME.pdf"' in body
+    assert b"%PDF-1." in body
 
 
 def test_notifier_built_from_env_posts_to_the_configured_bot_and_chat(adapters, config, monkeypatch):

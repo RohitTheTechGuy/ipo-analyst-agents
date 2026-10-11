@@ -1,5 +1,6 @@
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import fitz
@@ -26,6 +27,7 @@ def _golden_dir() -> Path:
 def pytest_configure(config):
     config.addinivalue_line("markers", "sections(*groups): the section agents analyse_rhp runs (default: offer_objects)")
     config.addinivalue_line("markers", "synthesizer: analyse_rhp makes the synthesizer call (default: it is skipped)")
+    config.addinivalue_line("markers", "renderer: analyse_rhp renders the real PDF report (default: no PDF)")
 
 
 @pytest.fixture(autouse=True)
@@ -132,16 +134,52 @@ def adapters(tiny_rhp, config):
                     llm=ScriptedLLM({}, models=config.models), notifier=RecordingNotifier())
 
 
-@pytest.fixture
-def rendered_pdf(monkeypatch, tmp_path):
-    """Stands in for the report renderer until ticket 22 lands: seam B's Report gains a pdf_path.
+RENDER_ENV = {"DYLD_FALLBACK_LIBRARY_PATH": "/opt/homebrew/lib"}  # Homebrew pango for WeasyPrint (macOS)
+_RENDER = """
+import sys
+from pathlib import Path
+from ipo_agents.contracts import Report
+from ipo_agents.report.render import render_pdf
+args = sys.argv[1:]
+for src, out in zip(args[::2], args[1::2]):
+    print(render_pdf(Report.model_validate_json(Path(src).read_text(encoding="utf-8")), Path(out)))
+"""
 
-    TODO(ticket 22): delete this fixture and use the real renderer output.
-    """
-    import ipo_agents.runner as runner
 
-    pdf = tmp_path / "report_acme.pdf"
-    pdf.write_bytes(b"%PDF-1.4")
-    real_analyse = runner.analyse_rhp
-    monkeypatch.setattr(runner, "analyse_rhp", lambda *a, **k: real_analyse(*a, **k).model_copy(update={"pdf_path": str(pdf)}))
-    return pdf
+def render_in_subprocess(*jobs) -> list[Path]:
+    """Renders each (report, out_dir) with the real renderer, in one child Python that has the library
+    path WeasyPrint needs, however pytest itself was launched. Returns the PDF paths in order."""
+    args = []
+    for i, (report, out_dir) in enumerate(jobs):
+        out_dir = Path(out_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        src = out_dir / f"report_{i}.json"
+        src.write_text(report.model_dump_json(), encoding="utf-8")
+        args += [str(src), str(out_dir)]
+    proc = subprocess.run([sys.executable, "-c", _RENDER, *args], cwd=REPO_ROOT, capture_output=True, text=True,
+                          env={**os.environ, **RENDER_ENV}, timeout=120)
+    if proc.returncode:
+        raise RuntimeError(f"renderer subprocess failed:\n{proc.stderr}")
+    return [Path(line) for line in proc.stdout.splitlines()]
+
+
+def pdf_text(path: Path) -> str:
+    """The PDF's text, whitespace collapsed to single spaces (table cells and wrapped lines join)."""
+    with fitz.open(path) as doc:
+        return " ".join(" ".join(page.get_text().split()) for page in doc)
+
+
+@pytest.fixture(autouse=True)
+def _renderer_under_test(request, monkeypatch):
+    """analyse_rhp renders the real PDF only in tests marked `@pytest.mark.renderer` (in a child process,
+    see render_in_subprocess); elsewhere the renderer reports itself unavailable and no PDF is attached,
+    which keeps the suite fast."""
+    import ipo_agents.analysis as analysis
+    from ipo_agents.report.render import RendererUnavailable
+
+    if request.node.get_closest_marker("renderer") is None:
+        def unavailable(report, out_dir):
+            raise RendererUnavailable("not rendered in this test (mark it @pytest.mark.renderer)")
+        monkeypatch.setattr(analysis, "render_pdf", unavailable)
+    else:
+        monkeypatch.setattr(analysis, "render_pdf", lambda report, out_dir: render_in_subprocess((report, out_dir))[0])

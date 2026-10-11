@@ -163,3 +163,37 @@ def test_force_without_ipo_is_refused(adapters, config_file, tmp_path):
 
     assert exit_.value.code == 2
     assert adapters.llm.calls == []
+
+
+class Exec:
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, path, argv, env):
+        self.calls.append((path, argv, env))
+
+
+def test_manual_run_on_a_mac_re_execs_itself_with_the_renderer_library_path(tmp_path):
+    execve = Exec()
+
+    cli.reexec_with_renderer_env(environ={"HOME": "/Users/me"}, platform="darwin", lib_dir=tmp_path,
+                                 argv=["/usr/bin/python3", "run_daily.py", "--ipo", "ACME"], execve=execve)
+
+    [(path, argv, env)] = execve.calls
+    assert argv == [path, "run_daily.py", "--ipo", "ACME"]
+    assert env == {"HOME": "/Users/me", "DYLD_FALLBACK_LIBRARY_PATH": str(tmp_path)}
+
+
+@pytest.mark.parametrize("environ, platform, lib_exists", [
+    ({"DYLD_FALLBACK_LIBRARY_PATH": "/opt/homebrew/lib"}, "darwin", True),  # set by launchd, or already re-exec'd
+    ({}, "linux", True),
+    ({}, "darwin", False),  # no Homebrew: nothing to point at
+])
+def test_no_re_exec_when_not_needed_or_not_possible(tmp_path, environ, platform, lib_exists):
+    execve = Exec()
+
+    cli.reexec_with_renderer_env(environ=environ, platform=platform,
+                                 lib_dir=tmp_path if lib_exists else tmp_path / "missing",
+                                 argv=["python", "run_daily.py"], execve=execve)
+
+    assert execve.calls == []

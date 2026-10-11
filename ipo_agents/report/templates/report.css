@@ -1,0 +1,119 @@
+/* IPO report, A4 print. One template for every IPO so reports compare side by side. */
+:root {
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --muted: #8a8880;
+  --rule: #e4e2dc;
+  --surface: #ffffff;
+  --panel: #f6f5f2;
+  --red: #b42318;
+  --red-bg: #fdecea;
+  --green: #1a7f37;
+  --green-bg: #e9f6ec;
+  --blue: #1f5fae;
+  --grey: #5f5e5a;
+  --claimed: #6a3fb5;
+  --claimed-bg: #f3effb;
+}
+
+@page {
+  size: A4;
+  margin: 16mm 14mm 18mm 14mm;
+  @bottom-left { content: string(company) " · Not investment advice"; font: 7.5pt "Helvetica Neue", Helvetica, Arial, sans-serif; color: #8a8880; }
+  @bottom-right { content: "Page " counter(page) " of " counter(pages); font: 7.5pt "Helvetica Neue", Helvetica, Arial, sans-serif; color: #8a8880; }
+}
+
+html { background: var(--surface); }
+body {
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-size: 9.5pt;
+  line-height: 1.4;
+  color: var(--ink);
+  background: var(--surface);
+  margin: 0;
+}
+
+h1 { font-size: 20pt; margin: 0 0 1mm; string-set: company content(); letter-spacing: -0.01em; }
+h2 {
+  font-size: 13.5pt; margin: 0 0 3mm; padding-bottom: 1.5mm;
+  border-bottom: 1.5pt solid var(--ink);
+}
+h2 .num { color: var(--muted); font-weight: normal; margin-right: 2mm; }
+h3 { font-size: 10.5pt; margin: 5mm 0 1.5mm; }
+p { margin: 0 0 2mm; }
+section.page { page-break-before: always; }
+section.page:first-of-type { page-break-before: auto; }
+
+.sub { color: var(--ink-2); margin-bottom: 4mm; }
+.sub span + span::before { content: " · "; color: var(--muted); }
+
+/* references and provenance */
+.pg { color: var(--muted); font-size: 7.5pt; white-space: nowrap; }
+.na { color: var(--muted); font-style: italic; }
+.claimed { color: var(--claimed); background: var(--claimed-bg); padding: 0 1mm; border-radius: 1mm; }
+.claimed .src { font-size: 7.5pt; font-style: italic; }
+.note { color: var(--ink-2); font-size: 8.5pt; }
+
+/* page-1 banner and verdict */
+.banner {
+  border: 1.5pt solid var(--red); background: var(--red-bg); color: var(--red);
+  font-weight: bold; padding: 2.5mm 3mm; margin-bottom: 4mm; letter-spacing: 0.02em;
+}
+.verdict { display: flex; align-items: center; gap: 4mm; margin: 2mm 0 4mm; }
+.badge {
+  display: inline-block; color: #fff; font-weight: bold; font-size: 13pt;
+  padding: 2.5mm 5mm; border-radius: 1.5mm; letter-spacing: 0.03em;
+}
+.badge.subscribe { background: var(--green); }
+.badge.listing { background: var(--blue); }
+.badge.neutral { background: var(--grey); }
+.badge.avoid { background: var(--red); }
+.badge.none { background: #fff; color: var(--grey); border: 1.2pt dashed var(--grey); }
+.confidence { color: var(--ink-2); }
+
+/* key-number tiles */
+.tiles { display: flex; gap: 3mm; margin: 3mm 0 5mm; }
+.tile { flex: 1; background: var(--panel); border-radius: 1.5mm; padding: 2.5mm 3mm; }
+.tile .label { font-size: 7.5pt; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-2); }
+.tile .value { font-size: 12pt; font-weight: bold; margin: 1mm 0 0.5mm; }
+.tile .ref { font-size: 7.5pt; color: var(--muted); }
+
+/* callouts: colour plus a text label, never colour alone */
+.callout { border-left: 3pt solid; padding: 2mm 3mm; margin: 0 0 2mm; border-radius: 0 1mm 1mm 0; page-break-inside: avoid; }
+.callout .tag { font-weight: bold; font-size: 7.5pt; letter-spacing: 0.06em; margin-right: 1.5mm; }
+.callout.red { border-color: var(--red); background: var(--red-bg); }
+.callout.red .tag { color: var(--red); }
+.callout.green { border-color: var(--green); background: var(--green-bg); }
+.callout.green .tag { color: var(--green); }
+.callout.info { border-color: var(--muted); background: var(--panel); }
+.callout.info .tag { color: var(--ink-2); }
+
+ol.reasons { margin: 0 0 3mm; padding-left: 5mm; }
+ol.reasons li { margin-bottom: 1.2mm; }
+
+/* tables */
+table { width: 100%; border-collapse: collapse; margin: 1mm 0 3mm; font-size: 8.5pt; }
+th { text-align: left; font-weight: bold; color: var(--ink-2); border-bottom: 1pt solid var(--ink-2); padding: 1.2mm 1.5mm; }
+td { border-bottom: 0.5pt solid var(--rule); padding: 1.2mm 1.5mm; vertical-align: top; }
+td.n, th.n { text-align: right; }
+td .pg { white-space: normal; }
+table.kv td:first-child { width: 42%; color: var(--ink-2); }
+tr { page-break-inside: avoid; }
+
+/* offer split bar */
+.split { display: flex; height: 6mm; margin: 1mm 0 1mm; border-radius: 1mm; overflow: hidden; }
+.split div { color: #fff; font-size: 7.5pt; font-weight: bold; padding: 1mm 1.5mm; white-space: nowrap; }
+.split .fresh { background: #2a78d6; }
+.split .ofs { background: #eb6834; }
+
+.chart { margin: 1mm 0 4mm; page-break-inside: avoid; }
+.chart img { width: 85%; }
+.chart .caption { font-size: 8pt; color: var(--ink-2); }
+
+.two { display: flex; gap: 6mm; }
+.two > div { flex: 1; }
+
+blockquote { margin: 0 0 2mm; padding-left: 3mm; border-left: 1pt solid var(--rule); color: var(--ink-2); }
+.disclaimer { margin-top: 6mm; padding: 3mm; border: 1pt solid var(--ink-2); font-weight: bold; }
+.hash { font-family: Menlo, "Courier New", monospace; font-size: 8pt; word-break: break-all; }
+a { color: var(--blue); text-decoration: none; word-break: break-all; }
