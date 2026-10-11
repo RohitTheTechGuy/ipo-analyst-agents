@@ -345,3 +345,20 @@ def test_reset_budget_without_ipo_is_refused(config, config_file, tmp_path):
         reset(config_file, tmp_path, ["--reset-budget"], "reset")
 
     assert exit_.value.code == 2
+
+
+def test_single_ipo_run_sends_no_daily_updates_for_other_ipos(adapters, config_file, tmp_path, config):
+    # Acme was analysed on the 13th and is still open on the 14th; a --ipo run for Zeta on the 14th
+    # must not send (or use up) Acme's update for that day.
+    acme = make_ipo().model_copy(update={"close_date": date(2026, 10, 16)})
+    zeta = acme.model_copy(update={"ipo_id": "ZETA-2026-10-14", "name": "Zeta Ltd", "symbol": "ZETA"})
+    adapters.exchange = FakeExchange([acme])
+    run(["--date", "2026-10-13"], adapters, config_file, tmp_path)
+    adapters.exchange = FakeExchange([acme, zeta])
+
+    code, _ = run(["--ipo", "ZETA", "--date", "2026-10-14"], adapters, config_file, tmp_path)
+
+    assert code == 0
+    assert not [m for m in adapters.notifier.messages if m.startswith(("📊", "⏰"))]
+    with closing(sqlite3.connect(config.db_path)) as db:
+        assert db.execute("SELECT last_reminded_at FROM ipos WHERE ipo_id = 'ACME-2026-10-13'").fetchone() == ("2026-10-13",)

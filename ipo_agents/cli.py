@@ -147,7 +147,7 @@ def main(argv: Sequence[str] | None = None, *, build: Callable[..., Adapters] = 
          log_dir: Path = REPO_ROOT / "logs", env_file: Path = REPO_ROOT / ".env") -> int:
     parser = argparse.ArgumentParser(prog="run_daily.py", description="Analyse today's open mainboard IPOs.")
     parser.add_argument("--date", type=_parse_date, help="run as if on this date (YYYY-MM-DD); default: today in IST")
-    parser.add_argument("--ipo", metavar="ID_OR_SYMBOL", help="analyse only this open IPO (ipo_id or symbol)")
+    parser.add_argument("--ipo", metavar="ID_OR_SYMBOL", help="analyse only this open IPO (ipo_id or symbol); sends no daily updates for others")
     parser.add_argument("--force", action="store_true",
                         help="with --ipo: re-run it even if already done or failed_budget; it can only spend "
                              "what is left of its budget cap, which never resets")
@@ -192,7 +192,8 @@ def main(argv: Sequence[str] | None = None, *, build: Callable[..., Adapters] = 
                 print(f"Forced re-run of {chosen[0].ipo_id}: ${spent:.2f} of its ${config.budget.cap_usd:.2f} "
                       f"budget already spent, ${left:.2f} left (spend never resets)")
         log.info("run starting for %s%s", today, f" (only {args.ipo})" if args.ipo else "")
-        summary = run_daily(today, adapters, config, force_ipo=args.ipo if args.force else None)
+        summary = run_daily(today, adapters, config, force_ipo=args.ipo if args.force else None,
+                            daily_updates=not args.ipo)
         log.info("run finished: %s", summary.model_dump())
         if args.ipo and summary.skipped:
             log.warning("%s was already analysed (done or failed_budget); add --force to re-run it",

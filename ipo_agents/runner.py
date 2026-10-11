@@ -216,9 +216,11 @@ def _send(ipo: Ipo, text: str, pdf_path: str | None, adapters: Adapters, summary
             summary.notify_failed.append(ipo.ipo_id)
 
 
-def run_daily(today: date, adapters: Adapters, config: Config, force_ipo: str | None = None) -> RunSummary:
+def run_daily(today: date, adapters: Adapters, config: Config, force_ipo: str | None = None,
+              daily_updates: bool = True) -> RunSummary:
     """`force_ipo` (ipo_id or symbol) re-runs that IPO even if it is done or failed_budget. Spend is
-    logged per ipo_id and never resets, so a forced re-run can only spend what is left of the cap."""
+    logged per ipo_id and never resets, so a forced re-run can only spend what is left of the cap.
+    `daily_updates=False` skips the GMP/subscription updates for analysed IPOs (a single-IPO run)."""
     todo = plan(today, adapters, config, force_ipo)
     summary = RunSummary(skipped=[ipo.ipo_id for ipo, _ in todo.skip])
     if todo.discovery_error is not None:
@@ -261,6 +263,7 @@ def run_daily(today: date, adapters: Adapters, config: Config, force_ipo: str | 
         text = _summary_text(report)
         archive_report(report, text, config.reports_dir, today)
         _send(ipo, text, report.pdf_path, adapters, summary)
-    summary.notify_failed += send_daily_updates(today, store, adapters, config, VERDICT_LABELS)
+    if daily_updates:
+        summary.notify_failed += send_daily_updates(today, store, adapters, config, VERDICT_LABELS)
     store.close()
     return summary

@@ -570,3 +570,24 @@ def test_bse_link_to_a_draft_is_held(adapters, config, tiny_rhp):
 
     assert summary.waiting_rhp == ["HDFIRE-2026-10-13"]
     assert draft not in web.requests
+
+
+def test_an_ipo_only_chittorgarh_lists_is_found_when_nse_lists_another(adapters, config, tiny_rhp):
+    # NSE answering with one IPO must not hide a second that only a later source lists yet.
+    other = chittorgarh_list_with(Company='<a href="https://www.chittorgarh.com/ipo/hd-fire-protect-ipo/2628/">'
+                                          'Fusion CX Ltd.</a>')
+    wire(adapters, Web(nse_routes(tiny_rhp) | bse_blocked() | chittorgarh_routes(tiny_rhp) | {CG_LIST: other}))
+
+    summary = run_daily(OPEN_DAY, adapters, config)
+
+    assert len(summary.analysed) == 2 and summary.analysed[0] == "HDFIRE-2026-10-13"
+    assert sorted(m.splitlines()[0] for m in adapters.notifier.messages) == [
+        "📄 Fusion CX Ltd. IPO (Mainboard)", "📄 HD Fire Protect Limited IPO (Mainboard)"]
+
+
+def test_an_ipo_every_source_lists_is_kept_once_as_the_first_source_has_it(adapters, config, tiny_rhp):
+    wire(adapters, Web(nse_routes(tiny_rhp) | bse_routes(tiny_rhp) | chittorgarh_routes(tiny_rhp)))
+
+    ipos = adapters.exchange.open_ipos(OPEN_DAY)
+
+    assert [i.ipo_id for i in ipos] == ["HDFIRE-2026-10-13"]
