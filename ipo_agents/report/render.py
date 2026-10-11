@@ -19,7 +19,7 @@ from pydantic import BaseModel
 from ipo_agents.calc import upper_band
 from ipo_agents.contracts import MULTIPLE_LABELS, ClaimedFact, Derived, Fact, Flag, Quote, Report, SentimentSource
 from ipo_agents.report import charts, fmt
-from ipo_agents.report.labels import CALL_LABELS, DISCLAIMER, HORIZON_LABELS, VERDICT_LABELS
+from ipo_agents.report.labels import CALL_LABELS, DISCLAIMER, HORIZON_LABELS, MARKET_HEADING, VERDICT_LABELS, market_read
 from ipo_agents.sections import SECTIONS
 from ipo_agents.verifier import COULD_NOT_VERIFY
 
@@ -227,6 +227,8 @@ def render_html(report: Report) -> str:
         unverified=unverified(report),
         sources=sources(report),
         disclaimer=DISCLAIMER,
+        market_heading=MARKET_HEADING,
+        market_read=market_read(report.sentiment, report.ipo.price_band) if report.sentiment else None,
     )
 
 

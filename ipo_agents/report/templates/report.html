@@ -137,6 +137,24 @@
 {% for p in r.synthesis.top_positives[:3] %}{{ green(p.text) }}
 {% endfor %}
 {% endif %}
+{% if r.sentiment %}{% set s = r.sentiment %}
+<div class="advisor market">
+  <div class="verdict"><span class="who">{{ market_heading }}</span></div>
+  <p class="headline">{{ market_read }}</p>
+  <table class="kv">
+    <tr><td>Grey market premium (unofficial)</td><td>{{ C(s.gmp) }}</td></tr>
+    <tr><td>Subscription so far</td><td>{% if s.subscription %}{{ C(s.subscription.total) }}{% else %}<span class="na">not available</span>{% endif %}</td></tr>
+  </table>
+  <div class="two"><div>
+  <h3>Bulls say</h3>
+  {% for p in s.bull_points[:3] %}<p>• {{ p }}</p>{% else %}<p class="na">None found.</p>{% endfor %}
+  </div><div>
+  <h3>Bears say</h3>
+  {% for p in s.bear_points[:3] %}<p>• {{ p }}</p>{% else %}<p class="na">None found.</p>{% endfor %}
+  </div></div>
+  <p class="note">Third-party opinion and data, not from the RHP; the full sources are in section 8.</p>
+</div>
+{% endif %}
 <p class="note">How to read this report: <span class="pg">(p. 287)</span> is the RHP page a number is printed on;
 <span class="pg">computed from p. X, p. Y</span> marks a number Python worked out from RHP figures;
 <span class="claimed">purple <span class="src">claimed by …</span></span> marks a third-party number, not from the RHP.</p>
@@ -468,6 +486,7 @@
 <p class="note">Everything on this page is third-party opinion or data, not from the RHP. GMP is unofficial and never drives the verdict.</p>
 {% set s = r.sentiment %}
 {% if s is none %}{{ missing_section("market sentiment") }}{% else %}
+<p><b>{{ market_read }}</b></p>
 {% if not s.available %}<p class="na">Sentiment unavailable{% if s.note %}: {{ s.note }}{% endif %}</p>{% elif s.note %}<p class="note">{{ s.note }}</p>{% endif %}
 <table class="kv">
   <tr><td>Stance tally</td><td>{% for stance, n in s.tally.items() if n %}{{ n }} {{ stance|replace("_", " ") }}{% if not loop.last %} · {% endif %}{% else %}<span class="na">no recent coverage found</span>{% endfor %}</td></tr>

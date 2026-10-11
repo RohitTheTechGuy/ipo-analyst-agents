@@ -126,3 +126,10 @@ def test_indian_grouping(value, decimals, expected):
     (2.5, "₹", "₹2.5"), (38.4, "%", "38.4%"), (7, "cases", "7 cases")])
 def test_fact_display(value, unit, expected):
     assert fmt.fact_value(Fact(value=value, unit=unit, page=1, verbatim_quote="q")) == expected
+
+
+def test_page_one_has_a_what_the_market_is_saying_box(texts):
+    page_one = texts["full"].split("2 Offer structure")[0]
+    assert "WHAT THE MARKET IS SAYING" in page_one
+    assert "the grey market prices a 40% listing gain over the ₹105 upper band (unofficial)" in page_one
+    assert "Valuation well below listed peers" in page_one and "One plant makes all output" in page_one

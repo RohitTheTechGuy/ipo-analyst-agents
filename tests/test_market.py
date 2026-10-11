@@ -141,7 +141,8 @@ def test_summary_has_no_gmp_or_subscription_when_not_available(adapters, config)
 
     [msg] = adapters.notifier.messages
     assert "Sentiment: unavailable" in msg.splitlines()
-    assert "GMP" not in msg and "Subscription" not in msg
+    assert "GMP ₹" not in msg and "Subscription:" not in msg
+    assert "no GMP or subscription data yet" in msg
 
 
 # --- real parsers, replaying the recorded responses ---

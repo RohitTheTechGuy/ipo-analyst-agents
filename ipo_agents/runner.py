@@ -15,7 +15,8 @@ from ipo_agents.contracts import CheckedAdvice, Fact, Ipo, Report, RunSummary, S
 from ipo_agents.discovery import DiscoveryError
 from ipo_agents.flags import summary_line as offer_summary_line
 from ipo_agents.notify.reminders import send_daily_updates
-from ipo_agents.report.labels import DISCLAIMER, VERDICT_LABELS, advice_text, subscription_text
+from ipo_agents.report.labels import (DISCLAIMER, MARKET_HEADING, VERDICT_LABELS, advice_text, market_read,
+                                      subscription_text)
 from ipo_agents.store import TERMINAL, Store, same_company
 from ipo_agents.valuation import summary_line as valuation_summary_line
 from ipo_agents.verifier import COULD_NOT_VERIFY
@@ -27,6 +28,7 @@ BULLET_CHARS = 500  # a reason or risk is shown whole; this only stops a runaway
 SUMMARY_RED_FLAGS = 3
 SUMMARY_ADVICE_REASONS = 3
 SUMMARY_ADVICE_RISKS = 2
+SUMMARY_MARKET_POINTS = 2  # bull and bear points each
 
 
 def _sentiment_line(s: Sentiment) -> str:
@@ -39,6 +41,19 @@ def _sentiment_line(s: Sentiment) -> str:
 
 def _subscription_line(sub: SubscriptionStatus) -> str:
     return f"Subscription: {subscription_text(sub)}"
+
+
+def _market_lines(report: Report) -> list[str]:
+    """Its own section: a plain read, the tally/GMP and subscription lines, then the top bull and bear points."""
+    s = report.sentiment
+    lines = [f"📣 {MARKET_HEADING}", market_read(s, report.ipo.price_band), _sentiment_line(s)]
+    if s.subscription and s.subscription.total.value is not None:
+        lines.append(_subscription_line(s.subscription))
+    if s.bull_points:
+        lines += ["Bulls say:", *(_bullet(p) for p in s.bull_points[:SUMMARY_MARKET_POINTS])]
+    if s.bear_points:
+        lines += ["Bears say:", *(_bullet(p) for p in s.bear_points[:SUMMARY_MARKET_POINTS])]
+    return lines
 
 
 def _fact_text(f: Fact) -> str:
@@ -113,9 +128,7 @@ def format_summary(report: Report) -> str:
     if valuation_line := valuation_summary_line(report):
         lines.append(valuation_line)
     if report.sentiment:
-        lines.append(_sentiment_line(report.sentiment))
-        if (sub := report.sentiment.subscription) and sub.total.value is not None:
-            lines.append(_subscription_line(sub))
+        lines += ["", *_market_lines(report)]
     lines += ["", DISCLAIMER]
     return "\n".join(lines)
 
