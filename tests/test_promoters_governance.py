@@ -1,14 +1,13 @@
 """Promoters & Governance section agent at seam B (plan 5.2; ticket 14)."""
 import pytest
-from pydantic import BaseModel
 
-import ipo_agents.analysis as analysis
 from ipo_agents.analysis import analyse_rhp
-from ipo_agents.contracts import Cited, Dividend, Fact, GroupCompany, Promoter, PromotersGovernance, Remuneration
-from ipo_agents.section_agent import SectionSpec
-from ipo_agents.sections import SECTIONS
+from ipo_agents.contracts import (CitedText, Dividend, Fact, FinancialPeriod, Financials, GroupCompany, Promoter,
+                                  PromotersGovernance, Quote, Remuneration)
 from tests.conftest import make_tiny_rhp
-from tests.fakes import ScriptedLLM, empty_answer, make_ipo
+from tests.fakes import NOT_DISCLOSED, ScriptedLLM, found_nothing, make_ipo
+
+pytestmark = pytest.mark.sections("promoters_governance")
 
 # The tiny RHP: pages 1-7 are the stock sections; these extra pages are 8 (management), 9 (promoters),
 # 10 (group companies) and 11 (MD&A, a financials page).
@@ -38,7 +37,11 @@ def promoters_page(pledged):
 
 
 def mda_page(pat):
-    return f"MANAGEMENT'S DISCUSSION AND ANALYSIS OF FINANCIAL CONDITION\nRestated profit after tax for Fiscal 2024 was Rs. {pat} crore."
+    return "\n".join([
+        "MANAGEMENT'S DISCUSSION AND ANALYSIS OF FINANCIAL CONDITION",
+        f"Restated profit after tax for Fiscal 2024 was Rs. {pat} crore.",
+        "Restated profit after tax for Fiscal 2023 was Rs. 400.00 crore.",
+    ])
 
 
 def governance_rhp(tmp_path, pledged="2,500,000 equity shares", pat="25.00"):
@@ -55,6 +58,10 @@ def fact(value, quote, unit, page=8):
     return Fact(value=value, unit=unit, page=page, verbatim_quote=quote)
 
 
+def quote(text, page):
+    return Quote(page=page, verbatim_quote=text)
+
+
 RAVI_PAY = Remuneration(name="Ravi Kumar", role="Managing Director", is_promoter=True,
                         amount=fact(125.00, "paid to Ravi Kumar in Fiscal 2024: Rs. 125.00 lakh", "₹ lakh"))
 ASHA_PAY = Remuneration(name="Asha Kumar", role="Whole-time Director", is_promoter=True,
@@ -62,51 +69,51 @@ ASHA_PAY = Remuneration(name="Asha Kumar", role="Whole-time Director", is_promot
 CFO_PAY = Remuneration(name="A. Rao", role="Chief Financial Officer", is_promoter=False,
                        amount=fact(30.00, "paid to our Chief Financial Officer: Rs. 30.00 million", "₹ million"))
 PLEDGED = fact(2500000, "Shares pledged by our Promoters: 2,500,000 equity shares", "equity shares", page=9)
-SAME_LINE = GroupCompany(name="Kumar Motors Private Limited", same_line_of_business=True, page=10)
-OTHER_LINE = GroupCompany(name="Kumar Realty Private Limited", same_line_of_business=False, page=10)
-AUDITOR_CHANGES = [Cited(text="ABC & Co. resigned as statutory auditors, June 2022", page=8),
-                   Cited(text="XYZ LLP resigned as statutory auditors, May 2023", page=8)]
+SAME_LINE = GroupCompany(name="Kumar Motors Private Limited", same_line_of_business=True,
+                         source=quote("Kumar Motors Private Limited is engaged in a similar line of business", 10))
+OTHER_LINE = GroupCompany(name="Kumar Realty Private Limited", same_line_of_business=False,
+                          source=quote("Kumar Realty Private Limited is engaged in real estate", 10))
+AUDITOR_CHANGES = [CitedText(text="ABC & Co. resigned as statutory auditors, June 2022",
+                             source=quote("M/s ABC & Co. resigned as statutory auditors on June 1, 2022", 8)),
+                   CitedText(text="XYZ LLP resigned as statutory auditors, May 2023",
+                             source=quote("M/s XYZ LLP resigned as statutory auditors on May 5, 2023", 8))]
 
 
 def governance(**fields) -> PromotersGovernance:
-    return empty_answer(PromotersGovernance).model_copy(update=fields)
+    return found_nothing(PromotersGovernance).model_copy(update=fields)
 
 
-class StubFinancials(BaseModel):
-    """Stands in for the Financials output (ticket 11): only the PAT this section's check reads."""
-
-    latest_pat: Fact
-
-
-def with_financials(monkeypatch, pat_value, pat_text="25.00"):
-    """Runs a stub Financials agent alongside, whose PAT must verify on the MD&A page (11)."""
-    # Not a Report field, so the stub never clashes with the real Report.financials.
-    spec = SectionSpec(group="financials", schema=StubFinancials, prompt="p", report_field="stub_financials")
-    monkeypatch.setattr(analysis, "SECTIONS", {**SECTIONS, "financials": spec})
-    return StubFinancials(latest_pat=fact(pat_value, f"profit after tax for Fiscal 2024 was Rs. {pat_text} crore",
-                                          "₹ crore", page=11))
+def period(label, end_date, pat, kind="full_year"):
+    metrics = {name: NOT_DISCLOSED for name, f in FinancialPeriod.model_fields.items() if f.annotation is Fact}
+    return FinancialPeriod(label=label, end_date=end_date, kind=kind, **{**metrics, "pat": pat})
 
 
-def analyse(rhp, adapters, config, answer, financials=None):
+def financials(fy24_pat="25.00"):
+    """Financials (ticket 11) as RHPs print them, latest year first; PAT verifies on the MD&A page (11)."""
+    return Financials(periods=[
+        period("Fiscal 2024", "March 31, 2024", fact(float(fy24_pat), f"profit after tax for Fiscal 2024 was Rs. "
+                                                                    f"{fy24_pat} crore", "₹ crore", page=11)),
+        period("Fiscal 2023", "March 31, 2023", fact(400.00, "profit after tax for Fiscal 2023 was Rs. 400.00 crore",
+                                                     "₹ crore", page=11)),
+    ], auditor_remarks=[], restatement=None)
+
+
+def analyse(rhp, adapters, config, answer, fin=None):
     responses = {PromotersGovernance: answer}
-    if financials is not None:
-        responses[StubFinancials] = financials
+    if fin is not None:
+        responses[Financials] = fin
     adapters.llm = ScriptedLLM(responses, models=config.models)
     return analyse_rhp(make_ipo(), rhp, adapters, config)
 
 
 def flags(report, code):
-    return [f for f in report.red_flags if f.code == code]
-
-
-def pay_vs_pat(report):
-    [d] = [d for d in report.derived if d.name == "promoter_pay_pct_of_pat"]
-    return d
+    return [f for f in report.flags if f.code == code]
 
 
 def test_governance_fields_are_extracted_as_page_cited_facts_that_verify(rhp, adapters, config):
     answer = governance(
-        promoters=[Promoter(name="Ravi Kumar", background="Engineer; founded the company", page=9)],
+        promoters=[Promoter(name="Ravi Kumar", background="Engineer; founded the company",
+                            source=quote("Ravi Kumar holds an engineering degree and founded our Company", 9))],
         group_companies=[SAME_LINE, OTHER_LINE],
         remuneration=[RAVI_PAY, ASHA_PAY, CFO_PAY],
         board_size=fact(8, "Our Board comprises 8 Directors", "directors"),
@@ -125,71 +132,68 @@ def test_governance_fields_are_extracted_as_page_cited_facts_that_verify(rhp, ad
     assert [r.amount.value for r in g.remuneration] == [125.00, 7.50, 30.00]
     assert g.promoter_shares_pledged.value == 2500000
     assert g.dividends[0].per_share.value == 2.00
-    assert g.promoters[0].page == 9
+    assert g.promoters[0].source.page == 9
 
 
-@pytest.mark.parametrize("max_tokens, model", [
-    # Prompt + schema are ~2,100 tokens: with 2,000 output tokens the call fits Groq's 6,000-token
-    # call limit; with 4,000 it doesn't, so it falls back to Luna.
-    (2000, "groq"),
-    (4000, "luna"),
-])
-def test_the_agent_is_routed_to_groq_with_luna_fallback(rhp, adapters, config, max_tokens, model):
-    config = config.model_copy(update={"default_max_tokens": max_tokens})
-
+def test_the_agent_is_routed_to_groq(rhp, adapters, config):
+    # Its call is capped at 1,500 output tokens, so prompt + schema + pages fit Groq's 6,000-token limit.
     analyse(rhp, adapters, config, governance())
 
     [call] = [c for c in adapters.llm.calls if c["task"] == "promoters_governance"]
-    assert call["model"] == model
+    assert (call["model"], call["max_tokens"]) == ("groq", 1500)
     assert "Our Board comprises 8 Directors" in call["user"]
     assert "Restated profit after tax" not in call["user"]  # the MD&A page belongs to Financials
 
 
-def test_promoter_pay_over_5_percent_of_pat_is_flagged(rhp, adapters, config, monkeypatch):
-    # Promoter pay: 125.00 lakh = ₹12.5 million, plus ₹7.5 million = ₹20 million (the CFO is not a
-    # promoter). PAT ₹25.00 crore = ₹250 million. 20 / 250 = 8%.
-    financials = with_financials(monkeypatch, 25.00)
-
-    report = analyse(rhp, adapters, config, governance(remuneration=[RAVI_PAY, ASHA_PAY, CFO_PAY]), financials)
+@pytest.mark.sections("promoters_governance", "financials")
+def test_promoter_pay_over_5_percent_of_pat_is_flagged(rhp, adapters, config):
+    # Promoter pay: 125.00 lakh = ₹1.25 crore, plus ₹7.50 million = ₹0.75 crore: ₹2.00 crore (the CFO is
+    # not a promoter). Latest full-year PAT (Fiscal 2024) ₹25.00 crore. 2 / 25 = 8%.
+    report = analyse(rhp, adapters, config, governance(remuneration=[RAVI_PAY, ASHA_PAY, CFO_PAY]), financials())
 
     assert report.unverified_fields == []
-    assert pay_vs_pat(report).value == pytest.approx(8.0)
-    [flag] = flags(report, "promoter_pay_vs_pat")
-    assert flag.pages == [8, 11]
+    pay = report.calculations["promoter_pay_pct_of_pat"]
+    assert pay.value == pytest.approx(8.0)
+    assert [(i.field, i.page) for i in pay.inputs] == [
+        ("promoters_governance.remuneration[0].amount", 8), ("promoters_governance.remuneration[1].amount", 8),
+        ("financials.periods[0].pat", 11)]
+    [flag] = flags(report, "PROMOTER_PAY_VS_PAT")
+    assert (flag.section, flag.evidence_pages) == ("promoters_governance", [8, 11])
 
 
-def test_promoter_pay_under_5_percent_of_pat_is_quiet(tmp_path, adapters, config, monkeypatch):
-    # PAT ₹150.00 crore = ₹1,500 million; ₹20 million / ₹1,500 million = 1.33%.
+@pytest.mark.sections("promoters_governance", "financials")
+def test_promoter_pay_under_5_percent_of_pat_is_quiet(tmp_path, adapters, config):
+    # ₹2.00 crore / ₹150.00 crore = 1.33%.
     rhp = governance_rhp(tmp_path, pat="150.00")
-    financials = with_financials(monkeypatch, 150.00, pat_text="150.00")
 
-    report = analyse(rhp, adapters, config, governance(remuneration=[RAVI_PAY, ASHA_PAY]), financials)
+    report = analyse(rhp, adapters, config, governance(remuneration=[RAVI_PAY, ASHA_PAY]), financials("150.00"))
 
-    assert pay_vs_pat(report).value == pytest.approx(4 / 3)
-    assert flags(report, "promoter_pay_vs_pat") == []
+    assert report.calculations["promoter_pay_pct_of_pat"].value == pytest.approx(4 / 3)
+    assert flags(report, "PROMOTER_PAY_VS_PAT") == []
 
 
-def test_promoter_pay_vs_pat_is_not_computable_without_pat(rhp, adapters, config):
+def test_promoter_pay_vs_pat_is_not_computable_without_financials(rhp, adapters, config):
     report = analyse(rhp, adapters, config, governance(remuneration=[RAVI_PAY, ASHA_PAY]))
 
-    assert pay_vs_pat(report).value is None
-    assert "not computable" in pay_vs_pat(report).note
-    assert flags(report, "promoter_pay_vs_pat") == []
+    pay = report.calculations["promoter_pay_pct_of_pat"]
+    assert pay.value is None
+    assert pay.not_computable_reason == "financials.periods: no verified full-year PAT"
+    assert flags(report, "PROMOTER_PAY_VS_PAT") == []
 
 
 def test_a_group_company_in_the_same_line_of_business_is_a_conflict(rhp, adapters, config):
     report = analyse(rhp, adapters, config, governance(group_companies=[SAME_LINE, OTHER_LINE]))
 
-    [flag] = flags(report, "group_company_conflict")
+    [flag] = flags(report, "GROUP_COMPANY_CONFLICT")
     assert "Kumar Motors" in flag.message and "Kumar Realty" not in flag.message
-    assert flag.pages == [10]
+    assert flag.evidence_pages == [10]
 
 
 def test_pledged_promoter_shares_are_flagged(rhp, adapters, config):
     report = analyse(rhp, adapters, config, governance(promoter_shares_pledged=PLEDGED))
 
-    [flag] = flags(report, "promoter_pledge")
-    assert flag.pages == [9]
+    [flag] = flags(report, "PROMOTER_PLEDGE")
+    assert flag.evidence_pages == [9]
 
 
 def test_no_pledge_is_quiet(tmp_path, adapters, config):
@@ -199,23 +203,34 @@ def test_no_pledge_is_quiet(tmp_path, adapters, config):
     report = analyse(rhp, adapters, config, governance(promoter_shares_pledged=nil))
 
     assert report.unverified_fields == []
-    assert flags(report, "promoter_pledge") == []
+    assert flags(report, "PROMOTER_PLEDGE") == []
 
 
 def test_two_auditor_changes_in_three_years_are_flagged(rhp, adapters, config):
     report = analyse(rhp, adapters, config, governance(auditor_changes=AUDITOR_CHANGES))
 
-    [flag] = flags(report, "frequent_auditor_changes")
-    assert flag.pages == [8]
+    [flag] = flags(report, "FREQUENT_AUDITOR_CHANGES")
+    assert flag.evidence_pages == [8]
 
 
 def test_one_auditor_change_is_quiet(rhp, adapters, config):
     report = analyse(rhp, adapters, config, governance(auditor_changes=AUDITOR_CHANGES[:1]))
 
-    assert flags(report, "frequent_auditor_changes") == []
+    assert flags(report, "FREQUENT_AUDITOR_CHANGES") == []
+
+
+def test_a_made_up_auditor_change_does_not_count(rhp, adapters, config):
+    # (A near-copy of a real line, e.g. "M/s PQR & Co. resigned as statutory auditors", would still pass:
+    # the quote check is fuzzy, so it can't tell one firm name from another of the same shape.)
+    made_up = CitedText(text="PQR LLP appointed", source=quote("PQR LLP was appointed statutory auditor in 2024", 8))
+
+    report = analyse(rhp, adapters, config, governance(auditor_changes=[AUDITOR_CHANGES[0], made_up]))
+
+    assert report.unverified_fields == ["promoters_governance.auditor_changes[1].source"]
+    assert flags(report, "FREQUENT_AUDITOR_CHANGES") == []
 
 
 def test_an_empty_section_raises_no_governance_flag(rhp, adapters, config):
     report = analyse(rhp, adapters, config, governance())
 
-    assert [f for f in report.red_flags if f.section == "promoters_governance"] == []
+    assert [f for f in report.flags if f.section == "promoters_governance"] == []

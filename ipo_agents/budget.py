@@ -45,6 +45,9 @@ log = logging.getLogger(__name__)
 class BudgetExceeded(Exception):
     """Raised before a call whose worst-case cost would push the IPO's spend over the cap."""
 
+    # Set by analyse_rhp: the partial_budget Report of the facts verified before the stop.
+    report = None
+
 
 @lru_cache(maxsize=1)
 def _encoding():

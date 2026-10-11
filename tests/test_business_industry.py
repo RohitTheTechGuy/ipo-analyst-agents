@@ -2,10 +2,12 @@
 import pytest
 
 from ipo_agents.analysis import analyse_rhp
-from ipo_agents.contracts import (BusinessIndustry, CapacityLine, Cited, Dependence, Fact, IndustryClaim,
+from ipo_agents.contracts import (BusinessIndustry, CapacityLine, CitedText, Dependence, Fact, IndustryClaim, Quote,
                                   RevenueShare)
 from tests.conftest import make_tiny_rhp
-from tests.fakes import ScriptedLLM, empty_answer, make_ipo
+from tests.fakes import ScriptedLLM, found_nothing, make_ipo
+
+pytestmark = pytest.mark.sections("business_industry")
 
 # The tiny RHP: page 1 ToC, 2 the offer, 3 risk factors, then these business pages from page 4.
 BUSINESS_PAGE = "\n".join([
@@ -41,12 +43,17 @@ def fact(value, quote, unit="%", page=4):
     return Fact(value=value, unit=unit, page=page, verbatim_quote=quote)
 
 
+def quote(text, page=4):
+    return Quote(page=page, verbatim_quote=text)
+
+
 TOP1 = fact(24.10, "Our largest customer contributed 24.10% of revenue")
 TOP10 = fact(58.30, "Our top 10 customers contributed 58.30% of revenue")
+ONE_PLANT = quote("All our manufacturing is at a single plant in Krishnagiri")
 
 
 def business(**fields) -> BusinessIndustry:
-    return empty_answer(BusinessIndustry).model_copy(update=fields)
+    return found_nothing(BusinessIndustry).model_copy(update=fields)
 
 
 def analyse(rhp, adapters, config, answer):
@@ -55,7 +62,7 @@ def analyse(rhp, adapters, config, answer):
 
 
 def codes(report):
-    return [f.code for f in report.red_flags if f.section == "business_industry"]
+    return [f.code for f in report.flags if f.section == "business_industry"]
 
 
 def test_every_business_field_is_extracted_as_a_page_cited_fact_that_verifies(rhp, adapters, config):
@@ -71,8 +78,10 @@ def test_every_business_field_is_extracted_as_a_page_cited_fact_that_verifies(rh
             installed_capacity=fact(1000000, "Installed capacity of 1,000,000 units", unit="units"),
             utilisation_pct=fact(64.20, "1,000,000 units with utilisation of 64.20%"))],
         order_book=fact(1234.50, "Our order book stood at Rs. 1,234.50 million", unit="₹ million"),
-        competitors=[Cited(text="TVS Motor", page=4), Cited(text="Bajaj Auto", page=4)],
-        moats=[Cited(text="In-house battery cell technology", page=4)],
+        competitors=[CitedText(text="TVS Motor", source=quote("We compete with TVS Motor and Bajaj Auto")),
+                     CitedText(text="Bajaj Auto", source=quote("We compete with TVS Motor and Bajaj Auto"))],
+        moats=[CitedText(text="In-house battery cell technology",
+                         source=quote("Our strength is our in-house battery cell technology"))],
     )
 
     report = analyse(rhp, adapters, config, answer)
@@ -84,7 +93,7 @@ def test_every_business_field_is_extracted_as_a_page_cited_fact_that_verifies(rh
     assert report.business.revenue_mix[0].share.value == 72.40
     assert report.business.capacity[0].utilisation_pct.value == 64.20
     assert report.business.order_book.value == 1234.50
-    assert [c.text for c in report.business.competitors] == ["TVS Motor", "Bajaj Auto"]
+    assert [(c.text, c.source.page) for c in report.business.competitors] == [("TVS Motor", 4), ("Bajaj Auto", 4)]
 
 
 def test_the_agent_reads_both_business_and_industry_pages(rhp, adapters, config):
@@ -97,15 +106,17 @@ def test_the_agent_reads_both_business_and_industry_pages(rhp, adapters, config)
 
 
 def test_a_concentration_figure_not_on_its_page_could_not_be_verified(rhp, adapters, config):
+    # The retry gets the same wrong answer, so the field stays "could not verify".
     report = analyse(rhp, adapters, config, business(top1_customer_pct=fact(42.10, TOP1.verbatim_quote)))
 
     assert report.business.top1_customer_pct.not_disclosed_reason == "could not verify"
     assert report.unverified_fields == ["business_industry.top1_customer_pct"]
-    assert "customer_concentration" not in codes(report)  # flags use verified facts only
+    assert "CUSTOMER_CONCENTRATION" not in codes(report)  # flags use verified facts only
 
 
 def test_industry_claims_are_tagged_as_from_the_company_commissioned_report(rhp, adapters, config):
-    claim = IndustryClaim(claim="The EV two-wheeler market will reach Rs. 2,500 billion by 2030", page=5,
+    claim = IndustryClaim(claim="The EV two-wheeler market will reach Rs. 2,500 billion by 2030",
+                          source=quote("The EV two-wheeler market is expected to reach", page=5),
                           figure=fact(2500, "market is expected to reach Rs. 2,500 billion by 2030",
                                       unit="₹ billion", page=5))
 
@@ -127,9 +138,9 @@ def test_customer_concentration_is_flagged(rhp, adapters, config, top1, top10):
 
     report = analyse(rhp, adapters, config, business(**fields))
 
-    [flag] = [f for f in report.red_flags if f.code == "customer_concentration"]
-    assert flag.section == "business_industry"
-    assert flag.pages == [4]
+    [flag] = [f for f in report.flags if f.code == "CUSTOMER_CONCENTRATION"]
+    assert (flag.section, flag.severity) == ("business_industry", "warning")
+    assert flag.evidence_pages == [4]
 
 
 def test_customer_concentration_under_the_limits_stays_quiet(tmp_path, adapters, config):
@@ -144,21 +155,28 @@ def test_customer_concentration_under_the_limits_stays_quiet(tmp_path, adapters,
 
 
 def test_single_plant_dependence_is_flagged_with_its_page(rhp, adapters, config):
-    plant = Dependence(dependent=True, evidence=Cited(text="All manufacturing at one plant in Krishnagiri", page=4))
+    report = analyse(rhp, adapters, config, business(single_plant=Dependence(dependent=True, evidence=ONE_PLANT)))
 
-    report = analyse(rhp, adapters, config, business(single_plant=plant))
-
-    [flag] = [f for f in report.red_flags if f.code == "single_plant_dependence"]
-    assert flag.pages == [4]
+    [flag] = [f for f in report.flags if f.code == "SINGLE_PLANT_DEPENDENCE"]
+    assert flag.evidence_pages == [4]
     assert "Krishnagiri" in flag.message
 
 
 def test_single_geography_dependence_is_flagged(rhp, adapters, config):
-    region = Dependence(dependent=True, evidence=Cited(text="Most revenue from Tamil Nadu", page=4))
+    region = Dependence(dependent=True, evidence=quote("We make electric scooters and sell them to retail buyers"))
 
     report = analyse(rhp, adapters, config, business(single_geography=region))
 
-    assert codes(report) == ["single_geography_dependence"]
+    assert codes(report) == ["SINGLE_GEOGRAPHY_DEPENDENCE"]
+
+
+def test_a_dependence_whose_quote_is_not_on_its_page_raises_no_flag(rhp, adapters, config):
+    made_up = Dependence(dependent=True, evidence=quote("All our revenue comes from Tamil Nadu alone"))
+
+    report = analyse(rhp, adapters, config, business(single_geography=made_up))
+
+    assert report.unverified_fields == ["business_industry.single_geography.evidence"]
+    assert codes(report) == []
 
 
 def test_no_dependence_raises_no_flag(rhp, adapters, config):

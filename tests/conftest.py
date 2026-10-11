@@ -23,6 +23,22 @@ def _golden_dir() -> Path:
     return Path(common).parent / "tests" / "golden"
 
 
+def pytest_configure(config):
+    config.addinivalue_line("markers", "sections(*groups): the section agents analyse_rhp runs (default: offer_objects)")
+
+
+@pytest.fixture(autouse=True)
+def _sections_under_test(request, monkeypatch):
+    """Runs only the section agents a test is about: `@pytest.mark.sections("financials", ...)`, else
+    offer_objects. Section agents run in parallel, so tests that script calls in order need one."""
+    import ipo_agents.analysis as analysis
+    from ipo_agents.sections import SECTIONS
+
+    marker = request.node.get_closest_marker("sections")
+    groups = marker.args if marker else ("offer_objects",)
+    monkeypatch.setattr(analysis, "SECTIONS", {g: SECTIONS[g] for g in groups})
+
+
 @pytest.fixture(scope="session")
 def golden_rhp():
     """Returns a function: company slug -> path to its golden RHP, skipping if the PDF is absent."""
@@ -79,16 +95,6 @@ def make_tiny_rhp(path: Path, offer_pages: tuple[str, ...] = (TINY_OFFER_PAGE,),
         doc.new_page().insert_text((72, 72), text)
     doc.save(path)
     return path
-
-
-@pytest.fixture
-def offer_section_only(monkeypatch):
-    """Runs only the Offer & Objects section agent: for tests whose call counts, call order or spend
-    arithmetic assume one section call per run (budget, routing, dedupe, offer map -> reduce)."""
-    import ipo_agents.analysis as analysis
-    from ipo_agents.sections import SECTIONS
-
-    monkeypatch.setattr(analysis, "SECTIONS", {"offer_objects": SECTIONS["offer_objects"]})
 
 
 @pytest.fixture

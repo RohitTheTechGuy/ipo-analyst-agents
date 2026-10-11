@@ -5,9 +5,10 @@ import yaml
 import ipo_agents.analysis as analysis
 from ipo_agents.analysis import analyse_rhp
 from ipo_agents.contracts import Eps, Fact, Kpi, OfferPriceBasis, PeriodFact, Peer, Waca
-from ipo_agents.sections import SECTIONS
 from tests.conftest import make_tiny_rhp
-from tests.fakes import NOT_DISCLOSED, ScriptedLLM, empty_answer, make_ipo
+from tests.fakes import NOT_DISCLOSED, ScriptedLLM, found_nothing, make_ipo
+
+pytestmark = pytest.mark.sections("offer_price_basis")
 
 # The tiny RHP: pages 1-7 are the stock sections; the Basis for Offer Price page is page 8.
 # make_ipo()'s price band is ₹100–₹105, so the upper band is ₹105.
@@ -52,7 +53,7 @@ PEER = Peer(name="Alpha Motors Limited",
 
 
 def basis(**fields) -> OfferPriceBasis:
-    return empty_answer(OfferPriceBasis).model_copy(update=fields)
+    return found_nothing(OfferPriceBasis).model_copy(update=fields)
 
 
 def analyse(rhp, adapters, config, answer, ipo=None):
@@ -60,13 +61,8 @@ def analyse(rhp, adapters, config, answer, ipo=None):
     return analyse_rhp(ipo or make_ipo(), rhp, adapters, config)
 
 
-def derived(report, name):
-    [d] = [d for d in report.derived if d.name == name]
-    return d
-
-
 def waca_flags(report):
-    return [f for f in report.red_flags if f.code == "offer_price_far_above_waca"]
+    return [f for f in report.flags if f.code == "OFFER_PRICE_FAR_ABOVE_WACA"]
 
 
 def test_price_basis_fields_and_the_peer_table_are_extracted_as_facts_that_verify(rhp, adapters, config):
@@ -109,11 +105,14 @@ def test_offer_price_over_twice_the_waca_is_flagged(rhp, adapters, config):
     # Upper band ₹105 / primary WACA ₹40.00 = 2.625x (> 2x); / secondary WACA ₹60.00 = 1.75x.
     report = analyse(rhp, adapters, config, basis(waca_primary=PRIMARY, waca_secondary=SECONDARY))
 
-    assert derived(report, "cap_price_to_waca_primary").value == pytest.approx(2.625)
-    assert derived(report, "cap_price_to_waca_secondary").value == pytest.approx(1.75)
+    primary = report.calculations["cap_price_to_waca_primary"]
+    assert primary.value == pytest.approx(2.625)
+    assert [(i.field, i.page) for i in primary.inputs] == [
+        ("ipo.price_band", None), ("offer_price_basis.waca_primary.waca", 8)]
+    assert report.calculations["cap_price_to_waca_secondary"].value == pytest.approx(1.75)
     [flag] = waca_flags(report)
     assert "primary" in flag.message and "secondary" not in flag.message
-    assert flag.pages == [8]
+    assert (flag.section, flag.evidence_pages) == ("offer_price_basis", [8])
 
 
 def test_offer_price_under_twice_the_waca_is_quiet(tmp_path, adapters, config):
@@ -124,7 +123,7 @@ def test_offer_price_under_twice_the_waca_is_quiet(tmp_path, adapters, config):
         waca_primary=waca(55.00, "WACA of primary issuances (Rs. per share) 55.00")))
 
     assert report.unverified_fields == []
-    assert derived(report, "cap_price_to_waca_primary").value == pytest.approx(105 / 55)
+    assert report.calculations["cap_price_to_waca_primary"].value == pytest.approx(105 / 55)
     assert waca_flags(report) == []
 
 
@@ -133,39 +132,39 @@ def test_a_waca_that_fails_verification_raises_no_flag(rhp, adapters, config):
         waca_primary=waca(4.00, "WACA of primary issuances (Rs. per share) 40.00")))
 
     assert report.unverified_fields == ["offer_price_basis.waca_primary.waca"]
-    assert derived(report, "cap_price_to_waca_primary").value is None
+    assert report.calculations["cap_price_to_waca_primary"].not_computable_reason == (
+        "offer_price_basis.waca_primary.waca: could not verify")
     assert waca_flags(report) == []
 
 
 def test_waca_not_disclosed_is_not_computable(rhp, adapters, config):
     report = analyse(rhp, adapters, config, basis())
 
-    assert derived(report, "cap_price_to_waca_primary").value is None
-    assert "not computable" in derived(report, "cap_price_to_waca_primary").note
+    primary = report.calculations["cap_price_to_waca_primary"]
+    assert primary.value is None
+    assert primary.not_computable_reason == "offer_price_basis.waca_primary.waca: not disclosed"
 
 
 # --- golden RHPs --------------------------------------------------------------
 
-# Hand-picked from each golden RHP's own Basis for Offer Price pages (needs_human_review). The
-# expected.yaml WACA facts sit on Summary pages (Offer & Objects), so the same values are cited here
-# from the section's WACA table; Hyundai's industry P/E is expected.yaml's fact as is.
-GOLDEN = {
-    "bajaj-housing-finance": {
-        "waca_primary.waca": (18.1, "₹ per share", 147,
-                              "Weighted average cost of acquisition (WACA) of Primary issuances 18.1"),
-        "industry_pe.average": (20.0, "times", 122, "Particulars P/E Ratio Highest 30.3 Lowest 7.7 Average 20.0"),
-    },
-    "hyundai-motor-india": {
-        "industry_pe.average": "industry_pe_average",  # from expected.yaml
-    },
-    "ola-electric": {
-        "waca_primary.waca": (47.00, "₹ per share", 158, "Weighted Average Cost of Acquisition (WACA) "
-                                                         "(Primary Transactions) (₹ per Equity Share) 47.00"),
-        "waca_secondary.waca": (87.83, "₹ per share", 160, "Weighted Average Cost of Acquisition (WACA) "
-                                                           "(Secondary Transactions) (₹ per Equity Share) 87.83"),
-    },
+# Golden expected.yaml keys -> OfferPriceBasis fields ("parent.field").
+GOLDEN_FIELDS = {
+    "waca_all_shares_last_one_year": "waca_primary.waca",
+    "industry_pe_average": "industry_pe.average",
 }
-GOLDEN_CASES = [(slug, path) for slug, facts in GOLDEN.items() for path in facts]
+# expected.yaml cites the WACA on the offer-document summary pages, which this agent never sees. These
+# are the same numbers where the Basis for Offer Price section prints them (its WACA of primary
+# issuances), so the agent can cite them; value and unit still come from expected.yaml. Hyundai's
+# industry P/E is already on a section page, and Hyundai has no WACA (no primary or secondary deals).
+PRICE_BASIS_CITATIONS = {
+    ("bajaj-housing-finance", "waca_all_shares_last_one_year"): (
+        147, "Weighted average cost of acquisition (WACA) of Primary issuances 18.1"),
+    ("ola-electric", "waca_all_shares_last_one_year"): (
+        158, "Weighted Average Cost of Acquisition (WACA) (Primary Transactions) (₹ per Equity Share) 47.00"),
+}
+GOLDEN_SLUGS = ["bajaj-housing-finance", "hyundai-motor-india", "ola-electric"]
+GOLDEN_CASES = [("bajaj-housing-finance", "waca_primary.waca"), ("ola-electric", "waca_primary.waca"),
+                ("hyundai-motor-india", "industry_pe.average")]
 
 
 def golden_expected(golden_rhp, slug):
@@ -173,16 +172,13 @@ def golden_expected(golden_rhp, slug):
 
 
 def golden_facts(golden_rhp, slug) -> dict[str, Fact]:
-    expected = golden_expected(golden_rhp, slug)
-    by_key = {f["key"]: f for f in expected["facts"]}
-    out = {}
-    for path, spec in GOLDEN[slug].items():
-        if isinstance(spec, str):
-            f = by_key[spec]
-            spec = (f["value"], f["unit"], f["page"], f["verbatim_quote"])
-        value, unit, page, quote = spec
-        out[path] = Fact(value=value, unit=unit, page=page, verbatim_quote=quote)
-    return out
+    """The golden facts, cited on Basis for Offer Price pages (needs_human_review: checks verifier agreement)."""
+    facts = {}
+    for f in golden_expected(golden_rhp, slug)["facts"]:
+        if f["key"] in GOLDEN_FIELDS:
+            page, quote = PRICE_BASIS_CITATIONS.get((slug, f["key"]), (f["page"], f["verbatim_quote"]))
+            facts[GOLDEN_FIELDS[f["key"]]] = Fact(value=f["value"], unit=f["unit"], page=page, verbatim_quote=quote)
+    return facts
 
 
 def golden_answer(facts: dict[str, Fact]) -> OfferPriceBasis:
@@ -195,7 +191,6 @@ def golden_answer(facts: dict[str, Fact]) -> OfferPriceBasis:
 
 def analyse_golden(slug, golden_rhp, golden_doc, adapters, config, monkeypatch, facts):
     monkeypatch.setattr(analysis, "ingest", lambda path: golden_doc(slug))  # ingested once per session
-    monkeypatch.setattr(analysis, "SECTIONS", {"offer_price_basis": SECTIONS["offer_price_basis"]})
     lo, hi = golden_expected(golden_rhp, slug)["ipo"]["price_band"]
     ipo = make_ipo().model_copy(update={"price_band": f"₹{lo}–₹{hi}"})
     return analyse(golden_rhp(slug), adapters, config, golden_answer(facts), ipo=ipo)
@@ -206,7 +201,7 @@ def get(model, path):
     return getattr(getattr(model, parent), name)
 
 
-@pytest.mark.parametrize("slug", list(GOLDEN))
+@pytest.mark.parametrize("slug", GOLDEN_SLUGS)
 def test_golden_price_basis_facts_verify_on_the_real_section_pages(slug, golden_rhp, golden_doc, adapters, config,
                                                                   monkeypatch):
     facts = golden_facts(golden_rhp, slug)
@@ -237,5 +232,6 @@ def test_golden_offer_price_vs_waca(slug, ratio, fires, golden_rhp, golden_doc, 
     report = analyse_golden(slug, golden_rhp, golden_doc, adapters, config, monkeypatch,
                             golden_facts(golden_rhp, slug))
 
-    assert derived(report, "cap_price_to_waca_primary").value == (pytest.approx(ratio) if ratio else None)
+    primary = report.calculations["cap_price_to_waca_primary"]
+    assert primary.value == (pytest.approx(ratio) if ratio else None)
     assert bool(waca_flags(report)) is fires

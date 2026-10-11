@@ -6,10 +6,10 @@
 
 **Status:** ready-for-agent
 
-- [ ] At seam A, a crash mid-graph followed by a rerun doesn't repeat completed model calls
-- [ ] The resumed run's budget includes the pre-crash spend
-- [ ] A budget stop yields a `partial_budget` Report, a Telegram alert and status `failed_budget`
-- [ ] `failed_budget` IPOs aren't retried on later runs
+- [x] At seam A, a crash mid-graph followed by a rerun doesn't repeat completed model calls
+- [x] The resumed run's budget includes the pre-crash spend
+- [x] A budget stop yields a `partial_budget` Report, a Telegram alert and status `failed_budget`
+- [x] `failed_budget` IPOs aren't retried on later runs
 
 **Spec:** `docs/specs/ipo-agents.md`
 

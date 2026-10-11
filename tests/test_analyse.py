@@ -35,5 +35,4 @@ def test_each_page_is_tagged_once_in_the_prompt(tiny_rhp, adapters, config):
 
     analyse_rhp(make_ipo(), tiny_rhp, adapters, config)
 
-    [call] = [c for c in llm.calls if c["task"] == "offer_objects"]
-    assert call["user"].count("[page 2]") == 1
+    assert llm.calls[0]["user"].count("[page 2]") == 1

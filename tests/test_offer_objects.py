@@ -9,14 +9,12 @@ import ipo_agents.analysis as analysis
 import ipo_agents.section_agent as section_agent
 from ipo_agents.analysis import analyse_rhp
 from ipo_agents.budget import BudgetExceeded
-from ipo_agents.contracts import Fact, OfferObjects, ProceedsObject, SellingShareholder
+from ipo_agents.contracts import Fact, OfferObjects, ProceedsObject, Quote, SellingShareholder
 from ipo_agents.llm import LLMParseError
 from ipo_agents.section_agent import SectionSpec
 from ipo_agents.sections import SECTIONS
 from tests.conftest import REPO_ROOT, make_tiny_rhp
 from tests.fakes import NOT_DISCLOSED, ScriptedLLM, make_ipo, offer_objects
-
-pytestmark = pytest.mark.usefixtures("offer_section_only")  # one section call per run
 
 OFFER_PAGE = "\n".join([
     "THE OFFER",
@@ -222,13 +220,12 @@ def test_a_value_not_disclosed_is_reported_as_not_disclosed(rhp, adapters, confi
 def test_every_number_in_every_section_schema_is_a_fact():
     def raw_numbers(model, path):
         for name, field in model.model_fields.items():
-            if name != "page":  # a citation, not a number from the RHP
-                yield from walk(field.annotation, f"{path}.{name}")
+            yield from walk(field.annotation, f"{path}.{name}")
 
     def walk(ann, path):
         if ann in (int, float):
             yield path
-        elif isinstance(ann, type) and issubclass(ann, BaseModel) and ann is not Fact:
+        elif isinstance(ann, type) and issubclass(ann, BaseModel) and ann not in (Fact, Quote):  # Quote.page cites, it isn't data
             yield from raw_numbers(ann, path)
         else:
             for arg in typing.get_args(ann):

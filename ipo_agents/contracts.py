@@ -85,6 +85,9 @@ class SectionedDocument(BaseModel):
 
 class SellingShareholder(BaseModel):
     name: str
+    category: Literal["promoter", "investor", "other"] | None = Field(
+        default=None, description="How the RHP classes this seller: Promoter, Investor (PE/VC) or Other "
+                                  "Selling Shareholder")
     shares_offered: Fact
     holding_after: Fact = Field(description="Holding after the offer, % or shares as written")
 
@@ -116,12 +119,74 @@ class OfferObjects(BaseModel):
     selling_shareholders: list[SellingShareholder]
 
 
-class Cited(BaseModel):
-    """A short piece of text from the RHP and the page it is on (not checked by the verifier)."""
+class Quote(BaseModel):
+    """Text (not a number) taken from the RHP. The verifier checks the quote is printed on the cited
+    page; one it can't find comes back with page and verbatim_quote set to None."""
+
+    page: int | None = Field(default=None, ge=1)
+    verbatim_quote: str | None = Field(default=None, description="The words copied character for character from the page")
+
+
+class FinancialPeriod(BaseModel):
+    """One column of the restated financials: a fiscal year or a stub (interim) period."""
+
+    label: str = Field(description="Period label as printed, e.g. 'Fiscal 2024' or 'Three months ended June 30, 2024'")
+    end_date: str = Field(description="Period end date as printed, e.g. 'March 31, 2024'")
+    kind: Literal["full_year", "stub"] = Field(description="'stub' for an interim period shorter than a full fiscal year")
+    revenue_from_operations: Fact
+    total_income: Fact = Field(description="Revenue from operations plus other income")
+    ebitda: Fact = Field(description="EBITDA as disclosed; not disclosed if the RHP doesn't state it")
+    pat: Fact = Field(description="Restated profit (or loss) after tax for the period; a loss is negative")
+    cfo: Fact = Field(description="Net cash from / (used in) operating activities; cash used is negative")
+    capex: Fact = Field(description="Purchase of property, plant and equipment (incl. intangibles if one line)")
+    total_borrowings: Fact = Field(description="Total borrowings (current + non-current) at period end")
+    cash_and_equivalents: Fact = Field(description="Cash and cash equivalents at period end")
+    net_worth: Fact = Field(description="Net worth / total equity at period end")
+    trade_receivables: Fact = Field(description="Trade receivables at period end")
+    inventories: Fact = Field(description="Inventories at period end")
+    trade_payables: Fact = Field(description="Trade payables at period end")
+    ronw_pct: Fact = Field(description="Return on net worth / ROE, % as disclosed")
+    roce_pct: Fact = Field(description="Return on capital employed, % as disclosed")
+
+
+class AuditorRemark(BaseModel):
+    """A qualification or emphasis-of-matter paragraph in the auditor's examination report."""
+
+    kind: Literal["qualification", "emphasis_of_matter"]
+    summary: str = Field(description="One line in plain words: what the auditor points to")
+    source: Quote
+
+
+class Restatement(BaseModel):
+    adjusted: bool = Field(description="True if the restated figures differ from the audited ones (any non-nil restatement adjustment)")
+    source: Quote
+
+
+class Financials(BaseModel):
+    """Financials section: 3 fiscal years plus any stub period. Flags are computed in Python (fin_calc)."""
+
+    periods: list[FinancialPeriod] = Field(description="One entry per period column: each fiscal year and any stub period")
+    auditor_remarks: list[AuditorRemark] = Field(description="Every auditor qualification and emphasis of matter; empty if none")
+    restatement: Restatement | None = Field(description="Whether restatement adjustments were made; None if not stated")
+
+
+class FinancialCheck(BaseModel):
+    """A financial red-flag check Python computed from verified facts. A check whose inputs aren't
+    all verified is 'not_computable', never guessed."""
+
+    code: str
+    status: Literal["raised", "clear", "not_computable"]
+    detail: str
+
+
+class CitedText(BaseModel):
+    """A short text (a name, a claim) and the RHP words that support it; the verifier checks the quote."""
 
     text: str = Field(description="Short paraphrase or name, no more than one sentence")
-    page: int = Field(ge=1, description="N from the nearest '[page N]' tag above the text")
+    source: Quote
 
+
+# --- Business & Industry --------------------------------------------------------------------
 
 COMMISSIONED_REPORT = "per company-commissioned industry report"
 
@@ -140,14 +205,14 @@ class CapacityLine(BaseModel):
 
 class Dependence(BaseModel):
     dependent: bool = Field(description="True only if the RHP says so: one plant, or one state/country for most revenue")
-    evidence: Cited | None = Field(description="Where the RHP says it; null when dependent is false")
+    evidence: Quote | None = Field(description="The RHP words that say so; null when dependent is false")
 
 
 class IndustryClaim(BaseModel):
     """A market claim from the industry report, always shown as per the company-commissioned report."""
 
     claim: str = Field(description="The claim, paraphrased in one sentence")
-    page: int = Field(ge=1)
+    source: Quote
     figure: Fact | None = Field(description="The claim's headline number (market size, growth %), if it has one")
 
     @computed_field
@@ -166,24 +231,26 @@ class BusinessIndustry(BaseModel):
     top_supplier_pct: Fact = Field(description="Purchases from the largest supplier, % of purchases, latest full fiscal year")
     capacity: list[CapacityLine]
     order_book: Fact = Field(description="Order book, rupee amount, latest date stated")
-    competitors: list[Cited] = Field(description="Competitors the RHP names, one per item")
-    moats: list[Cited] = Field(description="Competitive strengths the company claims, a few words each")
+    competitors: list[CitedText] = Field(description="Competitors the RHP names, one per item")
+    moats: list[CitedText] = Field(description="Competitive strengths the company claims, a few words each")
     industry_claims: list[IndustryClaim] = Field(description="Key market claims from the industry report")
     single_plant: Dependence = Field(description="All or most manufacturing at a single plant")
     single_geography: Dependence = Field(description="Most revenue from a single state, region or country")
 
 
+# --- Promoters & Governance -----------------------------------------------------------------
+
 class Promoter(BaseModel):
     name: str
     background: str = Field(description="Education, experience and other businesses, in one or two sentences")
-    page: int = Field(ge=1)
+    source: Quote
 
 
 class GroupCompany(BaseModel):
     name: str
     same_line_of_business: bool = Field(
         description="True if the RHP says it is in the same or a similar line of business, or has common pursuits")
-    page: int = Field(ge=1)
+    source: Quote = Field(description="The RHP words naming it (and, if so, saying it is in the same line of business)")
 
 
 class Remuneration(BaseModel):
@@ -204,16 +271,18 @@ class PromotersGovernance(BaseModel):
 
     promoters: list[Promoter]
     group_companies: list[GroupCompany]
-    subsidiaries: list[Cited]
+    subsidiaries: list[CitedText]
     remuneration: list[Remuneration] = Field(description="Each promoter, director and KMP paid in the latest full fiscal year")
     board_size: Fact = Field(description="Number of directors on the board")
     independent_directors: Fact = Field(description="Number of independent directors on the board")
     promoter_shares_pledged: Fact = Field(
         description="Promoter shares pledged or encumbered, number of shares or % as printed; 'Nil' is 0")
     dividends: list[Dividend] = Field(description="Dividends declared in the last three fiscal years and the stub period")
-    auditor_changes: list[Cited] = Field(description="Each change of statutory auditor in the last three years")
-    kmp_changes: list[Cited] = Field(description="Each change in key managerial personnel in the last three years")
+    auditor_changes: list[CitedText] = Field(description="Each change of statutory auditor in the last three years")
+    kmp_changes: list[CitedText] = Field(description="Each change in key managerial personnel in the last three years")
 
+
+# --- Offer Price Basis ----------------------------------------------------------------------
 
 class PeriodFact(BaseModel):
     period: str = Field(description="Fiscal year or period, as written, e.g. 'Fiscal 2024'")
@@ -271,10 +340,12 @@ class OfferPriceBasis(BaseModel):
     waca_secondary: Waca = Field(description="Secondary transactions (transfers) in the period the RHP reports")
 
 
+# --- Other Disclosures ----------------------------------------------------------------------
+
 class MaterialItem(BaseModel):
     summary: str = Field(description="What the RHP discloses, in one or two sentences")
-    page: int = Field(ge=1)
     why_material: str = Field(description="Why an investor should know it, in one sentence")
+    source: Quote
     figures: list[Fact] = Field(description="Any numbers the item cites; empty if none")
 
 
@@ -287,24 +358,6 @@ class OtherDisclosures(BaseModel):
     @property
     def nothing_material(self) -> bool:
         return not self.items
-
-
-class RedFlag(BaseModel):
-    """A red flag raised by Python from verified facts (never by a model)."""
-
-    section: str  # the section group that raised it
-    code: str  # stable id, e.g. "customer_concentration"
-    message: str
-    pages: list[int] = []
-
-
-class Derived(BaseModel):
-    """A number computed in Python from verified facts; value None when it can't be computed."""
-
-    name: str
-    value: float | None
-    unit: str
-    note: str  # how it was computed, or why it couldn't be
 
 
 Verdict = Literal["subscribe_long_term", "subscribe_listing_gains", "neutral", "avoid"]
@@ -344,19 +397,50 @@ class Sentiment(BaseModel):
         return [n for s in self.sources for n in s.claimed_numbers]
 
 
+class CalcInput(BaseModel):
+    """One input of a derived number: a Fact's dotted path and page, or exchange data (page None)."""
+
+    field: str  # e.g. "offer_objects.ofs_shares" or "ipo.price_band"
+    page: int | None = None
+
+
+class Derived(BaseModel):
+    """A number computed in Python (calc.py) from verified inputs; None when not computable."""
+
+    value: float | None
+    unit: str
+    inputs: list[CalcInput] = []
+    basis: str = ""  # e.g. "computed at upper band ₹105"
+    not_computable_reason: str | None = None  # e.g. "offer_objects.ofs_shares: could not verify"
+
+    @property
+    def pages(self) -> list[int]:
+        return sorted({i.page for i in self.inputs if i.page is not None})
+
+
+class Flag(BaseModel):
+    code: str  # e.g. "OFS_HEAVY"
+    severity: Literal["info", "warning", "error"]
+    message: str
+    evidence_pages: list[int] = []
+    section: str | None = None  # the section group whose facts raised it
+
+
 class Report(BaseModel):
     ipo: Ipo
     status: Literal["complete", "partial_budget"]
     verdict: Verdict | None
     offer: OfferObjects | None = None
+    financials: Financials | None = None
+    financial_flags: list[FinancialCheck] = []
     business: BusinessIndustry | None = None
     governance: PromotersGovernance | None = None
     price_basis: OfferPriceBasis | None = None
     other: OtherDisclosures | None = None
     sentiment: Sentiment | None = None
+    calculations: dict[str, Derived] = {}  # name -> derived number (calc.py, section_calc.py)
+    flags: list[Flag] = []  # red flags (flags.py, section_calc.py)
     unverified_fields: list[str] = []
-    red_flags: list[RedFlag] = []
-    derived: list[Derived] = []
     rhp_sha256: str
     pdf_path: str | None = None
 

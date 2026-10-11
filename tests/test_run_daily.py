@@ -1,12 +1,9 @@
-import pytest
 from datetime import date
 
 from ipo_agents.contracts import Fact, OfferObjects
 from ipo_agents.runner import run_daily
 from tests.conftest import make_tiny_rhp
 from tests.fakes import FakeDownloader, FakeExchange, ScriptedLLM, make_ipo, offer_objects
-
-pytestmark = pytest.mark.usefixtures("offer_section_only")  # one section call per run
 
 TODAY = date(2026, 10, 13)
 
@@ -74,7 +71,7 @@ def test_failed_analysis_sends_nothing_and_is_retried_next_run(adapters, config)
     assert second.analysed == ["ACME-2026-10-13"]
 
 
-def test_budget_stop_alerts_once_and_is_never_retried(adapters, config):
+def test_budget_stop_sends_one_partial_summary_and_is_never_retried(adapters, config):
     # 130,000 max output tokens x $12/1M (terra) = $1.56 > $1.50: stopped before the first call.
     config = config.model_copy(update={"default_max_tokens": 130_000})
     adapters.exchange = FakeExchange([make_ipo()])
@@ -84,9 +81,22 @@ def test_budget_stop_alerts_once_and_is_never_retried(adapters, config):
     second = run_daily(TODAY, adapters, config)
 
     assert first.failed == ["ACME-2026-10-13"]
-    assert adapters.notifier.messages == ["⚠️ Acme Ltd: analysis stopped at the $1.50 budget cap"]
+    [msg] = adapters.notifier.messages
+    assert msg.startswith("⚠️ PARTIAL: stopped at the $1.50 budget cap\n📄 Acme Ltd IPO (Mainboard)")
     assert second.skipped == ["ACME-2026-10-13"]
     assert adapters.llm.calls == []
+
+
+def test_ipo_listed_twice_under_different_ids_is_analysed_once(adapters, config):
+    twin = make_ipo().model_copy(update={"ipo_id": "acme-ltd", "name": "ACME LIMITED"})
+    adapters.exchange = FakeExchange([make_ipo(), twin])
+    adapters.llm = offer_llm(config)
+
+    summary = run_daily(TODAY, adapters, config)
+
+    assert summary.analysed == ["ACME-2026-10-13"]
+    assert len(adapters.llm.calls) == 1
+    assert len(adapters.notifier.messages) == 1
 
 
 def test_telegram_failure_does_not_stop_other_ipos(adapters, config):

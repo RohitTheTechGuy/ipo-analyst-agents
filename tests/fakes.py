@@ -1,10 +1,11 @@
 """Fakes for the system's outer boundary only (spec: Testing Decisions)."""
 from __future__ import annotations
 
+import typing
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
-from typing import Literal, Mapping, get_args, get_origin
+from typing import Mapping
 
 from pydantic import BaseModel
 
@@ -24,11 +25,11 @@ class ScriptedLLM:
 
     `models` is the configured model table (default: the repo's config.yaml); a call naming
     any other model key fails, so a wrong routing key can't pass. `usage` scripts (input, cached, output) tokens per call, in
-    order; calls beyond it use the defaults. A schema with no scripted response gets `empty_answer`
-    (its section disclosed nothing), so a test scripts only the sections it is about. A scripted
-    response that is an exception is raised; one that is a function is called with the prompt's user text, so per-call answers can key on it.
+    order; calls beyond it use the defaults. A scripted response that is an exception is raised; one
+    that is a function is called with the prompt's user text, so per-call answers can key on it.
     `errors` scripts a failure per call, in order (None = that call succeeds). Every call, failed
-    or not, is recorded in `calls` with the model key it was sent to.
+    or not, is recorded in `calls` with the model key it was sent to. A schema with no scripted
+    response gets `found_nothing(schema)`, so a test scripts only the sections it is about.
     """
 
     responses: dict[type, object]
@@ -47,7 +48,7 @@ class ScriptedLLM:
         n = len(self.calls) - 1
         if n < len(self.errors) and self.errors[n] is not None:
             raise self.errors[n]
-        response = self.responses[schema] if schema in self.responses else empty_answer(schema)
+        response = self.responses[schema] if schema in self.responses else found_nothing(schema)
         if callable(response):
             response = response(user)
         if isinstance(response, Exception):
@@ -139,32 +140,28 @@ NOT_DISCLOSED = Fact(value=None, unit="", page=None, verbatim_quote=None,
                      not_disclosed_reason="not disclosed in provided pages")
 
 
+def found_nothing(schema: type[BaseModel]) -> BaseModel:
+    """What a model that found nothing in its pages returns: every Fact not disclosed, every list
+    empty, every optional field None, every text empty, every yes/no False."""
+    def empty(f):
+        ann = f.annotation
+        if ann is Fact:
+            return NOT_DISCLOSED
+        if typing.get_origin(ann) is list:
+            return []
+        if type(None) in typing.get_args(ann):
+            return None
+        if ann is str:
+            return ""
+        if ann is bool:
+            return False
+        if isinstance(ann, type) and issubclass(ann, BaseModel):
+            return found_nothing(ann)
+        raise TypeError(f"{schema.__name__}: no empty value for {ann}; script this schema")
+    return schema(**{name: empty(f) for name, f in schema.model_fields.items()})
+
+
 def offer_objects(**fields) -> OfferObjects:
     """An OfferObjects with the given fields; every other fact not disclosed and every list empty."""
     defaults = {name: NOT_DISCLOSED if f.annotation is Fact else [] for name, f in OfferObjects.model_fields.items()}
     return OfferObjects(**{**defaults, **fields})
-
-
-def empty_answer(schema: type[BaseModel]) -> BaseModel:
-    """An answer to `schema` that discloses nothing: every Fact not disclosed, every list empty,
-    every optional field None, every flag False."""
-    return schema(**{name: _empty(f.annotation) for name, f in schema.model_fields.items() if f.is_required()})
-
-
-def _empty(ann):
-    args = get_args(ann)
-    if ann is Fact:
-        return NOT_DISCLOSED
-    if get_origin(ann) is list:
-        return []
-    if type(None) in args:
-        return None
-    if get_origin(ann) is Literal:
-        return args[0]
-    if ann is bool:
-        return False
-    if ann is str:
-        return ""
-    if isinstance(ann, type) and issubclass(ann, BaseModel):
-        return empty_answer(ann)
-    raise TypeError(f"no empty value for {ann!r}")
