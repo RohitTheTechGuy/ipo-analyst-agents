@@ -98,7 +98,7 @@ def test_rerun_after_a_crash_does_not_repeat_the_branches_that_finished(tiny_rhp
     assert report.sentiment.bull_points == ["strong order book"]
 
 
-def test_resumed_run_counts_the_spend_from_before_the_crash(tiny_rhp, adapters, config):
+def test_a_later_run_counts_the_spend_of_an_earlier_one(tiny_rhp, adapters, config):
     # Each offer call may write up to 40,000 tokens: worst case 40,000 x $12/1M = $0.48 plus its prompt.
     # The crashed call is billed 270,000 in x $2/1M + 40,000 out x $12/1M = $0.54 + $0.48 = $1.02 (under
     # the $1.05 degrade threshold, so the retry stays on terra). The retry's worst case then needs
@@ -107,8 +107,7 @@ def test_resumed_run_counts_the_spend_from_before_the_crash(tiny_rhp, adapters, 
     adapters.llm = llm = ScriptedLLM({OfferObjects: OFFER}, models=config.models, errors=[
         LLMParseError("reply did not match the schema", input_tokens=270_000, cached_tokens=0, output_tokens=40_000)])
 
-    with pytest.raises(LLMParseError):
-        analyse_rhp(make_ipo(), tiny_rhp, adapters, config)
+    analyse_rhp(make_ipo(), tiny_rhp, adapters, config)  # unreadable reply: the section is skipped, billed $1.02
     with pytest.raises(BudgetExceeded):
         analyse_rhp(make_ipo(), tiny_rhp, adapters, config)
 

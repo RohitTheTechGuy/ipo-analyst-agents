@@ -32,6 +32,7 @@ from pydantic import BaseModel
 from ipo_agents.adapters import Adapters
 from ipo_agents.advisor import advise, advisor_llm
 from ipo_agents.budget import BudgetExceeded, BudgetMeter, MeteredLLM
+from ipo_agents.llm import LLMParseError
 from ipo_agents.calc import compute_offer
 from ipo_agents.config import Config
 from ipo_agents.contracts import CheckedSynthesis, Ipo, Report, SectionedDocument, Sentiment, Valuation
@@ -84,8 +85,14 @@ def build_graph(adapters: Adapters, config: Config, checkpointer: SqliteSaver | 
             chunks = section_chunks(spec, state["doc"])
             if not chunks:
                 return {}
-            output, failed = run_section(spec, chunks, adapters.llm, spec.max_tokens or config.default_max_tokens,
-                                         config.map_max_tokens)
+            try:
+                output, failed = run_section(spec, chunks, adapters.llm, spec.max_tokens or config.default_max_tokens,
+                                             config.map_max_tokens)
+            except LLMParseError as e:
+                # One unreadable section (its own reply cut off or malformed) must not lose the others. Provider
+                # errors and outages still fail the IPO, so the next run retries it; the cap stops it (partial).
+                log.warning("%s: section reply could not be read (%s)", spec.group, e)
+                return {"unverified": [f"{spec.group}: could not read (reply unreadable)"]}
             if output is not None:
                 # Model-written prose beside the verified facts: no unverified number may reach the report.
                 output, _ = ground_section(output, spec.group)

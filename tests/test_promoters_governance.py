@@ -135,12 +135,13 @@ def test_governance_fields_are_extracted_as_page_cited_facts_that_verify(rhp, ad
     assert g.promoters[0].source.page == 9
 
 
-def test_the_agent_is_routed_to_groq(rhp, adapters, config):
-    # Its call is capped at 1,500 output tokens, so prompt + schema + pages fit Groq's 6,000-token limit.
+def test_the_agent_is_routed_to_luna(rhp, adapters, config):
+    # Real RHP prompts for this section alone exceed Groq's 6,000-token call limit (HD Fire: 6,515), and a
+    # 1,500-token output cap cut its merge off mid-JSON; it runs on Luna with the normal output limit.
     analyse(rhp, adapters, config, governance())
 
     [call] = [c for c in adapters.llm.calls if c["task"] == "promoters_governance"]
-    assert (call["model"], call["max_tokens"]) == ("groq", 1500)
+    assert (call["model"], call["max_tokens"]) == ("luna", config.default_max_tokens)
     assert "Our Board comprises 8 Directors" in call["user"]
     assert "Restated profit after tax" not in call["user"]  # the MD&A page belongs to Financials
 

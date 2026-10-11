@@ -376,3 +376,31 @@ def test_a_value_without_a_citation_could_not_be_verified_instead_of_failing_the
 
     assert report.offer.issue_size.value is None
     assert "offer_objects.issue_size" in report.unverified_fields
+
+
+@pytest.mark.sections("offer_objects", "business_industry")
+def test_a_section_whose_own_reply_is_cut_off_is_skipped_not_the_whole_ipo(tiny_rhp, adapters, config):
+    # HD Fire live run: Promoters & Governance's final call hit its output limit and the LLMParseError
+    # failed the whole IPO. One unreadable section must only mark that section, like an unreadable part.
+    from ipo_agents.contracts import BusinessIndustry
+    from ipo_agents.llm import LLMParseError
+    issue = Fact(value=1250.0, unit="₹ crore", page=2, verbatim_quote="Total issue size of up to Rs. 1,250.00 crore")
+    adapters.llm = ScriptedLLM({OfferObjects: offer_objects(issue_size=issue),
+                                BusinessIndustry: LLMParseError("length limit", input_tokens=10, cached_tokens=0,
+                                                                output_tokens=1500)}, models=config.models)
+
+    report = analyse_rhp(make_ipo(), tiny_rhp, adapters, config)
+
+    assert report.offer.issue_size == issue
+    assert report.business is None
+    assert "business_industry: could not read (reply unreadable)" in report.unverified_fields
+
+
+@pytest.mark.sections("offer_objects", "business_industry")
+def test_a_budget_stop_in_a_section_still_stops_the_run(tiny_rhp, adapters, config):
+    from ipo_agents.contracts import BusinessIndustry
+    adapters.llm = ScriptedLLM({OfferObjects: offer_objects(), BusinessIndustry: BudgetExceeded("cap")},
+                               models=config.models)
+
+    with pytest.raises(BudgetExceeded):
+        analyse_rhp(make_ipo(), tiny_rhp, adapters, config)

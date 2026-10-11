@@ -113,8 +113,8 @@ def test_a_failed_parse_still_counts_its_spend(tiny_rhp, adapters, config):
     bad = LLMParseError("reply did not match OfferObjects", input_tokens=748_000, cached_tokens=0, output_tokens=200)
     adapters.llm = ScriptedLLM({OfferObjects: bad}, models=config.models)
 
-    with pytest.raises(LLMParseError):
-        analyse_rhp(make_ipo(), tiny_rhp, adapters, config)
+    first = analyse_rhp(make_ipo(), tiny_rhp, adapters, config)  # the section is skipped, not the run
+    assert "offer_objects: could not read (reply unreadable)" in first.unverified_fields
     with pytest.raises(BudgetExceeded):
         analyse_rhp(make_ipo(), tiny_rhp, adapters, config)
 
@@ -188,8 +188,8 @@ def test_a_parse_error_with_unknown_usage_counts_its_worst_case_against_the_cap(
     config = with_cap(config, 0.09)
     lost = LLMParseError("reply did not match OfferObjects", input_tokens=None, cached_tokens=None, output_tokens=None)
     adapters.llm = ScriptedLLM({OfferObjects: lost}, models=config.models)
-    with pytest.raises(LLMParseError):
-        analyse_rhp(make_ipo(), tiny_rhp, adapters, config)
+    first = analyse_rhp(make_ipo(), tiny_rhp, adapters, config)  # the section is skipped, not the run
+    assert "offer_objects: could not read (reply unreadable)" in first.unverified_fields
 
     adapters.llm = offer_llm(config)
     with pytest.raises(BudgetExceeded):

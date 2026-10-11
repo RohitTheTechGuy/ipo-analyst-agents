@@ -136,9 +136,6 @@ OTHER_DISCLOSURES_PROMPT = (
     "boilerplate to fill the answer. When merging parts: the same item in several parts is one item."
 )
 
-# Output tokens for the sections routed to Groq: prompt + schema + pages + this must fit Groq's
-# per-call limit (groq_limits.max_call_tokens, 6,000), or the call falls back to Luna.
-GROQ_MAX_TOKENS = 1500
 # Output tokens for the merge (reduce), final and re-ask calls of the largest sections, whose answer covers
 # the whole section; their map calls keep config.default_max_tokens.
 LARGE_SECTION_MAX_TOKENS = 8000
@@ -157,10 +154,10 @@ SECTIONS: dict[str, SectionSpec] = {
         SectionSpec(group="business_industry", schema=BusinessIndustry, prompt=BUSINESS_INDUSTRY_PROMPT,
                     report_field="business"),
         SectionSpec(group="promoters_governance", schema=PromotersGovernance, prompt=PROMOTERS_GOVERNANCE_PROMPT,
-                    report_field="governance", max_tokens=GROQ_MAX_TOKENS),
+                    report_field="governance"),
         SectionSpec(group="offer_price_basis", schema=OfferPriceBasis, prompt=OFFER_PRICE_BASIS_PROMPT,
                     report_field="price_basis"),
         SectionSpec(group="other_disclosures", schema=OtherDisclosures, prompt=OTHER_DISCLOSURES_PROMPT,
-                    report_field="other", max_tokens=GROQ_MAX_TOKENS),
+                    report_field="other"),
     ]
 }

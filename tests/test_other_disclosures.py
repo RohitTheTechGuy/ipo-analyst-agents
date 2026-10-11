@@ -65,12 +65,13 @@ def test_the_agent_reads_only_pages_no_other_section_owns(rhp, adapters, config)
     assert "Total issue size" not in call["user"] and "We make scooters" not in call["user"]
 
 
-def test_the_agent_is_routed_to_groq(rhp, adapters, config):
-    # Its call is capped at 1,500 output tokens, so prompt + schema + pages fit Groq's 6,000-token limit.
+def test_the_agent_is_routed_to_luna(rhp, adapters, config):
+    # Real RHP prompts for this section alone exceed Groq's 6,000-token call limit (HD Fire: 6,515), and a
+    # 1,500-token output cap cut its merge off mid-JSON; it runs on Luna with the normal output limit.
     analyse(rhp, adapters, config, OtherDisclosures(items=[]))
 
     [call] = [c for c in adapters.llm.calls if c["task"] == "other_disclosures"]
-    assert (call["model"], call["max_tokens"]) == ("groq", 1500)
+    assert (call["model"], call["max_tokens"]) == ("luna", config.default_max_tokens)
 
 
 def test_a_call_too_big_for_groq_falls_back_to_luna(rhp, adapters, config, monkeypatch):

@@ -18,8 +18,8 @@ routing:
   risk_factors:         luna
   business_industry:    luna
   sentiment_agent:      luna
-  promoters_governance: groq
-  other_disclosures:    groq
+  promoters_governance: luna  # real prompts exceed Groq's 6k call limit (HD Fire live run)
+  other_disclosures:    luna  # same
   verifier:             groq
   sentiment_stance_tag: groq
   advisor:              sol
