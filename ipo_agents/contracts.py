@@ -9,6 +9,9 @@ import math
 from pydantic import BaseModel, Field, computed_field, field_validator, model_validator
 
 
+NOT_DISCLOSED_REASON = "not disclosed in provided pages"
+
+
 class Fact(BaseModel):
     """A number taken from the RHP. No citation, no number."""
 
@@ -21,14 +24,13 @@ class Fact(BaseModel):
     not_disclosed_reason: str | None = None
 
     @model_validator(mode="after")
-    def _cited_or_not_disclosed(self):
-        if self.value is None:
-            if not self.not_disclosed_reason:
-                raise ValueError("a null value needs not_disclosed_reason")
-        elif not math.isfinite(self.value):
-            raise ValueError("value must be finite")
-        elif self.page is None or not self.verbatim_quote:
-            raise ValueError("a value needs page and verbatim_quote")
+    def _normalise(self):
+        """Normalises rather than rejects: one malformed field must not make a whole section's reply
+        unreadable (live models send `value: null` with no reason). The verifier is the gate: a value
+        without a page and quote, or that isn't finite, fails verification and becomes "could not verify",
+        so an uncited number still never reaches the report."""
+        if self.value is None and not self.not_disclosed_reason:
+            self.not_disclosed_reason = NOT_DISCLOSED_REASON
         return self
 
 

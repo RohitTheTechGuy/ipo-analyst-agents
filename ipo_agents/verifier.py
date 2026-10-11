@@ -101,6 +101,8 @@ def _holds_fact(obj) -> bool:
 
 def _why_not(fact: Fact, pages: dict[int, str]) -> str | None:
     """None if the Fact is grounded in `pages`, else the reason it is not (worded for the retry prompt)."""
+    if not math.isfinite(fact.value):
+        return "the value is not a finite number"
     page = pages.get(fact.page)
     if page is None:
         return f"page {fact.page} is not one of the pages given"

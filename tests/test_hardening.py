@@ -349,3 +349,30 @@ def test_llm_facing_schemas_pass_openai_strict_mode(schema):
 def test_a_rank_below_one_is_normalised_to_no_rank():
     r = RiskFactor(topic="x", title=Quote(), kind="company_specific", quantified=False, severity_rank=0)
     assert r.severity_rank is None
+
+
+# --- Live smoke finding: the model sends `value: null` with no reason, or a value with no citation ---
+
+@pytest.mark.sections("offer_objects")
+def test_a_null_value_without_a_reason_is_read_as_not_disclosed_not_a_failed_reply(tiny_rhp, adapters, config):
+    # Live gpt-5.6-luna returned {"value": null, "not_disclosed_reason": null} for absent fields; one such
+    # field must not make the whole section unreadable.
+    bare = Fact(value=None, unit="₹ crore", page=None, verbatim_quote=None)
+    adapters.llm = ScriptedLLM({OfferObjects: offer_objects(issue_size=bare)}, models=config.models)
+
+    report = analyse_rhp(make_ipo(), tiny_rhp, adapters, config)
+
+    assert report.offer.issue_size.value is None
+    assert report.offer.issue_size.not_disclosed_reason == "not disclosed in provided pages"
+    assert "offer_objects.issue_size" not in report.unverified_fields
+
+
+@pytest.mark.sections("offer_objects")
+def test_a_value_without_a_citation_could_not_be_verified_instead_of_failing_the_reply(tiny_rhp, adapters, config):
+    uncited = Fact(value=1250.0, unit="₹ crore", page=None, verbatim_quote=None)
+    adapters.llm = ScriptedLLM({OfferObjects: offer_objects(issue_size=uncited)}, models=config.models)
+
+    report = analyse_rhp(make_ipo(), tiny_rhp, adapters, config)
+
+    assert report.offer.issue_size.value is None
+    assert "offer_objects.issue_size" in report.unverified_fields

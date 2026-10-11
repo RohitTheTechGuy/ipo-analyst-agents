@@ -46,9 +46,10 @@ USAGE = {"prompt_tokens": 1000, "completion_tokens": 300, "total_tokens": 1300,
          "prompt_tokens_details": {"cached_tokens": 100}}
 NOT_DISCLOSED_JSON = {"value": None, "unit": "", "page": None, "verbatim_quote": None,
                       "not_disclosed_reason": "not disclosed in provided pages"}
-# A Fact with a value but no page: valid JSON for the schema's types, rejected by Fact's own validator.
-NO_PAGE_JSON = {"value": 5.0, "unit": "₹ crore", "page": None, "verbatim_quote": "Rs. 5 crore",
-                "not_disclosed_reason": None}
+# Valid JSON that doesn't fit the schema: a value that isn't a number. (A value with no page is valid
+# JSON for Fact by design; the verifier, not the parser, turns it into "could not verify".)
+BAD_VALUE_JSON = {"value": "five crore", "unit": "₹ crore", "page": 3, "verbatim_quote": "Rs. 5 crore",
+                  "not_disclosed_reason": None}
 
 
 class Issue(BaseModel):
@@ -98,7 +99,7 @@ def test_a_valid_openai_reply_is_parsed_with_its_usage(monkeypatch):
     assert sent[0]["response_format"]["type"] == "json_schema"  # strict structured output, as live
 
 
-@pytest.mark.parametrize("content", ["{not json", json.dumps({"issue_size": NO_PAGE_JSON})],
+@pytest.mark.parametrize("content", ["{not json", json.dumps({"issue_size": BAD_VALUE_JSON})],
                          ids=["invalid-json", "schema-invalid"])
 def test_an_openai_reply_that_does_not_match_the_schema_is_a_parse_error(monkeypatch, content):
     # The SDK's .parse() raises pydantic's ValidationError inside chain.invoke and the response (with its
@@ -130,7 +131,7 @@ def test_an_openai_refusal_is_a_parse_error_with_its_usage(monkeypatch):
 
 
 @pytest.mark.parametrize("body", [
-    groq_tool_call(json.dumps({"issue_size": NO_PAGE_JSON})),
+    groq_tool_call(json.dumps({"issue_size": BAD_VALUE_JSON})),
     groq_tool_call("{not json"),
     # No tool call at all: LangChain returns parsed=None and no parsing error.
     completion({"content": "Here is the data you asked for."}, model="openai/gpt-oss-120b"),
