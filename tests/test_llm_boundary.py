@@ -160,3 +160,23 @@ def test_reasoning_effort_is_sent_only_where_configured(monkeypatch, model, effo
     call(llm, model=model, max_tokens=1500)
 
     assert sent[0].get("reasoning_effort") == effort
+
+
+@pytest.mark.parametrize("model", ["luna", "terra", "sol"])
+def test_reasoning_models_are_sent_reasoning_effort_and_no_temperature(monkeypatch, model):
+    # Live: gpt-6.1-sol rejects temperature=0 ("only the default (1) value is supported"). langchain drops
+    # it by name only for gpt-5*, so a configured reasoning_effort must never travel with a temperature.
+    llm, sent = real_llm(monkeypatch, completion({"content": json.dumps({"issue_size": NOT_DISCLOSED_JSON})}))
+
+    call(llm, model=model)
+
+    assert "temperature" not in sent[0]
+    assert sent[0]["reasoning_effort"] in {"low", "high"}
+
+
+def test_a_model_without_reasoning_effort_keeps_temperature_zero(monkeypatch):
+    llm, sent = real_llm(monkeypatch, groq_tool_call(json.dumps({"issue_size": NOT_DISCLOSED_JSON})))
+
+    call(llm, model="groq")
+
+    assert sent[0]["temperature"] <= 1e-6  # langchain_groq sends 1e-8 for 0: Groq requires temperature > 0

@@ -59,18 +59,22 @@ class LangChainLLM:
             extra["http_client"] = self._http_client
         if cfg.reasoning_effort:
             # Reasoning tokens are billed as output and count against max_tokens; sent only where configured.
+            # Reasoning models take reasoning_effort instead of temperature: gpt-6.1-sol rejects temperature=0
+            # (langchain only drops it by name for gpt-5*), so no temperature is sent with it.
             extra["reasoning_effort"] = cfg.reasoning_effort
+        else:
+            extra["temperature"] = 0
         if cfg.provider == "openai":
             from langchain_openai import ChatOpenAI
 
             # No hidden client retries: each retry could be billed without the budget meter seeing it.
-            return ChatOpenAI(model=cfg.id, temperature=0, max_tokens=max_tokens,
+            return ChatOpenAI(model=cfg.id, max_tokens=max_tokens,
                               max_retries=0, timeout=REQUEST_TIMEOUT_S, **extra)
         if cfg.provider == "groq":
             from langchain_groq import ChatGroq
 
             # Also no client retries: a Groq 429 must fall back to Luna at once, never wait.
-            return ChatGroq(model=cfg.id, temperature=0, max_tokens=max_tokens,
+            return ChatGroq(model=cfg.id, max_tokens=max_tokens,
                             max_retries=0, timeout=REQUEST_TIMEOUT_S, **extra)
         raise ValueError(f"unknown provider {cfg.provider!r}")
 
