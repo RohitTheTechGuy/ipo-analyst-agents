@@ -10,12 +10,13 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 from pydantic import BaseModel
 
-from ipo_agents.contracts import Chunk, Fact, Quote
+from ipo_agents.contracts import Chunk, Fact, Quote, SectionedDocument
 from ipo_agents.ingestion import MAX_CHUNK_CHARS, page_texts
 from ipo_agents.llm import LLM, LLMParseError
 from ipo_agents.verifier import Rejection, check_facts
@@ -58,13 +59,30 @@ RETRY_RULES = (
 @dataclass(frozen=True)
 class SectionSpec:
     """One section agent. `group` names the SectionedDocument group it reads, its routing task, and
-    the prefix of its unverified field paths; `report_field` is the Report field its output fills."""
+    the prefix of its unverified field paths; `report_field` is the Report field its output fills.
+    `borrow_from` / `borrow_if`: the agent also reads each page of those groups whose text matches the
+    regex `borrow_if` (case-insensitive), e.g. notes to accounts printed inside another section."""
 
     group: str
     schema: type[BaseModel]
     prompt: str  # what to extract, in this section's terms
     report_field: str
+    borrow_from: tuple[str, ...] = ()
+    borrow_if: str = ""
     max_tokens: int | None = None  # output tokens per call; None: config.default_max_tokens
+
+
+def section_chunks(spec: SectionSpec, doc: SectionedDocument) -> list[Chunk]:
+    """The chunks the agent reads: its own group's, plus one chunk per borrowed page, in page order."""
+    own = doc.sections.get(spec.group, [])
+    if not own or not spec.borrow_from:
+        return own
+    pattern, have = re.compile(spec.borrow_if, re.IGNORECASE), set(page_texts(own))
+    borrowed = [Chunk(section=spec.group, page_start=p, page_end=p, text=f"[page {p}]\n{text}")
+                for group in spec.borrow_from
+                for p, text in page_texts(doc.sections.get(group, [])).items()
+                if p not in have and pattern.search(text)]
+    return sorted(own + borrowed, key=lambda c: c.page_start)
 
 
 def run_section(spec: SectionSpec, chunks: list[Chunk], llm: LLM, max_tokens: int) -> tuple[BaseModel | None, list[str]]:

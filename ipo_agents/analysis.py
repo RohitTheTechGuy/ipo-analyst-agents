@@ -36,8 +36,9 @@ from ipo_agents.contracts import Financials, Ipo, Report, SectionedDocument, Sen
 from ipo_agents.fin_calc import financial_flags
 from ipo_agents.flags import offer_flags
 from ipo_agents.ingestion import ingest
+from ipo_agents.legal_calc import legal_checks
 from ipo_agents.router import estimate_run_usd
-from ipo_agents.section_agent import SectionSpec, run_section
+from ipo_agents.section_agent import SectionSpec, run_section, section_chunks
 from ipo_agents.section_calc import compute_sections
 from ipo_agents.sections import SECTIONS
 from ipo_agents.sentiment import gather_sentiment
@@ -66,7 +67,7 @@ def build_graph(adapters: Adapters, config: Config, checkpointer: SqliteSaver | 
 
     def section_node(spec: SectionSpec):
         def node(state: AnalysisState):
-            chunks = state["doc"].sections.get(spec.group, [])
+            chunks = section_chunks(spec, state["doc"])
             if not chunks:
                 return {}
             output, failed = run_section(spec, chunks, adapters.llm, spec.max_tokens or config.default_max_tokens)
@@ -124,10 +125,11 @@ def _report(ipo: Ipo, state: dict, status: str, rhp_sha256: str) -> Report:
     )
     # Derived numbers and flags are plain Python over the verified facts (calc.py, flags.py, section_calc.py).
     calcs = compute_offer(report.offer, ipo)
+    checks, legal_flags = legal_checks(report.fine_print_legal, report.financials) if report.fine_print_legal else ([], [])
     section_calcs, section_flags = compute_sections(ipo, report.business, report.governance, report.price_basis,
                                                     report.financials)
-    return report.model_copy(update={"calculations": {**calcs, **section_calcs},
-                                     "flags": offer_flags(report.offer, calcs) + section_flags})
+    return report.model_copy(update={"calculations": {**calcs, **section_calcs}, "legal_checks": checks,
+                                     "flags": offer_flags(report.offer, calcs) + section_flags + legal_flags})
 
 
 def analyse_rhp(ipo: Ipo, rhp_pdf: Path, adapters: Adapters, config: Config) -> Report:
