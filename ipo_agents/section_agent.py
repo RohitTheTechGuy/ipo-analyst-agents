@@ -64,6 +64,7 @@ class SectionSpec:
     schema: type[BaseModel]
     prompt: str  # what to extract, in this section's terms
     report_field: str
+    max_tokens: int | None = None  # output tokens per call; None: config.default_max_tokens
 
 
 def run_section(spec: SectionSpec, chunks: list[Chunk], llm: LLM, max_tokens: int) -> tuple[BaseModel | None, list[str]]:

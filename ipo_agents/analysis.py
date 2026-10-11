@@ -38,6 +38,7 @@ from ipo_agents.flags import offer_flags
 from ipo_agents.ingestion import ingest
 from ipo_agents.router import estimate_run_usd
 from ipo_agents.section_agent import SectionSpec, run_section
+from ipo_agents.section_calc import compute_sections
 from ipo_agents.sections import SECTIONS
 from ipo_agents.sentiment import gather_sentiment
 
@@ -68,7 +69,7 @@ def build_graph(adapters: Adapters, config: Config, checkpointer: SqliteSaver | 
             chunks = state["doc"].sections.get(spec.group, [])
             if not chunks:
                 return {}
-            output, failed = run_section(spec, chunks, adapters.llm, config.default_max_tokens)
+            output, failed = run_section(spec, chunks, adapters.llm, spec.max_tokens or config.default_max_tokens)
             return {"findings": {spec.group: output} if output is not None else {}, "unverified": failed}
         return node
 
@@ -121,9 +122,12 @@ def _report(ipo: Ipo, state: dict, status: str, rhp_sha256: str) -> Report:
         financial_flags=financial_flags(findings["financials"]) if findings.get("financials") else [],
         rhp_sha256=rhp_sha256,
     )
-    # Derived numbers and flags are plain Python over the verified facts (calc.py, flags.py).
+    # Derived numbers and flags are plain Python over the verified facts (calc.py, flags.py, section_calc.py).
     calcs = compute_offer(report.offer, ipo)
-    return report.model_copy(update={"calculations": calcs, "flags": offer_flags(report.offer, calcs)})
+    section_calcs, section_flags = compute_sections(ipo, report.business, report.governance, report.price_basis,
+                                                    report.financials)
+    return report.model_copy(update={"calculations": {**calcs, **section_calcs},
+                                     "flags": offer_flags(report.offer, calcs) + section_flags})
 
 
 def analyse_rhp(ipo: Ipo, rhp_pdf: Path, adapters: Adapters, config: Config) -> Report:
