@@ -144,3 +144,33 @@ def test_a_listing_not_in_rupees_gives_no_numbers():
     q = adapter([], [], quote_status=403, yf_fetch=lambda t: payload).quote("MARUTI")
 
     assert q is None
+
+
+def test_the_peer_carries_its_yahoo_profile_for_the_peer_fit_check():
+    summary = "Maruti Suzuki India Limited manufactures and sells passenger vehicles in India. " * 20
+    payload = {**load("yfinance_MARUTI.json"),
+               "profile": {"sector": "Consumer Cyclical", "industry": "Auto Manufacturers", "summary": summary}}
+
+    q = adapter([], [], yf_fetch=lambda t: payload).quote("MARUTI")
+
+    assert (q.sector, q.industry) == ("Consumer Cyclical", "Auto Manufacturers")
+    assert q.business_summary == summary[:600]
+
+
+def test_without_a_profile_the_peer_still_has_its_numbers():
+    q = adapter([], []).quote("MARUTI")  # the recorded payloads predate the profile
+
+    assert (q.sector, q.industry, q.business_summary) == (None, None, None)
+    assert q.pat.value == pytest.approx(14679.5)
+
+
+@pytest.mark.parametrize("name, symbol", [("Elgi Equipment Limited", "ELGIEQUIP"),
+                                          ("Ingersoll-Rand (India) Limited", "INGERRAND")])
+def test_the_configured_overrides_map_peers_nse_search_cannot_find(name, symbol):
+    from ipo_agents.config import load_config
+
+    overrides = load_config(Path(__file__).resolve().parent.parent / "config.yaml").peers.symbol_overrides
+    requests = []
+
+    assert adapter(requests, [], overrides=overrides).resolve(name) == symbol
+    assert requests == []  # no search

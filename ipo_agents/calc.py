@@ -31,7 +31,10 @@ def upper_band(price_band: str) -> float | None:
 
 
 def to_crore(fact: Fact) -> float:
-    """A rupee Fact in ₹ crore. Raises ValueError for a unit that is not a rupee amount."""
+    """A rupee Fact in ₹ crore. Raises ValueError for a unit that is not a rupee amount. Zero is zero in
+    any unit: an RHP line printed "Nil" is read with "Nil" as its unit."""
+    if fact.value == 0:
+        return 0.0
     unit = fact.unit.casefold()
     if not any(mark in unit for mark in _RUPEE_MARKS):
         raise ValueError(f"not a rupee unit: {fact.unit!r}")

@@ -74,3 +74,6 @@ peers:
     # The FY2024 Tata Motors that RHPs list (PV + JLR) trades as TMPV since the 2025 demerger; NSE's
     # search now gives the name "Tata Motors Limited" to the commercial-vehicles company (TMCV).
     Tata Motors Limited: TMPV
+    # NSE's search finds neither by its full name (HD Fire RHP, Oct 2026).
+    Elgi Equipment Limited: ELGIEQUIP
+    Ingersoll-Rand (India) Limited: INGERRAND

@@ -266,3 +266,18 @@ def test_summary_shows_ofs_pct_and_red_flag_codes(rhp, adapters, config):
     # 630 / 1,130 = 55.75% -> "55.8%"; info flags (PROMOTER_BELOW_50) stay out of the summary.
     assert "OFS 55.8% (at upper band) · ⚠️ OFS_HEAVY" in msg
     assert "PROMOTER_BELOW_50" not in msg
+
+
+@pytest.mark.parametrize("unit", ["Nil", "₹ million", "equity shares"])
+def test_a_zero_is_zero_crore_whatever_its_unit(unit):
+    # HD Fire's FY2026 "Total Borrowings (B) Nil" is read as 0 with the unit "Nil": no debt, not unreadable.
+    from ipo_agents.calc import to_crore
+
+    assert to_crore(Fact(value=0.0, unit=unit, page=329, verbatim_quote="Total Borrowings (B) Nil")) == 0.0
+
+
+def test_a_nonzero_amount_in_a_unit_that_is_not_rupees_is_still_refused():
+    from ipo_agents.calc import to_crore
+
+    with pytest.raises(ValueError, match="not a rupee unit"):
+        to_crore(Fact(value=5.0, unit="Nil", page=329, verbatim_quote="Nil"))
