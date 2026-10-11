@@ -231,7 +231,9 @@ def test_every_number_in_every_section_schema_is_a_fact():
             for arg in typing.get_args(ann):
                 yield from walk(arg, path)
 
-    assert [p for spec in SECTIONS.values() for p in raw_numbers(spec.schema, spec.group)] == []
+    # The model's own judgments, not numbers taken from the RHP.
+    judgments = {"risk_factors.risks.severity_rank"}
+    assert [p for spec in SECTIONS.values() for p in raw_numbers(spec.schema, spec.group) if p not in judgments] == []
 
 
 def test_a_fact_inside_a_dict_is_refused_not_skipped(rhp, adapters, config, monkeypatch):

@@ -1,7 +1,7 @@
 """Section agent registry: one SectionSpec (prompt + schema) per section group. The graph runs every entry."""
 from __future__ import annotations
 
-from ipo_agents.contracts import Financials, OfferObjects
+from ipo_agents.contracts import Financials, FinePrintLegal, OfferObjects, RiskFactors
 from ipo_agents.section_agent import SectionSpec
 
 OFFER_OBJECTS_PROMPT = (
@@ -41,9 +41,52 @@ FINANCIALS_PROMPT = (
     "it. The Restated Financial Information tables are authoritative over MD&A for every number."
 )
 
+RISK_FACTORS_PROMPT = (
+    "You extract the Risk Factors section of an Indian IPO red herring prospectus (RHP). List every risk "
+    "factor once, in the order printed. Keep each one compact: a few-word topic, and its heading copied "
+    "verbatim as the title quote with its page (the first sentence if the heading is very long); never the "
+    "whole paragraph. Classify each as 'generic' (boilerplate that could sit in any RHP: the Indian economy, "
+    "politics, regulation in general, natural calamities, the market for and price of the equity shares, "
+    "currency, taxation of shareholders) or 'company_specific' (about this company's own plants, customers, "
+    "suppliers, products, debt, litigation, losses, promoters). Mark it quantified when the risk states a "
+    "number about this company (e.g. a share of revenue, an amount of debt or claims), and give that number "
+    "as figure. Rank the company-specific risks by severity (1 = most severe), weighing how likely the risk "
+    "is and how much of revenue, profit or the business it could hit; quantified, concentrated risks rank "
+    "above vague ones. Generic risks get no rank. When merging parts: the same risk appears once; re-rank "
+    "all company-specific risks from 1 across the whole section."
+)
+
+FINE_PRINT_LEGAL_PROMPT = (
+    "You extract the fine print of an Indian IPO red herring prospectus (RHP): Outstanding Litigation and "
+    "Material Developments, Government and Other Approvals, Material Contracts and Documents, and the pages "
+    "of other sections that state contingent liabilities or related party transactions. "
+    "Litigation: from the summary of outstanding litigation, one line per party (the company, its "
+    "promoters, directors, subsidiaries), case type (criminal; tax; regulatory = actions by statutory or "
+    "regulatory authorities and disciplinary actions; civil = material civil litigation; other) and "
+    "direction (against the party, or by it), with the number of cases and the aggregate amount involved. "
+    "Contingent liabilities: the total not provided for at the latest date; if no total is printed, the "
+    "claims not acknowledged as debts. "
+    "Related party transactions of the latest full fiscal year: one line per counterparty and category "
+    "(sales, purchases, loans given, guarantees, rent, remuneration, other), with the period, and whether "
+    "the counterparty is a promoter, promoter group entity or group company; no total lines. "
+    "Approvals: each approval or licence that is pending, applied for or expired, and whether it is "
+    "critical (the plant, product or main activity can't run without it), quoting the line. "
+    "Material contracts: quote each material contract with a promoter or promoter group entity. "
+    "When merging parts: the same litigation line or transaction appears once. The litigation chapter is "
+    "authoritative for litigation, and the restated financial information for related party transactions "
+    "and contingent liabilities."
+)
+# Contingent liabilities and related party transactions are printed in the financials (notes, other
+# financial information) and the offer-document summary, not in the legal chapters (plan 5.2).
+FINE_PRINT_BORROW = r"contingent\s+liabilit|related\s+party\s+transactions"
+
 SECTIONS: dict[str, SectionSpec] = {
     spec.group: spec for spec in [
         SectionSpec(group="offer_objects", schema=OfferObjects, prompt=OFFER_OBJECTS_PROMPT, report_field="offer"),
         SectionSpec(group="financials", schema=Financials, prompt=FINANCIALS_PROMPT, report_field="financials"),
+        SectionSpec(group="risk_factors", schema=RiskFactors, prompt=RISK_FACTORS_PROMPT, report_field="risk_factors"),
+        SectionSpec(group="fine_print_legal", schema=FinePrintLegal, prompt=FINE_PRINT_LEGAL_PROMPT,
+                    report_field="fine_print_legal", borrow_from=("offer_objects", "financials"),
+                    borrow_if=FINE_PRINT_BORROW),
     ]
 }

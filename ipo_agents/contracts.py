@@ -170,6 +170,82 @@ class Financials(BaseModel):
     restatement: Restatement | None = Field(description="Whether restatement adjustments were made; None if not stated")
 
 
+TOP_RISKS = 10
+
+
+class RiskFactor(BaseModel):
+    """One risk factor, compact: its heading as a Quote, not the whole paragraph."""
+
+    topic: str = Field(description="A few words naming the risk, e.g. 'single plant dependence'")
+    title: Quote = Field(description="The risk factor's heading, copied verbatim (its first sentence if very long)")
+    kind: Literal["company_specific", "generic"] = Field(
+        description="'generic' for boilerplate that could sit in any RHP (economy, politics, the market, the "
+                    "equity shares); 'company_specific' for risks about this company's own business")
+    quantified: bool = Field(description="True if the risk states a number about this company")
+    figure: Fact | None = Field(default=None, description="The main number the risk states, if quantified")
+    severity_rank: int | None = Field(default=None, ge=1, description="Severity rank among the company-specific "
+                                                                      "risks, 1 = most severe; null for generic")
+
+
+class RiskFactors(BaseModel):
+    """Risk Factors section: every risk factor, classified and ranked."""
+
+    risks: list[RiskFactor] = Field(description="Every risk factor in the section, in the order printed")
+
+    @property
+    def top_company_specific(self) -> list[RiskFactor]:
+        """Up to TOP_RISKS company-specific risks by severity rank; a risk whose title failed verification
+        or that has no rank is left out."""
+        ranked = [r for r in self.risks if r.kind == "company_specific" and r.severity_rank is not None
+                  and r.title.page is not None]
+        return sorted(ranked, key=lambda r: r.severity_rank)[:TOP_RISKS]
+
+    # TODO(ticket 20, synthesizer): cross-check risks that cite a number (RiskFactor.figure) against the
+    # same number in Fine Print litigation / contingent liabilities and in Financials; flag mismatches.
+
+
+class LitigationLine(BaseModel):
+    """Outstanding litigation for one party, type and direction, as summarised in the RHP."""
+
+    party: Literal["company", "promoters", "directors", "subsidiaries"]
+    case_type: Literal["criminal", "tax", "regulatory", "civil", "other"] = Field(
+        description="'regulatory' for actions by statutory or regulatory authorities (incl. disciplinary); "
+                    "'civil' for material civil litigation")
+    direction: Literal["against", "by"] = Field(description="Proceedings against the party, or by it")
+    count: Fact = Field(description="Number of cases")
+    amount: Fact = Field(description="Aggregate amount involved, where stated")
+
+
+class RelatedPartyLine(BaseModel):
+    """One related-party transaction amount for one counterparty, category and period."""
+
+    category: Literal["sales", "purchases", "loans", "guarantees", "rent", "remuneration", "other"]
+    counterparty: str = Field(description="The related party as named")
+    promoter_entity: bool = Field(description="True if the counterparty is a promoter, a promoter group entity "
+                                              "or a group company")
+    period: str = Field(description="Period as printed, e.g. 'Fiscal 2024'")
+    amount: Fact
+
+
+class PendingApproval(BaseModel):
+    name: str = Field(description="The approval or licence, e.g. 'Consent to operate, Pune plant'")
+    status: Literal["pending", "expired"]
+    critical: bool = Field(description="True if the business can't run its plant, product or main activity without it")
+    source: Quote
+
+
+class FinePrintLegal(BaseModel):
+    """Fine Print & Legal section. Checks are computed in Python (legal_calc)."""
+
+    litigation: list[LitigationLine] = Field(description="One line per party, case type and direction stated")
+    contingent_liabilities: Fact = Field(description="Total contingent liabilities not provided for, at the latest "
+                                                     "date; if no total is printed, claims not acknowledged as debts")
+    related_party: list[RelatedPartyLine] = Field(description="Related-party transactions of the latest full fiscal "
+                                                              "year, one line per counterparty and category; no total lines")
+    approvals: list[PendingApproval] = Field(description="Approvals and licences that are pending, applied for, or expired")
+    material_contracts: list[Quote] = Field(description="Material contracts with promoters or promoter group entities")
+
+
 class FinancialCheck(BaseModel):
     """A financial red-flag check Python computed from verified facts. A check whose inputs aren't
     all verified is 'not_computable', never guessed."""
@@ -251,6 +327,9 @@ class Report(BaseModel):
     offer: OfferObjects | None = None
     financials: Financials | None = None
     financial_flags: list[FinancialCheck] = []
+    risk_factors: RiskFactors | None = None
+    fine_print_legal: FinePrintLegal | None = None
+    legal_checks: list[FinancialCheck] = []  # legal_calc.py
     sentiment: Sentiment | None = None
     calculations: dict[str, Derived] = {}  # name -> derived number (calc.py)
     flags: list[Flag] = []  # red flags (flags.py)
