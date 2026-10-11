@@ -14,6 +14,7 @@ routing:
   offer_price_basis:    terra  # short section, dense tables (WACA, peer table); not in the plan's list
   fine_print_legal:     terra
   peer_valuation:       terra
+  peer_fit:             terra  # is each peer a real peer, and what it shares with the IPO
   synthesizer:          terra
   risk_factors:         luna
   business_industry:    luna

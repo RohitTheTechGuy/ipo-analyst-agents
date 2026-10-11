@@ -40,6 +40,7 @@ INCOME_ROWS = {"revenue": ("Total Revenue", "Operating Revenue"), "ebitda": ("EB
 BALANCE_ROWS = {"net_worth": ("Stockholders Equity", "Common Stock Equity"), "debt": ("Total Debt",),
                 "cash": ("Cash And Cash Equivalents",)}
 PARSE_ERRORS = (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError)
+SUMMARY_CHARS = 600  # enough of Yahoo's business summary for the peer-fit check
 
 
 def name_key(name: str) -> str:
@@ -100,7 +101,15 @@ def fetch_yfinance(ticker: str) -> dict:
     t = yf.Ticker(ticker)
     history = t.history(period="5d")
     fast = t.fast_info
+    try:
+        info = t.info or {}
+        profile = {"sector": info.get("sector"), "industry": info.get("industry"),
+                   "summary": info.get("longBusinessSummary")}
+    except Exception as exc:  # the profile is optional: without it the peer-fit check goes on the name alone
+        log.warning("Yahoo Finance profile failed for %s (%s)", ticker, describe(exc))
+        profile = None
     return {
+        "profile": profile,
         "ticker": ticker,
         "currency": fast.currency,
         "last_price": _number(fast.last_price),
@@ -145,6 +154,14 @@ def parse_yfinance(payload: dict) -> dict[str, ClaimedFact]:
     return found
 
 
+def parse_profile(payload: dict) -> dict[str, str]:
+    """Sector, industry and the start of the business summary, where Yahoo Finance gives them."""
+    p = payload.get("profile") or {}
+    found = {"sector": p.get("sector"), "industry": p.get("industry"),
+             "business_summary": (p.get("summary") or "")[:SUMMARY_CHARS]}
+    return {k: v.strip() for k, v in found.items() if isinstance(v, str) and v.strip()}
+
+
 # --- the adapter -------------------------------------------------------------------------------
 
 class HttpPeerData:
@@ -183,11 +200,13 @@ class HttpPeerData:
             found.update(parse_nse_quote(self._json(url), url))
         except PARSE_ERRORS as exc:
             log.warning("NSE quote failed for %s (%s); trying Yahoo Finance", symbol, describe(exc))
+        profile: dict[str, str] = {}
         try:
-            yahoo = parse_yfinance(self._yf_fetch(f"{symbol}.NS"))
+            payload = self._yf_fetch(f"{symbol}.NS")
+            yahoo, profile = parse_yfinance(payload), parse_profile(payload)
         except Exception as exc:  # third-party library, optional source: any failure means "missing"
             log.warning("Yahoo Finance failed for %s (%s)", symbol, describe(exc))
             yahoo = {}
         for field, fact in yahoo.items():
             found.setdefault(field, fact)  # NSE's price and market cap win; Yahoo's are the fallback
-        return PeerQuote(name=symbol_or_name, symbol=symbol, **found) if found else None
+        return PeerQuote(name=symbol_or_name, symbol=symbol, **found, **profile) if found else None

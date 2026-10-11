@@ -88,6 +88,19 @@ def test_third_party_numbers_are_claimed_by_their_source(texts):
     assert "₹26,000 cr claimed by NSE, as of 09 Oct 2026" in text  # a peer's market cap
 
 
+def test_each_peer_shows_its_own_financials_beside_the_ipo_and_whether_it_is_a_real_peer(texts):
+    valuation = texts["full"].split("5 Valuation vs peers")[1].split("6 Risks and fine print")[0]
+    assert "Latest fiscal year financials" in valuation
+    assert "FY ending Mar 2026" in valuation and "₹11,250 cr" in valuation and "14.2%" in valuation
+    assert "₹1,480.5 cr p. 287" in valuation  # the IPO's own revenue, beside the peers, with its RHP page
+    assert "Is each one really a peer?" in valuation
+    assert "STRONG PEER" in valuation and "PARTIAL PEER" in valuation
+    assert "In common with" in valuation and "two-wheeler OEM customers" in valuation
+    assert "Differs: wider product range" in valuation
+    assert "Consumer Cyclical · Auto Parts" in valuation
+    assert "NOT CHECKED" in valuation  # the agent-suggested peer had no verdict
+
+
 def test_appendix_lists_unverified_fields_sources_and_the_rhp_hash(texts):
     appendix = texts["full"].split("9 Appendix")[1]
     assert "offer.anchor_pct could not verify" in appendix

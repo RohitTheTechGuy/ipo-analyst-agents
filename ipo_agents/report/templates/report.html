@@ -14,6 +14,14 @@
 {%- elif c.value is none %}<span class="na">not available (claimed by {{ c.source_name }})</span>
 {%- else %}<span class="claimed">{{ c|cval }} <span class="src">claimed by {{ c.source_name }}, as of {{ c.as_of.strftime("%d %b %Y") }}</span></span>{% endif -%}
 {%- endmacro -%}
+{#- compact cells for the dense peer table: the value, and the RHP pages for a computed IPO figure -#}
+{%- macro DS(d) -%}
+{%- if d is none or d.value is none %}<span class="na">n/a</span>
+{%- else %}{{ d|dval }}{% if d.pages %} <span class="pg">p. {{ d.pages|join(", ") }}</span>{% endif %}{% endif -%}
+{%- endmacro -%}
+{%- macro CS(c) -%}
+{%- if c is none or c.value is none %}<span class="na">n/a</span>{% else %}{{ c|cval }}{% endif -%}
+{%- endmacro -%}
 {%- macro V(x) -%}
 {%- set k = x|kind -%}
 {%- if k == "fact" %}{{ F(x) }}{% elif k == "derived" %}{{ D(x) }}{% elif k == "claimed" %}{{ C(x) }}{% else %}<span class="na">not disclosed / not reached</span>{% endif -%}
@@ -329,18 +337,53 @@
 {% else %}<p class="na">Peer chart: not enough peer multiples.</p>{% endif %}
 </div>
 {% for title, rows in [("Peers from the RHP", v.rhp_peers), ("Agent-suggested peers (not in the RHP)", v.suggested_peers)] %}
-<h3>{{ title }}</h3>
+<h3>{{ title }}{% if (v.peer_set == "rhp") == loop.first %} <span class="note">(these set the peer median)</span>{% endif %}</h3>
 {% if rows %}
+<h4>Market data and multiples</h4>
 <table>
-  <tr><th>Peer</th><th class="n">Price</th><th class="n">Market cap</th>{% for m in v.multiples %}<th class="n">{{ multiple_labels[m.multiple] }}</th>{% endfor %}</tr>
+  <tr><th>Company</th><th class="n">Price</th><th class="n">Market cap</th>{% for m in v.multiples %}<th class="n">{{ multiple_labels[m.multiple] }}</th>{% endfor %}</tr>
+  <tr class="ipo"><td>{{ ipo.name }} <span class="pg">IPO, upper band</span></td><td class="n">{{ ipo.price_band }}</td><td class="n">{{ D(v.ipo_market_cap) }}</td>
+    {% for m in v.multiples %}<td class="n">{{ D(m.ipo) }}</td>{% endfor %}</tr>
   {% for p in rows %}
-  <tr><td>{{ p.name }}{% if p.quote %} <span class="pg">{{ p.quote.symbol }}</span>{% endif %}{% if p.reason %}<div class="note">{{ p.reason }}</div>{% endif %}</td>
+  <tr><td>{{ p.name }}{% if p.quote %} <span class="pg">{{ p.quote.symbol }}</span>{% endif %}</td>
     {% if p.quote %}<td class="n">{{ C(p.quote.price) }}</td><td class="n">{{ C(p.quote.market_cap) }}</td>
     {% else %}<td class="n na" colspan="2">{{ p.unavailable or "data unavailable" }}</td>{% endif %}
     {% for m in v.multiples %}<td class="n">{% if m.multiple in p.multiples %}{{ D(p.multiples[m.multiple]) }}{% else %}—{% endif %}</td>{% endfor %}
   </tr>
   {% endfor %}
 </table>
+{% set priced = rows|selectattr("quote")|list %}
+{% if priced %}
+<h4>Latest fiscal year financials</h4>
+<table class="dense">
+  <tr><th>Company</th><th>Fiscal year</th><th class="n">Revenue</th><th class="n">Growth</th><th class="n">EBITDA</th><th class="n">EBITDA margin</th><th class="n">PAT</th><th class="n">PAT margin</th><th class="n">Net worth</th><th class="n">RoE</th></tr>
+  <tr class="ipo"><td>{{ ipo.name }} <span class="pg">IPO</span></td><td>{{ v.ipo_year or "—" }}</td>
+    {% for f, ratio in [("revenue_from_operations", "revenue_growth_pct"), ("ebitda", "ebitda_margin_pct"), ("pat", "pat_margin_pct"), ("net_worth", "roe_pct")] %}
+    <td class="n">{{ DS(v.ipo_figures.get(f)) }}</td>{% if ratio %}<td class="n">{{ DS(v.ipo_ratios.get(ratio)) }}</td>{% endif %}
+    {% endfor %}</tr>
+  {% for p in priced %}{% set q = p.quote %}{% set fy = q.revenue or q.pat or q.net_worth %}
+  <tr><td>{{ p.name }} <span class="pg">{{ q.symbol }}</span></td><td>{% if fy %}FY ending {{ fy.as_of.strftime("%b %Y") }}{% else %}—{% endif %}</td>
+    <td class="n">{{ CS(q.revenue) }}</td><td class="n">{{ DS(p.ratios.get("revenue_growth_pct")) }}</td>
+    <td class="n">{{ CS(q.ebitda) }}</td><td class="n">{{ DS(p.ratios.get("ebitda_margin_pct")) }}</td>
+    <td class="n">{{ CS(q.pat) }}</td><td class="n">{{ DS(p.ratios.get("pat_margin_pct")) }}</td>
+    <td class="n">{{ CS(q.net_worth) }}</td><td class="n">{{ DS(p.ratios.get("roe_pct")) }}</td></tr>
+  {% endfor %}
+</table>
+<p class="note">IPO: the RHP's restated financials (pages shown). Peers: {{ priced|map(attribute="quote")|map(attribute="revenue")|select|map(attribute="source_name")|unique|join(", ") or "third-party data" }}, claimed, latest annual figures; “n/a” is a figure the source does not give, never filled in.</p>
+{% endif %}
+<h4>Is each one really a peer?</h4>
+{% for p in rows %}
+<div class="fit">
+  <div><b>{{ p.name }}</b>{% if p.quote %} <span class="pg">{{ p.quote.symbol }}</span>{% endif %}
+    {% if p.fit %}<span class="fitchip {{ p.fit.verdict }}">{{ p.fit.verdict|upper }} PEER</span>{% else %}<span class="fitchip none">NOT CHECKED</span>{% endif %}
+    {% if p.quote and (p.quote.sector or p.quote.industry) %}<span class="note">{{ [p.quote.sector, p.quote.industry]|select|join(" · ") }}</span>{% endif %}</div>
+  {% if p.reason %}<div class="note">Suggested because: {{ p.reason }}</div>{% endif %}
+  {% if p.fit %}
+  {% if p.fit.commonalities %}<div><span class="lbl">In common with {{ ipo.name }}:</span> {{ p.fit.commonalities|join("; ") }}</div>{% endif %}
+  {% if p.fit.differences %}<div><span class="lbl">Differs:</span> {{ p.fit.differences|join("; ") }}</div>{% endif %}
+  {% endif %}
+</div>
+{% endfor %}
 {% else %}{{ none_listed([], "None.") }}{% endif %}
 {% endfor %}
 {% if v.checks %}

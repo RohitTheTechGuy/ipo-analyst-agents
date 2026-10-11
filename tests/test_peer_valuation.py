@@ -10,7 +10,8 @@ import pytest
 import ipo_agents.analysis as analysis
 from ipo_agents.analysis import analyse_rhp
 from ipo_agents.contracts import (BusinessIndustry, ClaimedFact, Fact, Financials, MultipleChoice, OfferObjects,
-                                  OfferPriceBasis, Peer, PeerQuote, SuggestedPeer, ValuationPlan)
+                                  OfferPriceBasis, Peer, PeerFit, PeerFitCheck, PeerQuote, SuggestedPeer,
+                                  ValuationPlan)
 from ipo_agents.runner import run_daily
 from tests.conftest import TINY_OFFER_PAGE, make_tiny_rhp
 from tests.fakes import (NOT_DISCLOSED, FakeDownloader, FakeExchange, FakePeerData, ScriptedLLM, found_nothing,
@@ -105,7 +106,7 @@ def plan(*multiples, suggested=()):
 
 
 def analyse(rhp, adapters, config, *, valuation_plan, peers=None, fin=None, peer_names=PEER_NAMES, ipo=None,
-            offer=None):
+            offer=None, fit=None):
     adapters.peers = FakePeerData(dict(PEERS) if peers is None else peers)
     adapters.llm = ScriptedLLM({
         OfferObjects: offer or offer_objects(post_issue_shares=POST_SHARES),
@@ -113,6 +114,7 @@ def analyse(rhp, adapters, config, *, valuation_plan, peers=None, fin=None, peer
         OfferPriceBasis: found_nothing(OfferPriceBasis).model_copy(update={"peers": [peer(n) for n in peer_names]}),
         BusinessIndustry: found_nothing(BusinessIndustry).model_copy(update={"what_it_sells": "Petrol scooters for commuters"}),
         ValuationPlan: valuation_plan,
+        **({PeerFitCheck: fit} if fit is not None else {}),
     }, models=config.models)
     return analyse_rhp(ipo or make_ipo(), rhp, adapters, config)
 
@@ -293,6 +295,89 @@ def test_with_no_rhp_peers_the_agent_suggested_peers_set_the_median(rhp, adapter
     assert "agent-suggested peer" in report.valuation.read
 
 
+def test_each_peer_has_its_own_growth_margins_and_roe_with_sources(rhp, adapters, config):
+    report = analyse(rhp, adapters, config, valuation_plan=plan("pe"))
+
+    [alpha] = [r for r in report.valuation.rhp_peers if r.name == "Alpha Motors Limited"]
+    # Alpha: revenue 1,000 vs 900 -> +11.11%; EBITDA 210 / 1,000 = 21%; PAT 100 / 1,000 = 10%; RoE 100 / 800 = 12.5%.
+    assert {k: d.value for k, d in alpha.ratios.items()} == pytest.approx(
+        {"revenue_growth_pct": 100 * (1000 / 900 - 1), "ebitda_margin_pct": 21.0, "pat_margin_pct": 10.0,
+         "roe_pct": 12.5})
+    assert alpha.ratios["ebitda_margin_pct"].basis == "ALPHA: EBITDA / revenue"
+    assert all(i.source == "Yahoo Finance, as of 2026-03-31" for d in alpha.ratios.values() for i in d.inputs)
+    # The IPO beside them, FY2024: revenue 700 vs 500 -> +40%; EBITDA 70 / 700 = 10%; PAT 35 / 700 = 5%; RoE 35 / 350 = 10%.
+    v = report.valuation
+    assert v.ipo_year == "Fiscal 2024"
+    assert {k: d.value for k, d in v.ipo_figures.items()} == pytest.approx(
+        {"revenue_from_operations": 700.0, "ebitda": 70.0, "pat": 35.0, "net_worth": 350.0})
+    assert {k: d.value for k, d in v.ipo_ratios.items()} == pytest.approx(
+        {"revenue_growth_pct": 40.0, "ebitda_margin_pct": 10.0, "pat_margin_pct": 5.0, "roe_pct": 10.0})
+    assert v.ipo_figures["pat"].pages == [FIN]
+
+
+def test_a_peer_ratio_missing_a_figure_is_not_computable(rhp, adapters, config):
+    beta = PEERS["Beta Motors Limited"].model_copy(update={"ebitda": None})
+
+    report = analyse(rhp, adapters, config, valuation_plan=plan("pe"), peers={**PEERS, "Beta Motors Limited": beta})
+
+    [row] = [r for r in report.valuation.rhp_peers if r.name == "Beta Motors Limited"]
+    assert row.ratios["ebitda_margin_pct"].value is None
+    assert row.ratios["ebitda_margin_pct"].not_computable_reason == "peers.BETA.ebitda: not available from the source"
+    assert row.ratios["pat_margin_pct"].value == pytest.approx(6.0)
+
+
+def fit(name, verdict, common=("scooters",), differs=()):
+    return PeerFit(name=name, verdict=verdict, commonalities=list(common), differences=list(differs))
+
+
+def test_each_peer_is_checked_against_the_business_with_its_commonalities(rhp, adapters, config):
+    peers = {**PEERS, "Alpha Motors Limited": PEERS["Alpha Motors Limited"].model_copy(update={
+        "sector": "Consumer Cyclical", "industry": "Auto Manufacturers",
+        "business_summary": "Alpha makes two-wheelers sold through dealers across India."})}
+    check = PeerFitCheck(peers=[
+        fit("Alpha Motors Ltd.", "strong", ["petrol scooters", "Indian commuters", "has 3 plants"], ["larger"]),
+        fit("Beta Motors Limited", "partial", ["two-wheelers"], ["mostly motorcycles"]),
+        fit("Gamma Motors Limited", "weak", ["vehicles"], ["trucks", "fleet buyers"]),
+    ])
+
+    report = analyse(rhp, adapters, config, valuation_plan=plan("pe"), peers=peers, fit=check)
+
+    [call] = [c for c in adapters.llm.calls if c["task"] == "peer_fit"]
+    assert call["model"] == "terra"
+    assert "Petrol scooters for commuters" in call["user"]
+    assert "Alpha makes two-wheelers sold through dealers across India." in call["user"]
+    assert "industry Auto Manufacturers" in call["user"]
+    rows = {r.name: r.fit for r in report.valuation.rhp_peers}
+    # Matched by name as sources spell it; a phrase with a number in it is dropped.
+    assert rows["Alpha Motors Limited"].verdict == "strong"
+    assert rows["Alpha Motors Limited"].commonalities == ["petrol scooters", "Indian commuters"]
+    assert rows["Gamma Motors Limited"].differences == ["trucks", "fleet buyers"]
+    assert "Peer fit: 1 strong, 1 partial, 1 weak (weak: Gamma Motors Limited)." in report.valuation.read
+    # A weak peer stays in the median: 20x, 25x, 30x -> 25x.
+    assert stats(report, "pe").median.value == pytest.approx(25.0)
+    assert [f for f in report.flags if f.code == "PEER_SET_WEAK"] == []
+
+
+def test_a_mostly_weak_peer_set_is_flagged_but_kept_in_the_median(rhp, adapters, config):
+    check = PeerFitCheck(peers=[fit("Alpha Motors Limited", "weak"), fit("Beta Motors Limited", "weak"),
+                                fit("Gamma Motors Limited", "strong")])
+
+    report = analyse(rhp, adapters, config, valuation_plan=plan("pe"), fit=check)
+
+    [flag] = [f for f in report.flags if f.code == "PEER_SET_WEAK"]
+    assert (flag.severity, flag.section) == ("info", "peer_valuation")
+    assert "2 of the 3 peers" in flag.message
+    assert stats(report, "pe").median.value == pytest.approx(25.0)
+
+
+def test_a_failed_peer_fit_check_leaves_the_valuation_without_verdicts(rhp, adapters, config):
+    report = analyse(rhp, adapters, config, valuation_plan=plan("pe"), fit=RuntimeError("model down"))
+
+    assert all(r.fit is None for r in report.valuation.rhp_peers)
+    assert stats(report, "pe").median.value == pytest.approx(25.0)
+    assert "Peer fit" not in report.valuation.read
+
+
 # --- VALUATION_RICH -----------------------------------------------------------------------
 
 def test_a_rich_premium_without_growth_or_margin_advantage_is_a_warning(tmp_path, adapters, config):
@@ -437,3 +522,27 @@ def test_ola_electric_a_loss_maker_has_no_pe_and_a_price_to_sales(golden_rhp, go
     assert "a loss" in stats(report, "pe").ipo.not_computable_reason  # FY2024 loss ₹15,844.00 million
     # FY2024 revenue ₹50,098.31 million = ₹5,009.83 crore; 33,521.75 / 5,009.83 = 6.691x.
     assert stats(report, "ps").ipo.value == pytest.approx(6.691, abs=0.0005)
+
+
+def test_the_summary_lists_each_peer_with_its_numbers_verdict_and_what_it_shares(rhp, adapters, config):
+    adapters.exchange = FakeExchange([make_ipo()])
+    adapters.downloader = FakeDownloader(rhp)
+    adapters.peers = FakePeerData({**PEERS, "Gamma Motors Limited": None})
+    adapters.llm = ScriptedLLM({
+        OfferObjects: offer_objects(post_issue_shares=POST_SHARES), Financials: fin_answer(),
+        OfferPriceBasis: found_nothing(OfferPriceBasis).model_copy(update={"peers": [peer(n) for n in PEER_NAMES]}),
+        ValuationPlan: plan("pe"),
+        PeerFitCheck: PeerFitCheck(peers=[fit("Alpha Motors Limited", "strong", ["petrol scooters", "commuters"]),
+                                          fit("Beta Motors Limited", "weak", ["vehicles"])]),
+    }, models=config.models)
+
+    run_daily(make_ipo().open_date, adapters, config)
+
+    [message] = adapters.notifier.messages
+    lines = message.splitlines()
+    peers = lines[lines.index("Peers:") + 1:]
+    # Alpha: P/E 2,000 / 100 = 20x; revenue ₹1,000 crore, +11% on ₹900 crore; PAT margin 100 / 1,000 = 10%.
+    assert peers[0] == ("• Alpha Motors Limited (ALPHA) · ✅ strong peer · P/E 20× · Rev ₹1,000 cr (+11%) · "
+                        "PAT margin 10.0% · common: petrol scooters, commuters")
+    assert peers[1].startswith("• Beta Motors Limited (BETA) · ⚠️ weak peer · P/E 25×")
+    assert peers[2] == "• No market data: Gamma Motors Limited"

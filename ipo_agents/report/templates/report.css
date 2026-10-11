@@ -122,3 +122,16 @@ blockquote { margin: 0 0 2mm; padding-left: 3mm; border-left: 1pt solid var(--ru
 .disclaimer { margin-top: 6mm; padding: 3mm; border: 1pt solid var(--ink-2); font-weight: bold; }
 .hash { font-family: Menlo, "Courier New", monospace; font-size: 8pt; word-break: break-all; }
 a { color: var(--blue); text-decoration: none; word-break: break-all; }
+
+/* peer valuation: the IPO's row, the dense financials table, the peer-fit cards */
+h4 { font-size: 9pt; margin: 3mm 0 1mm; color: var(--ink-2); }
+tr.ipo td { background: #eef3fb; font-weight: bold; }
+table.dense { font-size: 7.5pt; }
+table.dense td, table.dense th { padding-left: 1mm; padding-right: 1mm; }
+.fit { border-left: 2pt solid var(--grey); padding: 1mm 0 1mm 2.5mm; margin: 0 0 2mm; font-size: 8.5pt; break-inside: avoid; }
+.fit .lbl { color: var(--ink-2); font-weight: bold; }
+.fitchip { display: inline-block; font-size: 7pt; font-weight: bold; letter-spacing: 0.05em; padding: 0.3mm 1.5mm; margin: 0 1.5mm; color: #fff; }
+.fitchip.strong { background: var(--green); }
+.fitchip.partial { background: var(--blue); }
+.fitchip.weak { background: var(--red); }
+.fitchip.none { background: #fff; color: var(--grey); border: 0.8pt dashed var(--grey); }

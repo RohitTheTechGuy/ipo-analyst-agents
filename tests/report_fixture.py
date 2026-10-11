@@ -12,7 +12,7 @@ from ipo_agents.contracts import (AuditorRemark, BusinessIndustry, CalcInput, Ca
                                   CitedText, ClaimedFact, Dependence, Derived, Dividend, Eps, EvidencedPoint, Fact,
                                   FinancialCheck, FinancialPeriod, Financials, FinePrintLegal, Flag, GroupCompany,
                                   IndustryClaim, IndustryPe, Kpi, LitigationLine, MaterialItem, MultipleStats,
-                                  OfferObjects, OfferPriceBasis, OtherDisclosures, Peer, PeerQuote, PeerRow,
+                                  OfferObjects, OfferPriceBasis, OtherDisclosures, Peer, PeerFit, PeerQuote, PeerRow,
                                   PendingApproval, PeriodFact, ProceedsObject, Promoter, PromotersGovernance, Quote,
                                   RelatedPartyLine, Remuneration, Report, Restatement, RevenueShare, RiskFactor,
                                   RiskFactors, SectionSummary, SellingShareholder, Sentiment, SentimentSource,
@@ -162,14 +162,27 @@ def valuation() -> Valuation:
                CalcInput(field="ipo.price_band"), CalcInput(field="financials.pat", page=287))
     nse = "NSE, as of 2026-10-09"
 
-    def peer(name, symbol, pe):
-        quote = PeerQuote(name=name, symbol=symbol, price=claimed(1850, "₹"), market_cap=claimed(26000, "₹ crore"))
+    yahoo = "Yahoo Finance, as of 2026-03-31"
+
+    def peer(name, symbol, pe, verdict="strong"):
+        fy = date(2026, 3, 31)
+        quote = PeerQuote(name=name, symbol=symbol, price=claimed(1850, "₹"), market_cap=claimed(26000, "₹ crore"),
+                          revenue=ClaimedFact(value=11250, unit="₹ crore", source_url="https://finance.yahoo.com/",
+                                              source_name="Yahoo Finance", as_of=fy),
+                          pat=ClaimedFact(value=680, unit="₹ crore", source_url="https://finance.yahoo.com/",
+                                          source_name="Yahoo Finance", as_of=fy),
+                          sector="Consumer Cyclical", industry="Auto Parts")
         return PeerRow(name=name, origin="rhp", quote=quote,
                        multiples={"pe": d(pe, "times", CalcInput(field=f"{symbol}.market_cap", source=nse),
-                                          CalcInput(field=f"{symbol}.pat", source=nse))})
+                                          CalcInput(field=f"{symbol}.pat", source=nse))},
+                       ratios={"revenue_growth_pct": d(14.2, "%", CalcInput(field=f"peers.{symbol}.revenue", source=yahoo)),
+                               "pat_margin_pct": d(6.04, "%", CalcInput(field=f"peers.{symbol}.pat", source=yahoo))},
+                       fit=PeerFit(name=name, verdict=verdict,
+                                   commonalities=["aluminium die-casting", "two-wheeler OEM customers"],
+                                   differences=["wider product range"]))
 
     peers = [peer("Endurance Technologies", "ENDURANCE", 42.0), peer("Sundram Fasteners", "SUNDRMFAST", 38.0),
-             peer("Rico Auto", "RICOAUTO", 21.0)]
+             peer("Rico Auto", "RICOAUTO", 21.0, verdict="partial")]
     return Valuation(
         ipo_market_cap=mcap,
         multiples=[MultipleStats(multiple="pe", reason="steady earner", ipo=ipo_pe,
@@ -180,6 +193,11 @@ def valuation() -> Valuation:
         rhp_peers=peers,
         suggested_peers=[PeerRow(name="Craftsman Automation", origin="agent_suggested", reason="also die-casts",
                                  unavailable="data unavailable: no quote")],
+        ipo_year="Fiscal 2026",
+        ipo_figures={"revenue_from_operations": d(1480.5, "₹ crore", CalcInput(field="financials.revenue", page=287)),
+                     "pat": d(41.25, "₹ crore", CalcInput(field="financials.pat", page=287))},
+        ipo_ratios={"pat_margin_pct": d(2.79, "%", CalcInput(field="financials.pat", page=287),
+                                        CalcInput(field="financials.revenue", page=287))},
         read="At the upper band the IPO trades at 15× earnings, a 60% discount to the peer median of 38×.")
 
 

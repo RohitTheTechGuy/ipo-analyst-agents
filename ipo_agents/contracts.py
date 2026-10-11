@@ -594,6 +594,10 @@ class PeerQuote(BaseModel):
     net_worth: ClaimedFact | None = None
     debt: ClaimedFact | None = None
     cash: ClaimedFact | None = None
+    # Yahoo Finance's company profile, text only: what the peer-fit check reads about the peer.
+    sector: str | None = None
+    industry: str | None = None
+    business_summary: str | None = None
 
 
 class MultipleChoice(BaseModel):
@@ -616,12 +620,35 @@ class ValuationPlan(BaseModel):
         description="Up to 3 more NSE-listed peers the RHP's table leaves out; empty if the table is complete")
 
 
+PeerVerdict = Literal["strong", "partial", "weak"]
+
+
+class PeerFit(BaseModel):
+    """Whether one listed company really is a peer of the IPO, and what they share. Words only: no numbers."""
+
+    name: str = Field(description="The peer's name exactly as given")
+    verdict: PeerVerdict = Field(
+        description="strong: same business line, customers and business model; partial: overlaps in some; "
+                    "weak: little in common")
+    commonalities: list[str] = Field(description="2 to 4 things the peer shares with the IPO, a few words each")
+    differences: list[str] = Field(description="Up to 3 key differences from the IPO, a few words each")
+
+
+class PeerFitCheck(BaseModel):
+    """The peer-fit check: one verdict per peer listed."""
+
+    peers: list[PeerFit]
+
+
 class PeerRow(BaseModel):
     name: str
     origin: Literal["rhp", "agent_suggested"]
     reason: str | None = None  # why the agent suggested it
     quote: PeerQuote | None = None
     multiples: dict[str, Derived] = {}  # multiple -> value; with P/B also "roe_pct"
+    # revenue_growth_pct, ebitda_margin_pct, pat_margin_pct, roe_pct: the peer's own latest fiscal year
+    ratios: dict[str, Derived] = {}
+    fit: PeerFit | None = None  # the peer-fit check; None when it could not run
     unavailable: str | None = None  # "data unavailable: ..." when no quote could be fetched
 
 
@@ -646,6 +673,10 @@ class Valuation(BaseModel):
     suggested_peers: list[PeerRow] = []  # shown separately, as "agent-suggested"
     peer_set: Literal["rhp", "agent_suggested"] = "rhp"  # whose multiples the median/min/max use
     checks: dict[str, Derived] = {}  # revenue growth and PAT margin, IPO vs peer median (VALUATION_RICH)
+    # The IPO's own latest full fiscal year, laid out as PeerRow's are, so the report can set it beside them
+    ipo_year: str | None = None
+    ipo_figures: dict[str, Derived] = {}  # revenue, ebitda, pat, net_worth in ₹ crore
+    ipo_ratios: dict[str, Derived] = {}  # the PeerRow.ratios keys
     read: str = ""  # one paragraph, from a Python template
 
     @property

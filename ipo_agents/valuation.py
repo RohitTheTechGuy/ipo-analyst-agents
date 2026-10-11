@@ -10,6 +10,10 @@ One model call (task "peer_valuation") picks the multiples that fit the business
 The median uses the RHP's own peers. Agent-suggested peers are shown separately and only stand in for
 the median when the RHP lists no peer with data. A peer the adapter can't price is listed as "data
 unavailable" and left out; nothing is filled in.
+
+A second model call (task "peer_fit") checks each peer against the IPO's business, from the RHP's own words
+and each peer's Yahoo Finance profile: a verdict (strong / partial / weak), what they share and how they
+differ. Words only. A weak peer is flagged (PEER_SET_WEAK), never dropped from the median.
 """
 from __future__ import annotations
 
@@ -20,17 +24,20 @@ from ipo_agents.adapters import Adapters
 from ipo_agents.calc import compute_offer, to_crore, upper_band
 from ipo_agents.contracts import (MULTIPLE_LABELS, BusinessIndustry, CalcInput, ClaimedFact, Derived, Fact,
                                   FinancialPeriod, Financials, Flag, Ipo, MultipleChoice, MultipleStats,
-                                  OfferObjects, OfferPriceBasis, PeerQuote, PeerRow, Report, Valuation,
-                                  ValuationPlan)
+                                  OfferObjects, OfferPriceBasis, PeerFit, PeerFitCheck, PeerQuote, PeerRow, Report,
+                                  Valuation, ValuationPlan)
 from ipo_agents.fin_calc import full_years
 from ipo_agents.grounding import grounded_or_blank
 from ipo_agents.peers import name_key
+from ipo_agents.report.fmt import number
 from ipo_agents.verifier import COULD_NOT_VERIFY
 
 log = logging.getLogger(__name__)
 
 TASK = SECTION = "peer_valuation"
+FIT_TASK = "peer_fit"
 MAX_TOKENS = 4_000  # Terra reasons (effort low) before answering
+FIT_MAX_TOKENS = 6_000  # a verdict and a few phrases per peer, up to 3 RHP peers + 3 suggested and more
 MAX_SUGGESTED = 3
 RICH_PREMIUM_PCT = 30.0  # premium to the peer median above which an advantage must justify it
 TIMES, PCT = "×", "%"
@@ -45,6 +52,15 @@ SYSTEM = (
     "NSE-listed companies that are comparable but missing from the RHP's peer table, each with a reason; "
     "suggest none if the table is complete. Never write a number: market data is fetched and every "
     "multiple is computed separately."
+)
+FIT_SYSTEM = (
+    "You check whether listed Indian companies are true peers of a company going public. For each peer, "
+    "compare it with the IPO on: business line and products, customers and end market, business model "
+    "(e.g. manufacturer, platform, lender, services) and geography. Give a verdict: strong (same business "
+    "line, customers and model), partial (overlaps in some), weak (little in common). List 2 to 4 "
+    "commonalities and up to 3 key differences, a few words each. Use the descriptions given; where a peer's "
+    "profile is unavailable, rely on what is commonly known about the listed company. Return one entry per "
+    "peer, with its name exactly as given. Never write a number."
 )
 
 
@@ -72,6 +88,7 @@ def run_peer_valuation(ipo: Ipo, adapters: Adapters, *, offer: OfferObjects | No
     keys = [c.multiple for c in chosen] + (["roe_pct"] if any(c.multiple == "pb" for c in chosen) else [])
     rhp_rows = [_row(n, "rhp", None, adapters, keys) for n in rhp_names]
     suggested_rows = [_row(s.name, "agent_suggested", s.reason, adapters, keys) for s in suggested]
+    rhp_rows, suggested_rows = _with_fit(ipo, adapters, business, rhp_rows, suggested_rows)
     peer_set = "rhp" if any(r.quote for r in rhp_rows) or not any(r.quote for r in suggested_rows) else "agent_suggested"
     peers = rhp_rows if peer_set == "rhp" else suggested_rows
 
@@ -83,7 +100,9 @@ def run_peer_valuation(ipo: Ipo, adapters: Adapters, *, offer: OfferObjects | No
                                    max=high, premium_pct=_premium(ipo_x, median)))
     checks = _checks(latest, prior, peers, pb_chosen="roe_pct" in keys)
     valuation = Valuation(ipo_market_cap=mcap, multiples=stats, rhp_peers=rhp_rows, suggested_peers=suggested_rows,
-                          peer_set=peer_set, checks=checks)
+                          peer_set=peer_set, checks=checks, ipo_year=latest.period.label if latest else None,
+                          ipo_figures={f: _ipo_figure(latest, f) for f in IPO_FIGURES},
+                          ipo_ratios={f"{k}_pct": _ipo_ratio(latest, prior, k) for k in PEER_RATIOS})
     return valuation.model_copy(update={"read": _read(valuation, ipo)})
 
 
@@ -127,6 +146,49 @@ def _no_numbers(reason: str) -> str:
     return ""
 
 
+def _with_fit(ipo, adapters, business, *row_sets: list[PeerRow]) -> tuple[list[PeerRow], ...]:
+    """Each row with its peer-fit verdict; rows unchanged if the check fails (a peer-fit failure costs the
+    verdicts, never the valuation)."""
+    rows = [r for rs in row_sets for r in rs]
+    if not rows:
+        return row_sets
+    try:
+        check = adapters.llm.invoke_structured(task=FIT_TASK, system=FIT_SYSTEM, user=_fit_prompt(ipo, business, rows),
+                                               schema=PeerFitCheck, max_tokens=FIT_MAX_TOKENS).parsed
+    except Exception:
+        log.warning("%s: peer-fit check failed; peers shown without it", ipo.ipo_id, exc_info=True)
+        return row_sets
+    fits = {}
+    for f in check.peers:
+        fits.setdefault(name_key(f.name), f.model_copy(update={
+            "commonalities": [t for t in map(_no_numbers, f.commonalities) if t],
+            "differences": [t for t in map(_no_numbers, f.differences) if t]}))
+    return tuple([r.model_copy(update={"fit": fits.get(name_key(r.name))}) for r in rs] for rs in row_sets)
+
+
+def _fit_prompt(ipo: Ipo, business: BusinessIndustry | None, rows: list[PeerRow]) -> str:
+    def listed(items):
+        return "; ".join(i for i in items if i) or "not available"
+    b = business
+    lines = [
+        f"IPO: {ipo.name}",
+        f"What it sells: {b.what_it_sells if b and b.what_it_sells else 'not available'}",
+        f"Revenue mix: {listed(r.name for r in b.revenue_mix) if b else 'not available'}",
+        f"Competitors the RHP names: {listed(c.text for c in b.competitors) if b else 'not available'}",
+        f"Strengths it claims: {listed(m.text for m in b.moats) if b else 'not available'}",
+        "", "Peers:",
+    ]
+    for r in rows:
+        q = r.quote
+        where = (f"NSE {q.symbol}; sector {q.sector or 'unknown'}; industry {q.industry or 'unknown'}"
+                 if q else "no market data found")
+        lines.append(f"- {r.name} ({where})")
+        lines.append(f"  Profile: {q.business_summary if q and q.business_summary else 'profile unavailable'}")
+        if r.reason:
+            lines.append(f"  Suggested because: {r.reason}")
+    return "\n".join(lines)
+
+
 def _row(name: str, origin: str, reason: str | None, adapters: Adapters, keys: list[str]) -> PeerRow:
     try:
         quote = adapters.peers.quote(name)
@@ -137,7 +199,8 @@ def _row(name: str, origin: str, reason: str | None, adapters: Adapters, keys: l
         return PeerRow(name=name, origin=origin, reason=reason,
                        unavailable=f"{UNAVAILABLE}: not found on NSE or Yahoo Finance")
     return PeerRow(name=name, origin=origin, reason=reason, quote=quote,
-                   multiples={k: peer_multiple(quote, k) for k in keys})
+                   multiples={k: peer_multiple(quote, k) for k in keys},
+                   ratios={f"{kind}_pct": _peer_ratio(quote, kind) for kind in PEER_RATIOS})
 
 
 # --- IPO side ------------------------------------------------------------------------------------
@@ -285,20 +348,37 @@ def _checks(latest: _Year | None, prior: _Year | None, peers: list[PeerRow], pb_
     return checks
 
 
+# Valuation.ipo_figures: the IPO's latest full-year figures (FinancialPeriod fields), in ₹ crore
+IPO_FIGURES = ("revenue_from_operations", "ebitda", "pat", "net_worth")
+
+
+def _ipo_figure(latest: _Year | None, field: str) -> Derived:
+    if latest is None:
+        return _nc("₹ crore", "financials: no full fiscal year with a readable year")
+    try:
+        value, inp = latest.crore(field)
+    except _Missing as exc:
+        return _nc("₹ crore", str(exc))
+    return Derived(value=value, unit="₹ crore", inputs=[inp], basis=f"{latest.period.label} {field.replace('_', ' ')}")
+
+
 def _ipo_ratio(latest: _Year | None, prior: _Year | None, kind: str) -> Derived:
     if latest is None:
         return _nc(PCT, "financials: no full fiscal year with a readable year")
     try:
-        if kind == "growth":
+        if kind in ("growth", "revenue_growth"):
             if prior is None:
                 return _nc(PCT, "financials: needs 2 full fiscal years")
             new, new_in = latest.crore("revenue_from_operations")
             old, old_in = prior.crore("revenue_from_operations")
             num, den, inputs, basis = new - old, old, [new_in, old_in], f"{latest.period.label} vs {prior.period.label} revenue"
         else:
-            num, num_in = latest.crore("pat")
-            den, den_in = latest.crore("revenue_from_operations" if kind == "margin" else "net_worth")
-            inputs, basis = [num_in, den_in], f"{latest.period.label} PAT / {'revenue' if kind == 'margin' else 'net worth'}"
+            top = "ebitda" if kind == "ebitda_margin" else "pat"
+            bottom = "net_worth" if kind == "roe" else "revenue_from_operations"
+            num, num_in = latest.crore(top)
+            den, den_in = latest.crore(bottom)
+            inputs = [num_in, den_in]
+            basis = f"{latest.period.label} {'EBITDA' if top == 'ebitda' else 'PAT'} / {'net worth' if kind == 'roe' else 'revenue'}"
     except _Missing as exc:
         return _nc(PCT, str(exc))
     if den <= 0:
@@ -306,21 +386,28 @@ def _ipo_ratio(latest: _Year | None, prior: _Year | None, kind: str) -> Derived:
     return Derived(value=100 * num / den, unit=PCT, inputs=inputs, basis=basis)
 
 
+# PeerRow.ratios: "<kind>_pct" for each kind, as _peer_ratio names them
+PEER_RATIOS = ("revenue_growth", "ebitda_margin", "pat_margin", "roe")
+# kind -> (numerator field, denominator field, basis); "growth"/"margin" are the checks' names for two of them
+_RATIO = {"growth": ("revenue", "revenue_prior_year", "revenue growth"),
+          "revenue_growth": ("revenue", "revenue_prior_year", "revenue growth"),
+          "margin": ("pat", "revenue", "PAT / revenue"), "pat_margin": ("pat", "revenue", "PAT / revenue"),
+          "ebitda_margin": ("ebitda", "revenue", "EBITDA / revenue"), "roe": ("pat", "net_worth", "PAT / net worth")}
+
+
 def _peer_ratio(q: PeerQuote, kind: str) -> Derived:
+    num_field, den_field, basis = _RATIO[kind]
     try:
-        if kind == "growth":
-            new, new_in = _claim(q, "revenue")
-            old, old_in = _claim(q, "revenue_prior_year")
-            num, den, inputs = new - old, old, [new_in, old_in]
-        else:
-            num, num_in = _claim(q, "pat")
-            den, den_in = _claim(q, "revenue" if kind == "margin" else "net_worth")
-            inputs = [num_in, den_in]
+        num, num_in = _claim(q, num_field)
+        den, den_in = _claim(q, den_field)
+        inputs = [num_in, den_in]
     except _Missing as exc:
         return _nc(PCT, str(exc))
     if den <= 0:
         return _nc(PCT, "denominator is zero or negative", inputs)
-    return Derived(value=100 * num / den, unit=PCT, inputs=inputs)
+    if num_field == "revenue" and den_field == "revenue_prior_year":
+        num -= den
+    return Derived(value=100 * num / den, unit=PCT, inputs=inputs, basis=f"{q.symbol}: {basis}")
 
 
 def _peer_median(peers: list[PeerRow], kind: str) -> Derived:
@@ -342,6 +429,10 @@ def _advantage(checks: dict[str, Derived], kind: str) -> bool | None:
 # --- flags, the read, the summary line ----------------------------------------------------------
 
 def valuation_flags(v: Valuation | None) -> list[Flag]:
+    return _rich_flags(v) + peer_fit_flags(v)
+
+
+def _rich_flags(v: Valuation | None) -> list[Flag]:
     """VALUATION_RICH: over RICH_PREMIUM_PCT to the peer median on the headline multiple, with neither revenue
     growth nor PAT margin above the peer median. A warning when both were compared; info when either
     comparison couldn't be computed (and the other showed no advantage)."""
@@ -367,6 +458,18 @@ def valuation_flags(v: Valuation | None) -> list[Flag]:
                  message=f"{head}; whether growth or margins justify it could not be checked ({missing})")]
 
 
+def peer_fit_flags(v: Valuation | None) -> list[Flag]:
+    """PEER_SET_WEAK (info): the peer-fit check rates most of the peers behind the median weak, so the
+    median may say little about this business. The peers stay in the median; this only says so."""
+    peers = [r for r in (v.rhp_peers if v.peer_set == "rhp" else v.suggested_peers) if r.quote] if v else []
+    weak = [r.name for r in peers if r.fit and r.fit.verdict == "weak"]
+    if not peers or 2 * len(weak) <= len(peers):
+        return []
+    return [Flag(code="PEER_SET_WEAK", severity="info", section=SECTION,
+                 message=f"{len(weak)} of the {len(peers)} peers behind the median are weak matches for this "
+                         f"business ({', '.join(weak)}): read the peer median with care")]
+
+
 def _read(v: Valuation, ipo: Ipo) -> str:
     band = upper_band(ipo.price_band)
     whose = "RHP peer" if v.peer_set == "rhp" else "agent-suggested peer (the RHP lists none with data)"
@@ -388,6 +491,12 @@ def _read(v: Valuation, ipo: Ipo) -> str:
         ipo_d, peer_d = c.get(f"ipo_{kind}_pct"), c.get(f"peer_median_{kind}_pct")
         if ipo_d and peer_d and ipo_d.value is not None and peer_d.value is not None:
             parts.append(f"{label} {ipo_d.value:.1f}% vs peer median {peer_d.value:.1f}%.")
+    fitted = [r for r in v.rhp_peers + v.suggested_peers if r.fit]
+    if fitted:
+        counts = [f"{n} {verdict}" for verdict in ("strong", "partial", "weak")
+                  if (n := sum(r.fit.verdict == verdict for r in fitted))]
+        weak = [r.name for r in fitted if r.fit.verdict == "weak"]
+        parts.append(f"Peer fit: {', '.join(counts)}" + (f" (weak: {', '.join(weak)})." if weak else "."))
     missing = [r.name for r in v.rhp_peers + v.suggested_peers if r.unavailable]
     if missing:
         parts.append(f"Data unavailable for: {', '.join(missing)}.")
@@ -406,6 +515,39 @@ def summary_line(report: Report) -> str | None:
     word = "premium" if h.premium_pct.value >= 0 else "discount"
     return (f"Valuation: {MULTIPLE_LABELS[h.multiple]} {h.ipo.value:.1f}× vs peer median {h.median.value:.1f}× "
             f"({abs(h.premium_pct.value):.0f}% {word})")
+
+
+VERDICT_MARK = {"strong": "✅ strong peer", "partial": "🟡 partial peer", "weak": "⚠️ weak peer"}
+SUMMARY_PEERS = 6
+
+
+def peer_lines(report: Report) -> list[str]:
+    """One line per peer with data for the summary: verdict, multiples, revenue and growth, PAT margin and
+    what it shares with the IPO; the peers behind the median first. Peers with no data are named after."""
+    v = report.valuation
+    if v is None:
+        return []
+    rows = v.rhp_peers + v.suggested_peers if v.peer_set == "rhp" else v.suggested_peers + v.rhp_peers
+    lines = []
+    for r in [r for r in rows if r.quote][:SUMMARY_PEERS]:
+        parts = [f"{r.name} ({r.quote.symbol})" + (" [suggested]" if r.origin == "agent_suggested" else "")]
+        if r.fit:
+            parts.append(VERDICT_MARK[r.fit.verdict])
+        parts += [f"{MULTIPLE_LABELS[m.multiple]} {number(d.value, d.unit)}" for m in v.multiples
+                  if (d := r.multiples.get(m.multiple)) and d.value is not None]
+        if r.quote.revenue:
+            growth = r.ratios.get("revenue_growth_pct")
+            parts.append(f"Rev {number(r.quote.revenue.value, r.quote.revenue.unit)}"
+                         + (f" ({growth.value:+.0f}%)" if growth and growth.value is not None else ""))
+        if (margin := r.ratios.get("pat_margin_pct")) and margin.value is not None:
+            parts.append(f"PAT margin {margin.value:.1f}%")
+        if r.fit and r.fit.commonalities:
+            parts.append("common: " + ", ".join(r.fit.commonalities))
+        lines.append(" · ".join(parts))
+    missing = [r.name for r in rows if not r.quote]
+    if missing:
+        lines.append(f"No market data: {', '.join(missing)}")
+    return lines
 
 
 def _nc(unit: str, why: str, inputs: list[CalcInput] | None = None) -> Derived:
