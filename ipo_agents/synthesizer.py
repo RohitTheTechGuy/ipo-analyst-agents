@@ -63,7 +63,8 @@ SYSTEM = (
     "the IDs in the text."
 )
 
-_ID = re.compile(r"\b[EFQNDGCXSV]:[\w.\[\]#-]+")
+# A: (analyst view) and K: (context) are the advisor's own items (advisor.py).
+_ID = re.compile(r"\b[AEFQNDGCXSVK]:[\w.\[\]#-]+")
 
 
 # --- the digest ------------------------------------------------------------------------------

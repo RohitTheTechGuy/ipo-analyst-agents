@@ -70,6 +70,11 @@ section.page:first-of-type { page-break-before: auto; }
 .badge.avoid { background: var(--red); }
 .badge.none { background: #fff; color: var(--grey); border: 1.2pt dashed var(--grey); }
 .confidence { color: var(--ink-2); }
+.verdict .who { font-size: 7.5pt; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-2); min-width: 24mm; }
+/* the Financial Advisor's call, above the analyst verdict */
+.advisor { border: 1.2pt solid var(--ink-2); border-radius: 1.5mm; padding: 2mm 3.5mm 1mm; margin: 2mm 0 3mm; page-break-inside: avoid; }
+.advisor .verdict { margin: 0 0 2mm; }
+.advisor .headline { font-weight: bold; margin: 0 0 2mm; }
 
 /* key-number tiles */
 .tiles { display: flex; gap: 3mm; margin: 3mm 0 5mm; }

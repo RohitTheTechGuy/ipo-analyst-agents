@@ -88,6 +88,15 @@ class Store:
         )
         self._db.commit()
 
+    def set_report_path(self, ipo_id: str, path: str) -> None:
+        self._db.execute("UPDATE ipos SET report_path = ? WHERE ipo_id = ?", (path, ipo_id))
+        self._db.commit()
+
+    def report_path(self, ipo_id: str) -> str | None:
+        """Where the IPO's report.json was saved; None if it never was."""
+        row = self._db.execute("SELECT report_path FROM ipos WHERE ipo_id = ?", (ipo_id,)).fetchone()
+        return row[0] if row else None
+
     def close(self) -> None:
         self._db.close()
 

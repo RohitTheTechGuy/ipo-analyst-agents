@@ -19,7 +19,8 @@ from pydantic import BaseModel
 from ipo_agents.calc import upper_band
 from ipo_agents.contracts import MULTIPLE_LABELS, ClaimedFact, Derived, Fact, Flag, Quote, Report, SentimentSource
 from ipo_agents.report import charts, fmt
-from ipo_agents.report.labels import DISCLAIMER, VERDICT_LABELS
+from ipo_agents.report.labels import CALL_LABELS, DISCLAIMER, HORIZON_LABELS, VERDICT_LABELS
+from ipo_agents.sections import SECTIONS
 from ipo_agents.verifier import COULD_NOT_VERIFY
 
 TEMPLATES = Path(__file__).resolve().parent / "templates"
@@ -150,6 +151,46 @@ def _min_investment(report: Report) -> dict | None:
             "basis": f"lot {fmt.indian(report.ipo.lot_size)} × upper band ₹{fmt.indian(band)}"}
 
 
+# What each kind of evidence ID rests on, for a reader (synthesizer.py lists the kinds).
+EVIDENCE_KINDS = {"D": "computed", "G": "red-flag check", "C": "check", "X": "cross-section check",
+                  "V": "peer valuation", "N": "not disclosed / could not verify", "S": "market data, unofficial",
+                  "A": "analyst view", "E": "exchange data", "K": "exchange data"}
+
+
+def _evidence_pages(report: Report) -> dict[str, int]:
+    """Digest path (e.g. "offer_objects.issue_size") -> the RHP page of that verified Fact or Quote."""
+    out = {}
+    for group, spec in SECTIONS.items():
+        for path, value in walk(getattr(report, spec.report_field), group):
+            if isinstance(value, (Fact, Quote)) and value.page is not None:
+                out[path] = value.page
+    return out
+
+
+def _advice(report: Report) -> dict | None:
+    """The advisor box: call, horizon, and each reason and risk with what it rests on ("RHP p. 2; computed")."""
+    a = report.advice
+    if a is None:
+        return None
+    pages = _evidence_pages(report)
+
+    def basis(ids: list[str]) -> str:
+        parts: list[str] = []
+        rhp = sorted({pages[i[2:]] for i in ids if i[:2] in ("F:", "Q:") and i[2:] in pages})
+        if rhp:
+            parts.append("RHP " + ", ".join(f"p. {p}" for p in rhp))
+        for i in ids:
+            kind = EVIDENCE_KINDS.get(i[:1]) if i[1:2] == ":" else None
+            if kind and kind not in parts:
+                parts.append(kind)
+        return "; ".join(parts) or "RHP"
+
+    return {"call": CALL_LABELS[a.call], "css": "subscribe" if a.call == "buy" else "avoid",
+            "horizon": HORIZON_LABELS.get(a.horizon),
+            "reasons": [{"text": p.text, "basis": basis(p.evidence)} for p in a.reasons],
+            "risks": [{"text": p.text, "basis": basis(p.evidence)} for p in a.key_risks]}
+
+
 def _section_flags(report: Report) -> dict[str, list[Flag]]:
     out: dict[str, list[Flag]] = {}
     for f in report.flags:
@@ -175,6 +216,7 @@ def render_html(report: Report) -> str:
         css=(TEMPLATES / "report.css").read_text(encoding="utf-8"),
         verdict_label=VERDICT_LABELS[synthesis.verdict] if synthesis else "VERDICT NOT REACHED",
         verdict_class=VERDICT_CLASS[synthesis.verdict] if synthesis else "none",
+        advice=_advice(report),
         red_flags=_red_flags(report),
         tiles=_tiles(report),
         min_investment=_min_investment(report),

@@ -154,11 +154,11 @@ def main(argv: Sequence[str] | None = None, *, build: Callable[..., Adapters] = 
     parser.add_argument("--dry-run", action="store_true",
                         help="discovery only: print what would be analysed, held or reminded; no model or Telegram calls")
     parser.add_argument("--smoke", action="store_true",
-                        help="pre-flight: one tiny call per model schema on Luna (~$0.02, needs OPENAI_API_KEY); "
-                             "reports model-ID, schema and usage problems")
+                        help="pre-flight: one tiny call per model schema on Luna, plus one on the advisor's model "
+                             "(~$0.03, needs OPENAI_API_KEY); reports model-ID, schema and usage problems")
     parser.add_argument("--reset-budget", action="store_true",
-                        help="dev only, with --ipo ID: show the IPO's spend, then after typing 'reset' delete its "
-                             "call log and saved checkpoints")
+                        help="dev only, with --ipo ID: show the IPO's spend (analysis and advisor), then after "
+                             "typing 'reset' delete both call logs and its saved checkpoints")
     parser.add_argument("--config", type=Path, default=REPO_ROOT / "config.yaml", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if args.force and not args.ipo:

@@ -20,6 +20,7 @@ import operator
 import sqlite3
 from collections.abc import Iterator
 from contextlib import closing, contextmanager
+from datetime import date
 from pathlib import Path
 from typing import Annotated, TypedDict
 
@@ -29,6 +30,7 @@ from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel
 
 from ipo_agents.adapters import Adapters
+from ipo_agents.advisor import advise, advisor_llm
 from ipo_agents.budget import BudgetExceeded, BudgetMeter, MeteredLLM
 from ipo_agents.calc import compute_offer
 from ipo_agents.config import Config
@@ -51,6 +53,7 @@ from ipo_agents.valuation import run_peer_valuation, valuation_flags
 log = logging.getLogger(__name__)
 
 CHECKPOINT_DB = "checkpoints.db"
+REPORT_JSON = "report.json"  # work_dir/<ipo_id>/report.json: the closing-day advisor refresh reloads it
 # Graph nodes (section agents, sentiment) running at once, at most; with section_agent.MAP_WORKERS map
 # calls per section this bounds the calls in flight, keeping a run inside the provider's rate limits.
 MAX_CONCURRENCY = 4
@@ -205,11 +208,14 @@ def _offer_calcs(report: Report, ipo: Ipo):
     return calcs, offer_flags(report.offer, calcs)
 
 
-def analyse_rhp(ipo: Ipo, rhp_pdf: Path, adapters: Adapters, config: Config) -> Report:
-    """Runs the analysis graph for this IPO and RHP, or resumes it if an earlier run stopped part-way.
+def analyse_rhp(ipo: Ipo, rhp_pdf: Path, adapters: Adapters, config: Config, today: date | None = None) -> Report:
+    """Runs the analysis graph for this IPO and RHP, or resumes it if an earlier run stopped part-way;
+    on a complete report, then the Financial Advisor on its own ledger. Renders the PDF and saves the
+    report as work_dir/<ipo_id>/report.json. `today` is the advisor's today (default: date.today()).
 
     Raises BudgetExceeded if a call would push this IPO's spend over the cap; the exception's `report`
     is then a partial_budget Report of the facts verified before the stop."""
+    provider = adapters.llm  # the advisor meters it on its own ledger
     # Every agent call goes through the IPO's meter; spend already logged for it carries over.
     meter = BudgetMeter(ipo.ipo_id, config)
     meter.estimate_usd = estimate_run_usd(rhp_pdf, config)  # a large RHP starts degraded
@@ -233,11 +239,39 @@ def analyse_rhp(ipo: Ipo, rhp_pdf: Path, adapters: Adapters, config: Config) -> 
             state = graph.invoke(run_input, {**thread, "max_concurrency": MAX_CONCURRENCY})
         except BudgetExceeded as exc:
             # The checkpoint's state includes every node that finished, siblings of the stopped one too.
-            exc.report = _with_pdf(_report(ipo, graph.get_state(thread).values, "partial_budget", rhp_sha256), config)
+            partial = _report(ipo, graph.get_state(thread).values, "partial_budget", rhp_sha256)
+            exc.report = _saved(_with_pdf(partial, config), config)
             raise
         # A finished run never resumes; drop its checkpoints so they don't pile up (several MB per IPO).
         saver.delete_thread(thread_id)
-    return _with_pdf(_report(ipo, state, "complete", rhp_sha256), config)
+    report = _with_advice(_report(ipo, state, "complete", rhp_sha256), provider, config, today or date.today())
+    return _saved(_with_pdf(report, config), config)
+
+
+def _with_advice(report: Report, provider, config: Config, today: date) -> Report:
+    """The report with the advisor's call, metered on the IPO's advisor ledger (never the analysis cap).
+    Fails soft: no advice, never a lost analysis."""
+    try:
+        llm = advisor_llm(provider, report.ipo.ipo_id, config)
+        return report.model_copy(update={"advice": advise(report, report.sentiment, llm, config, today)})
+    except Exception:
+        log.exception("%s: advice not reached: the advisor could not start", report.ipo.ipo_id)
+        return report
+
+
+def report_json_path(config: Config, ipo_id: str) -> Path:
+    return Path(config.work_dir) / ipo_id / REPORT_JSON
+
+
+def _saved(report: Report, config: Config) -> Report:
+    """Writes the report as JSON next to its PDF; a write failure is logged, never raised."""
+    path = report_json_path(config, report.ipo.ipo_id)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(report.model_dump_json(), encoding="utf-8")
+    except OSError:
+        log.exception("%s: could not save %s", report.ipo.ipo_id, path)
+    return report
 
 
 def _with_pdf(report: Report, config: Config) -> Report:

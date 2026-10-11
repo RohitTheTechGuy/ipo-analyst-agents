@@ -332,7 +332,7 @@ def test_summary_shows_the_verdict_why_and_the_top_three_red_flags(adapters, con
     assert len(LONG) > 120
     truncated = LONG[:119].rstrip() + "…"
     assert "\n".join([
-        "Verdict: AVOID (confidence: medium)",
+        "Analyst view: AVOID (confidence: medium)",
         "Why:",
         "• The issue is ₹1,250 crore",
         "• Priced at a ₹100–₹105 band",
@@ -342,7 +342,7 @@ def test_summary_shows_the_verdict_why_and_the_top_three_red_flags(adapters, con
         "• Third flag",
     ]) in msg
     assert "Fourth flag" not in msg
-    assert msg.index("Issue: ₹1,250 crore (p. 2)") < msg.index("Verdict:")
+    assert msg.index("Issue: ₹1,250 crore (p. 2)") < msg.index("Analyst view:")
     assert msg.endswith("Not investment advice; generated from RHP + public sources.")
 
 
@@ -358,5 +358,5 @@ def test_summary_of_a_budget_stop_says_the_verdict_was_not_reached(adapters, con
     assert summary.failed == ["ACME-2026-10-13"]
     [msg] = adapters.notifier.messages
     assert msg.startswith("⚠️ PARTIAL: stopped at the $1.50 budget cap\n")
-    assert "Verdict: not reached (budget cap)" in msg
+    assert "Analyst view: not reached (budget cap)" in msg
     assert "Why:" not in msg

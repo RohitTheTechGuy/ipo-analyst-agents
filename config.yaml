@@ -5,6 +5,7 @@ models:
   luna:  { provider: openai, id: gpt-5.6-luna,        price_in: 0.20, price_cached: 0.02, price_out: 1.20, reasoning_effort: low }
   terra: { provider: openai, id: gpt-5.6-terra,       price_in: 2.00, price_cached: 0.20, price_out: 12.00, reasoning_effort: low }
   groq:  { provider: groq,   id: openai/gpt-oss-120b, price_in: 0.0,  price_cached: 0.0,  price_out: 0.0 }
+  sol:   { provider: openai, id: gpt-6.1-sol,         price_in: 2.00, price_cached: 0.10, price_out: 10.00, reasoning_effort: high }
 
 routing:
   map_extract:          luna
@@ -21,6 +22,7 @@ routing:
   other_disclosures:    groq
   verifier:             groq
   sentiment_stance_tag: groq
+  advisor:              sol
 
 budget:
   cap_usd: 1.50
@@ -38,6 +40,16 @@ budget:
   # Held back for the synthesizer: verifier re-asks stop once spent + in flight > cap - synth_reserve_usd,
   # leaving the remaining fields "could not verify". One Terra synthesizer call is ~$0.07-0.10.
   synth_reserve_usd: 0.15
+
+# The Financial Advisor (ticket 27): BUY / NO BUY from the verified report, on its own ledger per IPO
+# ("<ipo_id>:advisor"), on top of the analysis cap above, so the worst case is $1.50 + $0.50 = $2.00 per IPO.
+#   worst case reserved per advisor call: prompt (~25k tokens x $2/1M = $0.05) + 12,000 out x $10/1M ($0.12) = $0.17
+#   analysis day + closing-day refresh: 2 x $0.17 = $0.34, plus the refresh's stance tags (Groq $0; on the
+#   Luna fallback ~8 x $0.002 + ~$0.002 for the bull/bear points = ~$0.02) = ~$0.36, under the $0.50 cap.
+advisor:
+  cap_usd: 0.50
+  max_tokens: 12000  # reasoning (effort high, billed as output) + the answer
+  closing_day_refresh: true  # on close day: re-gather sentiment and re-advise before the last update
 
 groq_limits:
   max_call_tokens: 6000

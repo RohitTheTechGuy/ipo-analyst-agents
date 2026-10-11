@@ -71,7 +71,32 @@
 </div>
 <h2><span class="num">1</span>Summary</h2>
 
+<div class="advisor">
+  <div class="verdict">
+    <span class="who">Financial Advisor</span>
+    {% if advice %}
+    <span class="badge {{ advice.css }}">{{ advice.call }}</span>
+    <span class="confidence">Conviction: <b>{{ r.advice.conviction|upper }}</b></span>
+    {% if advice.horizon %}<span class="confidence">Horizon: <b>{{ advice.horizon }}</b></span>{% endif %}
+    {% else %}
+    <span class="badge none">ADVICE NOT REACHED</span>
+    <span class="confidence na">{% if partial %}The run stopped at the budget cap before the advisor.{% else %}The advisor gave no call (its budget, a failure, or too little verified evidence).{% endif %}</span>
+    {% endif %}
+  </div>
+  {% if advice %}
+  {% if r.advice.headline %}<p class="headline">{{ r.advice.headline }}</p>{% endif %}
+  <ol class="reasons">{% for p in advice.reasons %}<li>{{ p.text }} <span class="pg">({{ p.basis }})</span></li>{% endfor %}</ol>
+  {% if advice.risks %}
+  {% for p in advice.risks %}<div class="callout red"><span class="tag">RISK</span>{{ p.text }} <span class="pg">({{ p.basis }})</span></div>
+  {% endfor %}
+  {% endif %}
+  {% if r.advice.what_would_change_my_mind %}<p><b>What would change my mind:</b> {{ r.advice.what_would_change_my_mind }}</p>{% endif %}
+  <p class="note">Advice as of {{ r.advice.as_of.strftime("%d %b %Y") }}, from the verified facts below, the analyst view and market signals; GMP is unofficial and never its sole basis.{% if r.advice.notes %} Python's checks: {{ r.advice.notes|join("; ") }}.{% endif %}</p>
+  {% endif %}
+</div>
+
 <div class="verdict">
+  <span class="who">Analyst view</span>
   <span class="badge {{ verdict_class }}">{{ verdict_label }}</span>
   {% if r.synthesis %}<span class="confidence">Confidence: <b>{{ r.synthesis.confidence|upper }}</b></span>
   {% else %}<span class="confidence na">{% if partial %}The run stopped at the budget cap before the verdict.{% else %}No verdict: nothing was verified to decide on.{% endif %}</span>{% endif %}

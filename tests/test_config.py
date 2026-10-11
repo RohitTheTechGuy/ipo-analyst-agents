@@ -29,9 +29,9 @@ def test_routed_model_without_a_price_refuses_to_start(tmp_path):
 
 
 def test_routing_to_an_unconfigured_model_refuses_to_start(tmp_path):
-    path = write_config(tmp_path, lambda raw: raw["routing"].update(verifier="sol"))
+    path = write_config(tmp_path, lambda raw: raw["routing"].update(verifier="nova"))
 
-    with pytest.raises(ValidationError, match="verifier.*'sol'"):
+    with pytest.raises(ValidationError, match="verifier.*'nova'"):
         load_config(path)
 
 

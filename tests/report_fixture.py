@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import date
 
 from ipo_agents.calc import compute_offer
-from ipo_agents.contracts import (AuditorRemark, BusinessIndustry, CalcInput, CapacityLine, CheckedSynthesis,
+from ipo_agents.contracts import (AuditorRemark, BusinessIndustry, CalcInput, CapacityLine, CheckedAdvice, CheckedSynthesis,
                                   CitedText, ClaimedFact, Dependence, Derived, Dividend, Eps, EvidencedPoint, Fact,
                                   FinancialCheck, FinancialPeriod, Financials, FinePrintLegal, Flag, GroupCompany,
                                   IndustryClaim, IndustryPe, Kpi, LitigationLine, MaterialItem, MultipleStats,
@@ -214,6 +214,18 @@ def synthesis() -> CheckedSynthesis:
         notes=["dropped a reason citing an unknown item"])
 
 
+def advice() -> CheckedAdvice:
+    return CheckedAdvice(
+        call="buy", conviction="medium", horizon="listing_gains",
+        headline="Apply for listing gains: priced below peers, though most of the issue is an exit.",
+        reasons=[EvidencedPoint(text="P/E of 15× is a deep discount to the peer median of 38×.", evidence=["D:pe", "V:read"]),
+                 EvidencedPoint(text="A ₹500 cr issue, mostly an offer for sale.", evidence=["F:offer_objects.issue_size"]),
+                 EvidencedPoint(text="Retail is 5.1 times subscribed.", evidence=["S:subscription"])],
+        key_risks=[EvidencedPoint(text="Cash from operations is below PAT.", evidence=["C:CFO_BELOW_PAT"])],
+        what_would_change_my_mind="Subscription stalling before the close.",
+        as_of=date(2026, 10, 13), notes=[])
+
+
 def full_report() -> Report:
     ipo = make_ipo()
     o, fin, g, pb, b = offer(), financials(), governance(), price_basis(), business()
@@ -229,7 +241,7 @@ def full_report() -> Report:
                                                    why_material="It may delay the listing.",
                                                    source=Quote(page=440, verbatim_quote="show cause notice"),
                                                    figures=[])]),
-        sentiment=sentiment(), valuation=valuation(), synthesis=synthesis(),
+        sentiment=sentiment(), valuation=valuation(), synthesis=synthesis(), advice=advice(),
         calculations={**calcs, **section_calcs},
         flags=[Flag(code="OFS_HEAVY", severity="warning", message="Offer for sale is 60.0% of the issue",
                     evidence_pages=[19])] + section_flags,

@@ -65,6 +65,23 @@ def test_page_one_has_the_verdict_label_confidence_and_top_three_red_flags(texts
     assert "Minimum investment ₹14,910 (lot 142 × upper band ₹105)" in page_one
 
 
+def test_page_one_leads_with_the_advisor_box_above_the_analyst_view(texts):
+    page_one = texts["full"].split("2 Offer structure")[0]
+    assert "FINANCIAL ADVISOR BUY Conviction: MEDIUM Horizon: listing gains" in page_one
+    assert "Apply for listing gains: priced below peers" in page_one
+    # Each reason says what it rests on: the issue size is on RHP p. 19.
+    assert "P/E of 15× is a deep discount to the peer median of 38×. (computed; peer valuation)" in page_one
+    assert "A ₹500 cr issue, mostly an offer for sale. (RHP p. 19)" in page_one
+    assert "Retail is 5.1 times subscribed. (market data, unofficial)" in page_one
+    assert "RISK Cash from operations is below PAT. (check)" in page_one
+    assert "What would change my mind: Subscription stalling before the close." in page_one
+    assert page_one.index("FINANCIAL ADVISOR") < page_one.index("ANALYST VIEW SUBSCRIBE – LISTING GAINS ONLY")
+
+
+def test_a_partial_report_says_the_advice_was_not_reached(texts):
+    assert "FINANCIAL ADVISOR ADVICE NOT REACHED" in texts["partial"]
+
+
 def test_third_party_numbers_are_claimed_by_their_source(texts):
     text = texts["full"]
     assert "₹42 unofficial; claimed by IPO Watch, as of 09 Oct 2026" in text  # GMP tile
