@@ -6,7 +6,7 @@ from typing import Literal
 
 import math
 
-from pydantic import BaseModel, Field, computed_field, model_validator
+from pydantic import BaseModel, Field, computed_field, field_validator, model_validator
 
 
 class Fact(BaseModel):
@@ -14,7 +14,9 @@ class Fact(BaseModel):
 
     value: float | None
     unit: str
-    page: int | None = Field(ge=1)
+    # No ge=1 here or on Quote.page: OpenAI strict mode rejects `minimum` in the schema. A page that is not
+    # one of the RHP's pages (0 included) fails verification instead.
+    page: int | None
     verbatim_quote: str | None
     not_disclosed_reason: str | None = None
 
@@ -123,7 +125,7 @@ class Quote(BaseModel):
     """Text (not a number) taken from the RHP. The verifier checks the quote is printed on the cited
     page; one it can't find comes back with page and verbatim_quote set to None."""
 
-    page: int | None = Field(default=None, ge=1)
+    page: int | None = Field(default=None)
     verbatim_quote: str | None = Field(default=None, description="The words copied character for character from the page")
 
 
@@ -183,8 +185,14 @@ class RiskFactor(BaseModel):
                     "equity shares); 'company_specific' for risks about this company's own business")
     quantified: bool = Field(description="True if the risk states a number about this company")
     figure: Fact | None = Field(default=None, description="The main number the risk states, if quantified")
-    severity_rank: int | None = Field(default=None, ge=1, description="Severity rank among the company-specific "
-                                                                      "risks, 1 = most severe; null for generic")
+    severity_rank: int | None = Field(default=None, description="Severity rank among the company-specific "
+                                                                "risks, 1 = most severe; null for generic")
+
+    @field_validator("severity_rank")
+    @classmethod
+    def _rank_from_one(cls, v: int | None) -> int | None:
+        # Checked here, not as ge=1 in the schema (OpenAI strict mode rejects `minimum`): below 1 is no rank.
+        return v if v is None or v >= 1 else None
 
 
 class RiskFactors(BaseModel):
@@ -634,11 +642,14 @@ class Report(BaseModel):
     price_basis: OfferPriceBasis | None = None
     other: OtherDisclosures | None = None
     sentiment: Sentiment | None = None
-    valuation: Valuation | None = None  # None: no peer data source, or the run stopped before it
+    valuation: Valuation | None = None  # None: no peer data source, it failed, or the run stopped before it
     calculations: dict[str, Derived] = {}  # name -> derived number (calc.py, section_calc.py)
     flags: list[Flag] = []  # red flags (flags.py, section_calc.py)
+    # Fact paths that failed verification, plus "valuation: failed (...)" and "calculations.<block>: failed".
     unverified_fields: list[str] = []
-    synthesis: CheckedSynthesis | None = None  # None: the synthesizer did not run (budget stop, nothing verified)
+    # None: the synthesizer did not run (budget stop, nothing verified) or failed (synthesis_error says so)
+    synthesis: CheckedSynthesis | None = None
+    synthesis_error: str | None = None  # the synthesizer raised (not a budget stop): the exception's type name
     rhp_sha256: str
     pdf_path: str | None = None
 

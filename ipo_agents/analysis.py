@@ -36,6 +36,7 @@ from ipo_agents.contracts import CheckedSynthesis, Ipo, Report, SectionedDocumen
 from ipo_agents.cross_checks import cross_checks
 from ipo_agents.fin_calc import financial_flags
 from ipo_agents.flags import offer_flags
+from ipo_agents.grounding import ground_section
 from ipo_agents.ingestion import ingest
 from ipo_agents.legal_calc import legal_checks
 from ipo_agents.report.render import RendererUnavailable, render_pdf
@@ -65,6 +66,7 @@ class AnalysisState(TypedDict, total=False):
     sentiment: Sentiment
     valuation: Valuation
     synthesis: CheckedSynthesis | None
+    synthesis_error: str  # the synthesizer raised (not a budget stop): the exception's type name
 
 
 def build_graph(adapters: Adapters, config: Config, checkpointer: SqliteSaver | None = None):
@@ -77,6 +79,9 @@ def build_graph(adapters: Adapters, config: Config, checkpointer: SqliteSaver | 
             if not chunks:
                 return {}
             output, failed = run_section(spec, chunks, adapters.llm, spec.max_tokens or config.default_max_tokens)
+            if output is not None:
+                # Model-written prose beside the verified facts: no unverified number may reach the report.
+                output, _ = ground_section(output, spec.group)
             return {"findings": {spec.group: output} if output is not None else {}, "unverified": failed}
         return node
 
@@ -85,15 +90,28 @@ def build_graph(adapters: Adapters, config: Config, checkpointer: SqliteSaver | 
 
     def valuation_node(state: AnalysisState):
         found = {spec.report_field: state.get("findings", {}).get(group) for group, spec in SECTIONS.items()}
-        return {"valuation": run_peer_valuation(
-            state["ipo"], adapters, offer=found.get("offer"), financials=found.get("financials"),
-            price_basis=found.get("price_basis"), business=found.get("business"))}
+        try:
+            return {"valuation": run_peer_valuation(
+                state["ipo"], adapters, offer=found.get("offer"), financials=found.get("financials"),
+                price_basis=found.get("price_basis"), business=found.get("business"))}
+        except Exception as exc:
+            # Optional: any failure, a budget stop included (the meter refused the call, so the cap holds),
+            # leaves no valuation, never a lost analysis.
+            log.warning("%s: peer valuation failed; reporting without it", state["ipo"].ipo_id, exc_info=True)
+            return {"valuation": None, "unverified": [f"valuation: failed ({type(exc).__name__})"]}
 
     def synthesizer_node(state: AnalysisState):
         # A graph node, not a step after the graph: its inputs are checkpointed, so a crash here
         # resumes at the synthesizer without reading any section again.
         report = _report(state["ipo"], state, "complete", state["doc"].sha256)
-        return {"synthesis": synthesize(report, adapters.llm)}
+        try:
+            return {"synthesis": synthesize(report, adapters.llm)}
+        except BudgetExceeded:
+            raise  # analyse_rhp sends the partial_budget report
+        except Exception as exc:
+            # Any other failure (after the meter's own retries) keeps the verified analysis, without a verdict.
+            log.exception("%s: the synthesizer failed; reporting without a verdict", state["ipo"].ipo_id)
+            return {"synthesis": None, "synthesis_error": type(exc).__name__}
 
     g = StateGraph(AnalysisState)
     g.add_node("ingest", ingest_node)
@@ -140,28 +158,48 @@ def _checkpointer(config: Config) -> Iterator[SqliteSaver]:
 def _report(ipo: Ipo, state: dict, status: str, rhp_sha256: str) -> Report:
     findings = state.get("findings", {})
     synthesis = state.get("synthesis")
+    failed: list[str] = []  # derived blocks that raised, named in unverified_fields as "calculations.<block>: failed"
+
+    def soft(block: str, compute, empty):
+        """The block's result, or `empty` if it raises: a calculation bug must never lose the analysis."""
+        try:
+            return compute()
+        except Exception:
+            log.warning("%s: calculations.%s failed; reporting without it", ipo.ipo_id, block, exc_info=True)
+            failed.append(f"calculations.{block}: failed")
+            return empty
+
+    fin = findings.get("financials")
     report = Report(
         ipo=ipo,
         status=status,
-        verdict=synthesis.verdict if synthesis else None,  # None: the synthesizer did not run or had nothing
+        verdict=synthesis.verdict if synthesis else None,  # None: the synthesizer did not run, failed or had nothing
         synthesis=synthesis,
+        synthesis_error=state.get("synthesis_error"),
         sentiment=state.get("sentiment"),
         valuation=state.get("valuation"),
-        unverified_fields=sorted(state.get("unverified", [])),
         **{spec.report_field: findings.get(group) for group, spec in SECTIONS.items()},
-        financial_flags=financial_flags(findings["financials"]) if findings.get("financials") else [],
+        financial_flags=soft("financial_flags", lambda: financial_flags(fin), []) if fin else [],
         rhp_sha256=rhp_sha256,
     )
     # Derived numbers and flags are plain Python over the verified facts (calc.py, flags.py, section_calc.py).
-    calcs = compute_offer(report.offer, ipo)
-    checks, legal_flags = legal_checks(report.fine_print_legal, report.financials) if report.fine_print_legal else ([], [])
-    section_calcs, section_flags = compute_sections(ipo, report.business, report.governance, report.price_basis,
-                                                    report.financials)
-    x_checks, x_flags = cross_checks(report)
+    # Each block fails on its own: its numbers and flags are left out and it is named in unverified_fields.
+    calcs, o_flags = soft("offer", lambda: _offer_calcs(report, ipo), ({}, []))
+    checks, legal_flags = soft("legal", lambda: legal_checks(report.fine_print_legal, report.financials),
+                               ([], [])) if report.fine_print_legal else ([], [])
+    section_calcs, section_flags = soft("sections", lambda: compute_sections(
+        ipo, report.business, report.governance, report.price_basis, report.financials), ({}, []))
+    v_flags = soft("valuation_flags", lambda: valuation_flags(report.valuation), [])
+    x_checks, x_flags = soft("cross_checks", lambda: cross_checks(report), ([], []))
     return report.model_copy(update={"calculations": {**calcs, **section_calcs}, "legal_checks": checks,
                                      "cross_checks": x_checks,
-                                     "flags": offer_flags(report.offer, calcs) + section_flags + legal_flags
-                                              + valuation_flags(report.valuation) + x_flags})
+                                     "unverified_fields": sorted(state.get("unverified", []) + failed),
+                                     "flags": o_flags + section_flags + legal_flags + v_flags + x_flags})
+
+
+def _offer_calcs(report: Report, ipo: Ipo):
+    calcs = compute_offer(report.offer, ipo)
+    return calcs, offer_flags(report.offer, calcs)
 
 
 def analyse_rhp(ipo: Ipo, rhp_pdf: Path, adapters: Adapters, config: Config) -> Report:

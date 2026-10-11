@@ -79,7 +79,11 @@ SECTION_FIELDS = ("offer", "financials", "risk_factors", "fine_print_legal", "bu
 
 def unverified(report: Report) -> list[tuple[str, str]]:
     """(field, why) for every RHP fact or quote with no verified value, and every section not reached."""
-    found: dict[str, str] = {path: COULD_NOT_VERIFY for path in report.unverified_fields}
+    # An entry is a path, or "path: why" (e.g. "calculations.offer: failed", "valuation: failed (RuntimeError)").
+    found: dict[str, str] = {}
+    for entry in report.unverified_fields:
+        path, _, why = entry.partition(": ")
+        found[path] = why or COULD_NOT_VERIFY
     for name in SECTION_FIELDS:
         section = getattr(report, name)
         if section is None:

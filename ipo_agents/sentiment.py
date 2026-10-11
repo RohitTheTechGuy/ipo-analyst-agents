@@ -16,9 +16,10 @@ import httpx
 from pydantic import BaseModel, Field
 
 from ipo_agents.adapters import GMP_LABEL, Adapters, SearchHit
-from ipo_agents.budget import _count
+from ipo_agents.budget import BudgetExceeded, _count
 from ipo_agents.config import Config
 from ipo_agents.contracts import STANCES, ClaimedFact, Ipo, Sentiment, SentimentSource, Stance
+from ipo_agents.grounding import numbers, unsupported
 
 log = logging.getLogger(__name__)
 
@@ -65,22 +66,27 @@ AGGREGATE_SYSTEM = (
 )
 
 
+# The schemas below are sent to the model: no defaults and no min/max constraints (OpenAI strict mode
+# rejects them). Every field is required; an empty list or "" is the model's way of saying "none".
 class ClaimedNumber(BaseModel):
     label: str = Field(description="what the number is, e.g. 'GMP' or 'P/E'")
     value: float
     unit: str
-    quote: str = Field(default="", description="the exact words from the article that state this number")
+    quote: str = Field(description="the exact words from the article that state this number")
 
 
 class StanceTag(BaseModel):
     stance: Stance
-    key_reasons: list[str] = Field(default=[], description=f"at most {MAX_REASONS}, paraphrased")
-    claimed_numbers: list[ClaimedNumber] = []
+    key_reasons: list[str] = Field(description=f"at most {MAX_REASONS}, paraphrased")
+    claimed_numbers: list[ClaimedNumber] = Field(description="empty if the article states no number")
 
 
 class SentimentPoints(BaseModel):
-    bull_points: list[str] = Field(default=[], description=f"at most {MAX_POINTS}")
-    bear_points: list[str] = Field(default=[], description=f"at most {MAX_POINTS}")
+    bull_points: list[str] = Field(description=f"at most {MAX_POINTS}")
+    bear_points: list[str] = Field(description=f"at most {MAX_POINTS}")
+
+
+NO_POINTS = SentimentPoints(bull_points=[], bear_points=[])
 
 
 def _is_spam(hit: SearchHit, denylist: list[str]) -> bool:
@@ -169,6 +175,17 @@ def _points(sources: list[SentimentSource], adapters: Adapters, config: Config) 
     ).parsed
 
 
+def _grounded_points(points: list[str], allowed: set[float], ipo: Ipo) -> list[str]:
+    kept = []
+    for p in points:
+        if bad := unsupported(p, allowed):
+            log.warning("sentiment for %s: dropped point %r: %s not in the sources' reasons",
+                        ipo.ipo_id, p, ", ".join(bad))
+        else:
+            kept.append(p)
+    return kept
+
+
 def _max_sources(adapters: Adapters) -> int:
     # analyse_rhp always wraps the provider in MeteredLLM, so the meter is there.
     return MAX_SOURCES_DEGRADED if adapters.llm.meter.degraded else MAX_SOURCES
@@ -203,13 +220,25 @@ def _articles(ipo: Ipo, adapters: Adapters, config: Config) -> Sentiment:
     try:
         hits = _search(ipo, adapters, config, cutoff)[:_max_sources(adapters)]
     except SEARCH_ERRORS as e:
-        # Sentiment is optional: a search outage must not fail the RHP analysis. Model-call errors
-        # (including BudgetExceeded) are not caught here and propagate as for any other agent.
+        # Sentiment is optional: a search outage must not fail the RHP analysis.
         log.warning("web search failed for %s", ipo.ipo_id, exc_info=True)
         return Sentiment(available=False, note=f"sentiment unavailable: web search failed ({type(e).__name__})")
-    sources = [_tag(h, adapters, config) for h in hits]
+    try:
+        sources = [_tag(h, adapters, config) for h in hits]
+        points = _points(sources, adapters, config) if sources else NO_POINTS
+    except BudgetExceeded as e:
+        # Optional, so a budget stop here means no sentiment, not a stopped run. The cap still holds: the
+        # meter refused the call, and refuses the other agents' calls the same way.
+        log.warning("sentiment for %s stopped at the budget cap: %s", ipo.ipo_id, e)
+        return Sentiment(available=False, note="sentiment unavailable: BudgetExceeded")
+    except Exception as e:
+        log.warning("sentiment model call failed for %s", ipo.ipo_id, exc_info=True)
+        return Sentiment(available=False, note=f"sentiment unavailable: model call failed ({type(e).__name__})")
     # Counting is Python's job, not the model's.
     counts = Counter(s.stance for s in sources)
-    points = _points(sources, adapters, config) if sources else SentimentPoints()
+    # A point may only carry numbers that the tagged sources' reasons carry.
+    allowed = set().union(set(), *(numbers(r) for s in sources for r in s.key_reasons))
+    bull = _grounded_points(points.bull_points[:MAX_POINTS], allowed, ipo)
+    bear = _grounded_points(points.bear_points[:MAX_POINTS], allowed, ipo)
     return Sentiment(available=True, note=note, sources=sources, tally={k: counts[k] for k in STANCES},
-                     bull_points=points.bull_points[:MAX_POINTS], bear_points=points.bear_points[:MAX_POINTS])
+                     bull_points=bull, bear_points=bear)
