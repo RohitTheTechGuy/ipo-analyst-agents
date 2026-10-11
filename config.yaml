@@ -40,3 +40,11 @@ work_dir: data/work
 sentiment:
   # Domains whose IPO coverage is paid promotion; their articles never count in the stance tally.
   denylist_domains: []
+
+peers:
+  # RHP peer name -> NSE symbol, where NSE's search finds the wrong company. Matching ignores case,
+  # punctuation and "Limited"/"Ltd".
+  symbol_overrides:
+    # The FY2024 Tata Motors that RHPs list (PV + JLR) trades as TMPV since the 2025 demerger; NSE's
+    # search now gives the name "Tata Motors Limited" to the commercial-vehicles company (TMCV).
+    Tata Motors Limited: TMPV

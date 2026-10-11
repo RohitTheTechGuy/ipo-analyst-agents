@@ -474,10 +474,12 @@ class Sentiment(BaseModel):
 
 
 class CalcInput(BaseModel):
-    """One input of a derived number: a Fact's dotted path and page, or exchange data (page None)."""
+    """One input of a derived number: a Fact's dotted path and page, exchange data (page None), or a
+    third-party number (page None; `source` names who claims it and as of when)."""
 
     field: str  # e.g. "offer_objects.ofs_shares" or "ipo.price_band"
     page: int | None = None
+    source: str | None = None  # e.g. "NSE, as of 2026-10-09" for a peer's market cap
 
 
 class Derived(BaseModel):
@@ -502,6 +504,88 @@ class Flag(BaseModel):
     section: str | None = None  # the section group whose facts raised it
 
 
+# --- Peer valuation -------------------------------------------------------------------------
+
+Multiple = Literal["pe", "ev_ebitda", "pb", "ps"]
+MULTIPLE_LABELS: dict[str, str] = {"pe": "P/E", "ev_ebitda": "EV/EBITDA", "pb": "P/B", "ps": "P/S"}
+
+
+class PeerQuote(BaseModel):
+    """A listed peer's market data and latest annual financials, each a third-party claim with its source
+    and as-of date. Rupee amounts are in ₹ crore. A number the source didn't give is None: missing, never
+    filled in."""
+
+    name: str  # as asked for (the RHP's or the agent's name for the peer)
+    symbol: str  # the NSE symbol it resolved to
+    price: ClaimedFact | None = None  # ₹ per share
+    market_cap: ClaimedFact | None = None
+    revenue: ClaimedFact | None = None  # latest fiscal year
+    revenue_prior_year: ClaimedFact | None = None  # the fiscal year before it, for growth
+    ebitda: ClaimedFact | None = None
+    pat: ClaimedFact | None = None
+    net_worth: ClaimedFact | None = None
+    debt: ClaimedFact | None = None
+    cash: ClaimedFact | None = None
+
+
+class MultipleChoice(BaseModel):
+    multiple: Multiple
+    reason: str = Field(description="Why this multiple fits this business, in one sentence")
+
+
+class SuggestedPeer(BaseModel):
+    name: str = Field(description="An NSE-listed company, its full name")
+    reason: str = Field(description="Why it is comparable, in one sentence")
+
+
+class ValuationPlan(BaseModel):
+    """The peer valuation agent's choices. It names multiples and peers only; Python computes every number."""
+
+    multiples_to_use: list[MultipleChoice] = Field(
+        description="The multiples that fit this business, most important first: pb (read with RoE) for "
+                    "lenders/NBFCs, ev_ebitda for capex-heavy businesses, ps for loss-makers, pe for steady earners")
+    additional_peers: list[SuggestedPeer] = Field(
+        description="Up to 3 more NSE-listed peers the RHP's table leaves out; empty if the table is complete")
+
+
+class PeerRow(BaseModel):
+    name: str
+    origin: Literal["rhp", "agent_suggested"]
+    reason: str | None = None  # why the agent suggested it
+    quote: PeerQuote | None = None
+    multiples: dict[str, Derived] = {}  # multiple -> value; with P/B also "roe_pct"
+    unavailable: str | None = None  # "data unavailable: ..." when no quote could be fetched
+
+
+class MultipleStats(BaseModel):
+    """One chosen multiple: the IPO at the upper band against the peer set's median, min and max."""
+
+    multiple: Multiple
+    reason: str
+    ipo: Derived
+    median: Derived
+    min: Derived
+    max: Derived
+    premium_pct: Derived  # IPO vs the peer median; negative is a discount
+
+
+class Valuation(BaseModel):
+    """Peer valuation (plan 5.3). The model picked the multiples and suggested peers; Python did the maths."""
+
+    ipo_market_cap: Derived  # ₹ crore, at the upper band
+    multiples: list[MultipleStats] = []
+    rhp_peers: list[PeerRow] = []
+    suggested_peers: list[PeerRow] = []  # shown separately, as "agent-suggested"
+    peer_set: Literal["rhp", "agent_suggested"] = "rhp"  # whose multiples the median/min/max use
+    checks: dict[str, Derived] = {}  # revenue growth and PAT margin, IPO vs peer median (VALUATION_RICH)
+    read: str = ""  # one paragraph, from a Python template
+
+    @property
+    def headline(self) -> MultipleStats | None:
+        """The first chosen multiple whose premium could be computed."""
+        return next((m for m in self.multiples if m.premium_pct.value is not None), None)
+
+
 class Report(BaseModel):
     ipo: Ipo
     status: Literal["complete", "partial_budget"]
@@ -517,6 +601,7 @@ class Report(BaseModel):
     price_basis: OfferPriceBasis | None = None
     other: OtherDisclosures | None = None
     sentiment: Sentiment | None = None
+    valuation: Valuation | None = None  # None: no peer data source, or the run stopped before it
     calculations: dict[str, Derived] = {}  # name -> derived number (calc.py, section_calc.py)
     flags: list[Flag] = []  # red flags (flags.py, section_calc.py)
     unverified_fields: list[str] = []

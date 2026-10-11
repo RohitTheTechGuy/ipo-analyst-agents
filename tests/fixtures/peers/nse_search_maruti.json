@@ -1,0 +1,15 @@
+{
+ "data": [
+  {
+   "change": 0,
+   "companyName": "Maruti Suzuki India Limited",
+   "lastPrice": 0,
+   "pChange": 0,
+   "segment": "in equity",
+   "series": "EQ",
+   "symbol": "MARUTI",
+   "url": "/get-quotes/equity?symbol=MARUTI",
+   "webUrl": "/get-quote/equity/MARUTI/Maruti-Suzuki-India-Limited"
+  }
+ ]
+}

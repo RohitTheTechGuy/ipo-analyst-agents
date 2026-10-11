@@ -6,7 +6,7 @@ from datetime import date
 from pathlib import Path
 from typing import Protocol
 
-from ipo_agents.contracts import ClaimedFact, Ipo, SubscriptionStatus
+from ipo_agents.contracts import ClaimedFact, Ipo, PeerQuote, SubscriptionStatus
 from ipo_agents.llm import LLM
 
 
@@ -41,6 +41,13 @@ class MarketData(Protocol):
     def subscription(self, ipo: Ipo) -> SubscriptionStatus | None: ...
 
 
+class PeerData(Protocol):
+    """A listed peer's price, market cap and latest annual financials, by NSE symbol or company name.
+    None when the peer can't be found or the source has nothing for it."""
+
+    def quote(self, symbol_or_name: str) -> PeerQuote | None: ...
+
+
 class Notifier(Protocol):
     def send_message(self, text: str) -> None: ...
     def send_document(self, path: Path, caption: str = "") -> None: ...
@@ -54,3 +61,4 @@ class Adapters:
     notifier: Notifier
     search: WebSearch | None = None  # None: sentiment is reported as unavailable
     market: MarketData | None = None  # None: GMP and subscription are reported as not available
+    peers: PeerData | None = None  # None: peer valuation is not run (Report.valuation stays None)

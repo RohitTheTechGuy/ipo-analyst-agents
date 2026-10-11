@@ -15,6 +15,7 @@ from ipo_agents.discovery import DiscoveryError
 from ipo_agents.flags import summary_line as offer_summary_line
 from ipo_agents.notify.reminders import send_closing_reminders
 from ipo_agents.store import TERMINAL, Store, same_company
+from ipo_agents.valuation import summary_line as valuation_summary_line
 from ipo_agents.verifier import COULD_NOT_VERIFY
 
 log = logging.getLogger(__name__)
@@ -64,6 +65,8 @@ def format_summary(report: Report) -> str:
         lines.append(f"Issue: {_fact_text(report.offer.issue_size)} · OFS: {_fact_text(report.offer.ofs_shares)}")
         if offer_line := offer_summary_line(report):
             lines.append(offer_line)
+    if valuation_line := valuation_summary_line(report):
+        lines.append(valuation_line)
     if report.sentiment:
         lines.append(_sentiment_line(report.sentiment))
         if (sub := report.sentiment.subscription) and sub.total.value is not None:

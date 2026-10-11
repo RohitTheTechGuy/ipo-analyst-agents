@@ -163,6 +163,12 @@ class _Calc:
         post, post_in, _ = self.fact("promoter_holding_post_pct")
         return post - pre, pre_in + post_in, False
 
+    def market_cap_cr(self):
+        """Post-issue shares x the upper band: the IPO's market cap at the top of the band (₹ crore)."""
+        band = self.band_input()
+        shares, inputs, _ = self.post_shares()
+        return shares * self.band / CRORE, inputs + band, True
+
     def gcp_pct_of_fresh(self):
         gcp, gcp_in, _ = self.fact("gcp_amount", to_crore)
         fresh, fresh_in, upper = self.fresh_cr()
@@ -181,6 +187,7 @@ _DERIVED = {
     "dilution_pct": ("dilution_pct", "% of post-issue shares"),
     "promoter_change_pp": ("promoter_change_pp", "percentage points"),
     "gcp_pct_of_fresh": ("gcp_pct_of_fresh", "% of fresh issue"),
+    "market_cap_cr": ("market_cap_cr", "₹ crore"),
 }
 
 

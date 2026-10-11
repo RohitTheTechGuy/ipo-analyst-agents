@@ -1,0 +1,26 @@
+{
+ "data": [
+  {
+   "change": 0,
+   "companyName": "Tata Motors Limited",
+   "lastPrice": 0,
+   "pChange": 0,
+   "segment": "in equity",
+   "series": "EQ",
+   "symbol": "TMCV",
+   "url": "/get-quotes/equity?symbol=TMCV",
+   "webUrl": "/get-quote/equity/TMCV/Tata-Motors-Limited"
+  },
+  {
+   "change": 0,
+   "companyName": "Tata Motors Limited",
+   "lastPrice": 0,
+   "pChange": 0,
+   "segment": "in equity",
+   "series": "BE",
+   "symbol": "TATAMTRDVR",
+   "url": "/get-quotes/equity?symbol=TATAMTRDVR",
+   "webUrl": "/get-quote/equity/TATAMTRDVR/Tata-Motors-Limited"
+  }
+ ]
+}

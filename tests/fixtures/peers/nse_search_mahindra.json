@@ -1,0 +1,15 @@
+{
+ "data": [
+  {
+   "change": 0,
+   "companyName": "Mahindra & Mahindra Limited",
+   "lastPrice": 0,
+   "pChange": 0,
+   "segment": "in equity",
+   "series": "EQ",
+   "symbol": "M&M",
+   "url": "/get-quotes/equity?symbol=M&M",
+   "webUrl": "/get-quote/equity/M&M/Mahindra-&-Mahindra-Limited"
+  }
+ ]
+}
