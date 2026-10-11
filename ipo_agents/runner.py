@@ -22,6 +22,8 @@ log = logging.getLogger(__name__)
 
 DISCLAIMER = "Not investment advice; generated from RHP + public sources."
 NO_SOURCE_ALERT = "⚠️ Could not list open IPOs from any source today"
+BULLET_CHARS = 120  # one line on a phone screen, roughly
+SUMMARY_RED_FLAGS = 3
 VERDICT_LABELS = {
     "subscribe_long_term": "SUBSCRIBE (LONG TERM)",
     "subscribe_listing_gains": "SUBSCRIBE – LISTING GAINS ONLY",
@@ -55,6 +57,25 @@ def _fact_text(f: Fact) -> str:
     return f"{text.strip()} (p. {f.page})"
 
 
+def _bullet(text: str) -> str:
+    text = " ".join(text.split())
+    return "• " + (text if len(text) <= BULLET_CHARS else text[:BULLET_CHARS - 1].rstrip() + "…")
+
+
+def _verdict_lines(report: Report) -> list[str]:
+    """Plan 10: the verdict with its confidence, then why, then the top red flags."""
+    s = report.synthesis
+    if s is None:
+        why = "budget cap" if report.status == "partial_budget" else "nothing verified"
+        return [f"Verdict: not reached ({why})"]
+    lines = [f"Verdict: {VERDICT_LABELS[s.verdict]} (confidence: {s.confidence})"]
+    if s.reasons:
+        lines += ["Why:", *(_bullet(r.text) for r in s.reasons)]
+    if s.top_red_flags:
+        lines += ["Red flags:", *(_bullet(r.text) for r in s.top_red_flags[:SUMMARY_RED_FLAGS])]
+    return lines
+
+
 def format_summary(report: Report) -> str:
     ipo = report.ipo
     lines = [
@@ -65,13 +86,14 @@ def format_summary(report: Report) -> str:
         lines.append(f"Issue: {_fact_text(report.offer.issue_size)} · OFS: {_fact_text(report.offer.ofs_shares)}")
         if offer_line := offer_summary_line(report):
             lines.append(offer_line)
+    lines += ["", *_verdict_lines(report)]
     if valuation_line := valuation_summary_line(report):
         lines.append(valuation_line)
     if report.sentiment:
         lines.append(_sentiment_line(report.sentiment))
         if (sub := report.sentiment.subscription) and sub.total.value is not None:
             lines.append(_subscription_line(sub))
-    lines += ["", f"Verdict: {VERDICT_LABELS.get(report.verdict, 'N/A')}", "", DISCLAIMER]
+    lines += ["", DISCLAIMER]
     return "\n".join(lines)
 
 

@@ -32,7 +32,8 @@ from ipo_agents.adapters import Adapters
 from ipo_agents.budget import BudgetExceeded, BudgetMeter, MeteredLLM
 from ipo_agents.calc import compute_offer
 from ipo_agents.config import Config
-from ipo_agents.contracts import Financials, Ipo, Report, SectionedDocument, Sentiment, Valuation
+from ipo_agents.contracts import CheckedSynthesis, Ipo, Report, SectionedDocument, Sentiment, Valuation
+from ipo_agents.cross_checks import cross_checks
 from ipo_agents.fin_calc import financial_flags
 from ipo_agents.flags import offer_flags
 from ipo_agents.ingestion import ingest
@@ -42,6 +43,7 @@ from ipo_agents.section_agent import SectionSpec, run_section, section_chunks
 from ipo_agents.section_calc import compute_sections
 from ipo_agents.sections import SECTIONS
 from ipo_agents.sentiment import gather_sentiment
+from ipo_agents.synthesizer import synthesize
 from ipo_agents.valuation import run_peer_valuation, valuation_flags
 
 log = logging.getLogger(__name__)
@@ -61,6 +63,7 @@ class AnalysisState(TypedDict, total=False):
     unverified: Annotated[list[str], operator.add]  # dotted paths of facts that failed verification
     sentiment: Sentiment
     valuation: Valuation
+    synthesis: CheckedSynthesis | None
 
 
 def build_graph(adapters: Adapters, config: Config, checkpointer: SqliteSaver | None = None):
@@ -85,22 +88,31 @@ def build_graph(adapters: Adapters, config: Config, checkpointer: SqliteSaver | 
             state["ipo"], adapters, offer=found.get("offer"), financials=found.get("financials"),
             price_basis=found.get("price_basis"), business=found.get("business"))}
 
+    def synthesizer_node(state: AnalysisState):
+        # A graph node, not a step after the graph: its inputs are checkpointed, so a crash here
+        # resumes at the synthesizer without reading any section again.
+        report = _report(state["ipo"], state, "complete", state["doc"].sha256)
+        return {"synthesis": synthesize(report, adapters.llm)}
+
     g = StateGraph(AnalysisState)
     g.add_node("ingest", ingest_node)
     g.add_node("sentiment", sentiment_node)
+    g.add_node("synthesizer", synthesizer_node)
     g.add_edge(START, "ingest")
-    # Sentiment runs alongside the section agents; all join at END.
+    # Sentiment runs alongside the section agents; the synthesizer waits for all of them (and for peer
+    # valuation, which itself waits for every section).
     for group, spec in SECTIONS.items():
         g.add_node(group, section_node(spec))
         g.add_edge("ingest", group)
-        g.add_edge(group, END)
     g.add_edge("ingest", "sentiment")
-    g.add_edge("sentiment", END)
     if adapters.peers is not None:
         # Peer valuation needs Offer, Financials, Price Basis and Business: it waits for every section.
         g.add_node("peer_valuation", valuation_node)
         g.add_edge(list(SECTIONS), "peer_valuation")
-        g.add_edge("peer_valuation", END)
+        g.add_edge(["peer_valuation", "sentiment"], "synthesizer")
+    else:
+        g.add_edge([*SECTIONS, "sentiment"], "synthesizer")
+    g.add_edge("synthesizer", END)
     return g.compile(checkpointer=checkpointer)
 
 
@@ -126,10 +138,12 @@ def _checkpointer(config: Config) -> Iterator[SqliteSaver]:
 
 def _report(ipo: Ipo, state: dict, status: str, rhp_sha256: str) -> Report:
     findings = state.get("findings", {})
+    synthesis = state.get("synthesis")
     report = Report(
         ipo=ipo,
         status=status,
-        verdict=None,  # set by the synthesizer (ticket 20)
+        verdict=synthesis.verdict if synthesis else None,  # None: the synthesizer did not run or had nothing
+        synthesis=synthesis,
         sentiment=state.get("sentiment"),
         valuation=state.get("valuation"),
         unverified_fields=sorted(state.get("unverified", [])),
@@ -142,9 +156,11 @@ def _report(ipo: Ipo, state: dict, status: str, rhp_sha256: str) -> Report:
     checks, legal_flags = legal_checks(report.fine_print_legal, report.financials) if report.fine_print_legal else ([], [])
     section_calcs, section_flags = compute_sections(ipo, report.business, report.governance, report.price_basis,
                                                     report.financials)
+    x_checks, x_flags = cross_checks(report)
     return report.model_copy(update={"calculations": {**calcs, **section_calcs}, "legal_checks": checks,
+                                     "cross_checks": x_checks,
                                      "flags": offer_flags(report.offer, calcs) + section_flags + legal_flags
-                                              + valuation_flags(report.valuation)})
+                                              + valuation_flags(report.valuation) + x_flags})
 
 
 def analyse_rhp(ipo: Ipo, rhp_pdf: Path, adapters: Adapters, config: Config) -> Report:

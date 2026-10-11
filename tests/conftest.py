@@ -25,6 +25,7 @@ def _golden_dir() -> Path:
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "sections(*groups): the section agents analyse_rhp runs (default: offer_objects)")
+    config.addinivalue_line("markers", "synthesizer: analyse_rhp makes the synthesizer call (default: it is skipped)")
 
 
 @pytest.fixture(autouse=True)
@@ -37,6 +38,17 @@ def _sections_under_test(request, monkeypatch):
     marker = request.node.get_closest_marker("sections")
     groups = marker.args if marker else ("offer_objects",)
     monkeypatch.setattr(analysis, "SECTIONS", {g: SECTIONS[g] for g in groups})
+
+
+@pytest.fixture(autouse=True)
+def _synthesizer_under_test(request, monkeypatch):
+    """The synthesizer node runs in every graph, but makes its model call only in tests marked
+    `@pytest.mark.synthesizer`; elsewhere it returns no synthesis (verdict None), so tests that script
+    and count other calls aren't changed by it."""
+    import ipo_agents.analysis as analysis
+
+    if request.node.get_closest_marker("synthesizer") is None:
+        monkeypatch.setattr(analysis, "synthesize", lambda report, llm: None)
 
 
 @pytest.fixture(scope="session")
