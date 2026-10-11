@@ -9,3 +9,4 @@ tests/golden/**/*.pdf
 .claude/worktrees/
 logs/
 data/
+.DS_Store
