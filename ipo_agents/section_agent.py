@@ -69,6 +69,7 @@ class SectionSpec:
     report_field: str
     borrow_from: tuple[str, ...] = ()
     borrow_if: str = ""
+    max_tokens: int | None = None  # output tokens per call; None: config.default_max_tokens
 
 
 def section_chunks(spec: SectionSpec, doc: SectionedDocument) -> list[Chunk]:

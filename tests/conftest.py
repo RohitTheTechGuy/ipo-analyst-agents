@@ -71,18 +71,25 @@ def golden_doc(golden_rhp):
 TINY_OFFER_PAGE = "THE OFFER\nTotal issue size of up to Rs. 1,250.00 crore"
 
 
-def make_tiny_rhp(path: Path, offer_pages: tuple[str, ...] = (TINY_OFFER_PAGE,)) -> Path:
+TINY_BUSINESS_PAGE = "OUR BUSINESS\nWe make scooters."
+
+
+def make_tiny_rhp(path: Path, offer_pages: tuple[str, ...] = (TINY_OFFER_PAGE,),
+                  business_pages: tuple[str, ...] = (TINY_BUSINESS_PAGE,),
+                  extra_pages: tuple[str, ...] = ()) -> Path:
     """A small PDF standing in for an RHP: one short page per core section (ingest requires them),
-    with the offer section from page 2 on, one page per entry of `offer_pages`."""
+    with the offer section from page 2 on, one page per entry of `offer_pages`; then risk factors,
+    `business_pages`, financials, litigation, other regulatory disclosures, and `extra_pages` last."""
     doc = fitz.open()
     pages = [
         "TABLE OF CONTENTS\nSECTION I - GENERAL",
         *offer_pages,
         "RISK FACTORS\nWe have one plant.",
-        "OUR BUSINESS\nWe make scooters.",
+        *business_pages,
         "RESTATED FINANCIAL INFORMATION\nRevenue grew.",
         "OUTSTANDING LITIGATION AND MATERIAL DEVELOPMENTS\nNone.",
         "OTHER REGULATORY AND STATUTORY DISCLOSURES",
+        *extra_pages,
     ]
     for text in pages:
         doc.new_page().insert_text((72, 72), text)

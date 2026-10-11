@@ -142,15 +142,22 @@ NOT_DISCLOSED = Fact(value=None, unit="", page=None, verbatim_quote=None,
 
 def found_nothing(schema: type[BaseModel]) -> BaseModel:
     """What a model that found nothing in its pages returns: every Fact not disclosed, every list
-    empty, every optional field None."""
+    empty, every optional field None, every text empty, every yes/no False."""
     def empty(f):
-        if f.annotation is Fact:
+        ann = f.annotation
+        if ann is Fact:
             return NOT_DISCLOSED
-        if typing.get_origin(f.annotation) is list:
+        if typing.get_origin(ann) is list:
             return []
-        if type(None) in typing.get_args(f.annotation):
+        if type(None) in typing.get_args(ann):
             return None
-        raise TypeError(f"{schema.__name__}: no empty value for {f.annotation}; script this schema")
+        if ann is str:
+            return ""
+        if ann is bool:
+            return False
+        if isinstance(ann, type) and issubclass(ann, BaseModel):
+            return found_nothing(ann)
+        raise TypeError(f"{schema.__name__}: no empty value for {ann}; script this schema")
     return schema(**{name: empty(f) for name, f in schema.model_fields.items()})
 
 
