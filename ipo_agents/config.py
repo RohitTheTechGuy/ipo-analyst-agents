@@ -13,21 +13,25 @@ class ModelConfig(BaseModel):
     price_in: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     price_cached: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     price_out: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    # Sent to the provider only when set (OpenAI reasoning models: minimal/low/medium/high).
+    reasoning_effort: str | None = None
 
 
 class RunEstimate(BaseModel):
-    """Pre-run cost estimate from the RHP page count (plan section 8: ~520k in / ~60k out to read
-    a ~400-page RHP on Luna, ~$0.42 Terra, ~$0.05 other Luna steps). Rounded up to stay conservative."""
+    """Pre-run cost estimate from the RHP page count: ~$0.93 for a 520-page RHP (the arithmetic is in
+    config.yaml). Per-page figures include per-call prompt/schema overhead and reasoning tokens."""
 
-    tokens_per_page: int = Field(default=1300, ge=0)  # map step input, Luna
-    output_tokens_per_page: int = Field(default=150, ge=0)  # map step output, Luna
-    fixed_usd: float = Field(default=0.47, ge=0, allow_inf_nan=False)  # Terra steps + other Luna steps
+    tokens_per_page: int = Field(default=1600, ge=0)  # map step input, Luna
+    output_tokens_per_page: int = Field(default=350, ge=0)  # map step output incl. reasoning, Luna
+    fixed_usd: float = Field(default=0.55, ge=0, allow_inf_nan=False)  # Terra steps + other Luna steps
 
 
 class BudgetConfig(BaseModel):
     cap_usd: float = Field(gt=0, allow_inf_nan=False)
     degrade_pct: float
     estimate: RunEstimate = RunEstimate()
+    # Kept free for the synthesizer: verifier re-asks stop once spend + in flight passes cap - this.
+    synth_reserve_usd: float = Field(default=0.15, ge=0, allow_inf_nan=False)
 
 
 class GroqLimits(BaseModel):

@@ -1,5 +1,8 @@
 """Budget rules at seam B (spec: Budget rules). Prices from config.yaml, USD per 1M tokens:
 terra in 2.00 / cached 0.20 / out 12.00; groq 0 / 0 / 0. `offer_objects` routes to terra."""
+import threading
+import time
+
 import pytest
 
 from ipo_agents.analysis import analyse_rhp
@@ -7,6 +10,7 @@ from ipo_agents.budget import BudgetExceeded
 from ipo_agents.config import RunEstimate
 from ipo_agents.contracts import Fact, OfferObjects
 from ipo_agents.llm import LLMParseError
+from ipo_agents.sections import SECTIONS
 from tests.fakes import ScriptedLLM, make_ipo, offer_objects
 
 OFFER = offer_objects(issue_size=Fact(
@@ -176,3 +180,49 @@ def test_worst_case_includes_request_overhead_beyond_the_prompt_text(tiny_rhp, a
         analyse_rhp(make_ipo(), tiny_rhp, adapters, config)
 
     assert adapters.llm.calls == []
+
+
+def test_a_parse_error_with_unknown_usage_counts_its_worst_case_against_the_cap(tiny_rhp, adapters, config):
+    # The SDK lost the reply's usage (it raised while parsing): charge the worst case W (~$0.0485, see
+    # above). Cap $0.09 fits one W but not two, so the second run's call is never sent.
+    config = with_cap(config, 0.09)
+    lost = LLMParseError("reply did not match OfferObjects", input_tokens=None, cached_tokens=None, output_tokens=None)
+    adapters.llm = ScriptedLLM({OfferObjects: lost}, models=config.models)
+    with pytest.raises(LLMParseError):
+        analyse_rhp(make_ipo(), tiny_rhp, adapters, config)
+
+    adapters.llm = offer_llm(config)
+    with pytest.raises(BudgetExceeded):
+        analyse_rhp(make_ipo(), tiny_rhp, adapters, config)
+    assert adapters.llm.calls == []
+
+
+class ConcurrencyProbe(ScriptedLLM):
+    """Holds each call briefly and records the most calls ever in flight at once."""
+
+    def __init__(self, **kw):
+        super().__init__({}, **kw)
+        self._lock = threading.Lock()
+        self.in_flight = self.peak = 0
+
+    def invoke_structured(self, **kwargs):
+        with self._lock:
+            self.in_flight += 1
+            self.peak = max(self.peak, self.in_flight)
+        try:
+            time.sleep(0.3)
+            return super().invoke_structured(**kwargs)
+        finally:
+            with self._lock:
+                self.in_flight -= 1
+
+
+@pytest.mark.sections(*SECTIONS)
+def test_at_most_four_graph_branches_call_the_provider_at_once(tiny_rhp, adapters, config):
+    # The tiny RHP gives 5+ section agents pages to read; all would start together without a limit.
+    adapters.llm = llm = ConcurrencyProbe(models=config.models)
+
+    analyse_rhp(make_ipo(), tiny_rhp, adapters, config)
+
+    assert len(llm.calls) > 4
+    assert llm.peak <= 4

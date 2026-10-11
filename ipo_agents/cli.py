@@ -1,4 +1,5 @@
-"""Command line for the daily job (spec stories 1, 60): python run_daily.py [--date D] [--ipo ID [--force]] [--dry-run]"""
+"""Command line for the daily job (spec stories 1, 60): python run_daily.py [--date D] [--ipo ID [--force]] [--dry-run]
+Also: --smoke (pre-flight model check) and --ipo ID --reset-budget (dev reset of one IPO's spend)."""
 from __future__ import annotations
 
 import argparse
@@ -18,6 +19,8 @@ from ipo_agents.adapters import Adapters
 from ipo_agents.config import Config, load_config
 from ipo_agents.contracts import Ipo
 from ipo_agents.budget import BudgetMeter
+from ipo_agents.llm import LLM, LangChainLLM
+from ipo_agents.maintenance import reset_budget, smoke
 from ipo_agents.runner import plan, run_daily
 from ipo_agents.store import Store
 from ipo_agents.wiring import MissingSecrets, build_adapters
@@ -132,7 +135,15 @@ def _parse_date(text: str) -> date:
         raise argparse.ArgumentTypeError(f"not a YYYY-MM-DD date: {text!r}") from None
 
 
+def provider_llm(config: Config) -> LLM:
+    """The real model client for --smoke; needs only the OpenAI key (no Telegram, no discovery)."""
+    if not os.environ.get("OPENAI_API_KEY"):
+        raise MissingSecrets("missing required secrets in .env or the environment: OPENAI_API_KEY")
+    return LangChainLLM(config.models)
+
+
 def main(argv: Sequence[str] | None = None, *, build: Callable[..., Adapters] = build_adapters,
+         smoke_llm: Callable[[Config], LLM] = provider_llm, ask: Callable[[str], str] = input,
          log_dir: Path = REPO_ROOT / "logs", env_file: Path = REPO_ROOT / ".env") -> int:
     parser = argparse.ArgumentParser(prog="run_daily.py", description="Analyse today's open mainboard IPOs.")
     parser.add_argument("--date", type=_parse_date, help="run as if on this date (YYYY-MM-DD); default: today in IST")
@@ -142,16 +153,28 @@ def main(argv: Sequence[str] | None = None, *, build: Callable[..., Adapters] = 
                              "what is left of its budget cap, which never resets")
     parser.add_argument("--dry-run", action="store_true",
                         help="discovery only: print what would be analysed, held or reminded; no model or Telegram calls")
+    parser.add_argument("--smoke", action="store_true",
+                        help="pre-flight: one tiny call per model schema on Luna (~$0.02, needs OPENAI_API_KEY); "
+                             "reports model-ID, schema and usage problems")
+    parser.add_argument("--reset-budget", action="store_true",
+                        help="dev only, with --ipo ID: show the IPO's spend, then after typing 'reset' delete its "
+                             "call log and saved checkpoints")
     parser.add_argument("--config", type=Path, default=REPO_ROOT / "config.yaml", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if args.force and not args.ipo:
         parser.error("--force needs --ipo")
+    if args.reset_budget and not args.ipo:
+        parser.error("--reset-budget needs --ipo ID")
 
     setup_logging(log_dir)
     load_dotenv(env_file)  # never overrides variables already set
     today = args.date or today_in_india()
     try:
         config = load_config(args.config)
+        if args.reset_budget:
+            return 0 if reset_budget(args.ipo, config, ask=ask) else 1
+        if args.smoke:
+            return 0 if smoke(config, smoke_llm(config), today) else 1
         adapters = build(config, discovery_only=args.dry_run)
         if args.dry_run:
             dry_run(today, adapters, config, only=args.ipo, force=args.force)

@@ -171,6 +171,9 @@ class Financials(BaseModel):
 
 
 TOP_RISKS = 10
+# Risk factors listed at most: every quantified one, then the most severe company-specific ones. A long RHP
+# prints 60-90; listing them all overruns the output limit, and the report shows only the top TOP_RISKS.
+MAX_LISTED_RISKS = 25
 
 
 class RiskFactor(BaseModel):
@@ -188,9 +191,48 @@ class RiskFactor(BaseModel):
 
 
 class RiskFactors(BaseModel):
-    """Risk Factors section: every risk factor, classified and ranked."""
+    """Risk Factors section: the quantified and most severe company-specific risks (at most
+    MAX_LISTED_RISKS), classified and ranked, plus counts of all the risk factors printed."""
 
-    risks: list[RiskFactor] = Field(description="Every risk factor in the section, in the order printed")
+    risks: list[RiskFactor] = Field(
+        description=f"At most {MAX_LISTED_RISKS}, in the order printed: every quantified risk, then the most "
+                    "severe company-specific ones. Generic risks are counted, not listed")
+    # Counted by the model, not printed in the RHP: shown as counts only, never used in a calculation.
+    total_count: int | None = Field(default=None, ge=0,
+                                    description="How many risk factors the section prints in all, listed or not")
+    generic_count: int | None = Field(default=None, ge=0,
+                                      description="How many of them are generic boilerplate")
+
+    @model_validator(mode="after")
+    def _cap(self):
+        """Enforces MAX_LISTED_RISKS on a reply that lists more: keeps every quantified risk, then the
+        company-specific ones by severity rank (unranked, then generic, last), in the order printed. The
+        counts, if the model gave none, are taken from the full list first."""
+        if len(self.risks) <= MAX_LISTED_RISKS:
+            return self
+        if self.total_count is None:
+            self.total_count = len(self.risks)
+        if self.generic_count is None:
+            self.generic_count = sum(r.kind == "generic" for r in self.risks)
+
+        def priority(i: int) -> tuple:
+            r = self.risks[i]
+            return (not r.quantified, r.kind != "company_specific", r.severity_rank is None,
+                    r.severity_rank or 0, i)
+
+        keep = sorted(sorted(range(len(self.risks)), key=priority)[:MAX_LISTED_RISKS])
+        self.risks = [self.risks[i] for i in keep]
+        return self
+
+    @property
+    def n_risks(self) -> int:
+        """Risk factors printed in all: the model's count, else the number listed."""
+        return self.total_count if self.total_count is not None else len(self.risks)
+
+    @property
+    def n_generic(self) -> int:
+        """Generic risk factors printed: the model's count, else the number listed."""
+        return self.generic_count if self.generic_count is not None else sum(r.kind == "generic" for r in self.risks)
 
     @property
     def top_company_specific(self) -> list[RiskFactor]:

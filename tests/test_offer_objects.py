@@ -232,7 +232,8 @@ def test_every_number_in_every_section_schema_is_a_fact():
                 yield from walk(arg, path)
 
     # The model's own judgments, not numbers taken from the RHP.
-    judgments = {"risk_factors.risks.severity_rank"}
+    # The risk counts are the model's tally of the section's headings; the RHP never prints them.
+    judgments = {"risk_factors.risks.severity_rank", "risk_factors.total_count", "risk_factors.generic_count"}
     assert [p for spec in SECTIONS.values() for p in raw_numbers(spec.schema, spec.group) if p not in judgments] == []
 
 
