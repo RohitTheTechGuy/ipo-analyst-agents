@@ -273,18 +273,19 @@ def test_the_synthesizer_runs_last_and_reads_the_peer_valuation(tiny_rhp, adapte
 
 
 @pytest.mark.synthesizer
-def test_a_crash_in_the_synthesizer_resumes_without_reading_the_sections_again(tiny_rhp, adapters, config):
-    # Call 0 is the offer read, call 1 the synthesizer: the connection drops on it.
+def test_a_crash_in_the_synthesizer_keeps_the_verified_report_without_a_verdict(tiny_rhp, adapters, config):
+    # Call 0 is the offer read, call 1 the synthesizer: the connection drops on it. The synthesizer is
+    # optional (ticket 26): the verified analysis goes out, with no verdict and the reason why.
     adapters.llm = llm = ScriptedLLM({OfferObjects: OFFER_ANSWER, Synthesis: synthesis()}, models=config.models,
                                      errors=[None, ConnectionError("connection dropped mid-call")])
 
-    with pytest.raises(ConnectionError):
-        analyse_rhp(make_ipo(), tiny_rhp, adapters, config)
     report = analyse_rhp(make_ipo(), tiny_rhp, adapters, config)
 
-    assert [c["task"] for c in llm.calls] == ["offer_objects", "synthesizer", "synthesizer"]
+    assert [c["task"] for c in llm.calls] == ["offer_objects", "synthesizer"]
     assert report.status == "complete"
-    assert report.verdict == "avoid"
+    assert report.verdict is None and report.synthesis is None
+    assert report.synthesis_error == "ConnectionError"
+    assert report.offer.issue_size.value == 1250.0
 
 
 def no_estimate(config):

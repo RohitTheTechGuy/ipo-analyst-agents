@@ -71,9 +71,16 @@ class _Calc:
         return value, [CalcInput(field=path, page=f.page)], False
 
     def band_input(self):
-        if self.band is None:
+        if self.band is None or self.band <= 0:  # no band, or a zero band: never a divisor
             raise NotComputable("ipo.price_band: no upper band price")
         return [CalcInput(field="ipo.price_band")]
+
+    @staticmethod
+    def positive(value: float, path: str) -> float:
+        """A divisor: a verified 0 ("Nil") or a negative makes the ratio not computable."""
+        if value <= 0:
+            raise NotComputable(f"{path}: zero or negative")
+        return value
 
     @staticmethod
     def first(*attempts):
@@ -94,7 +101,8 @@ class _Calc:
     def fresh_shares(self):
         def from_rupees():
             cr, inputs, _ = self.fresh_cr_stated()
-            return cr * CRORE / self.band, inputs + self.band_input(), True
+            band = self.band_input()  # raises before the division if there is no band
+            return cr * CRORE / self.band, inputs + band, True
         return self.first(self.fresh_shares_from_counts, from_rupees)
 
     def post_shares(self):
@@ -111,13 +119,15 @@ class _Calc:
     def fresh_cr(self):
         def at_band():
             shares, inputs, _ = self.fresh_shares_from_counts()
-            return shares * self.band / CRORE, inputs + self.band_input(), True
+            band = self.band_input()  # first: a missing band must not reach the arithmetic
+            return shares * self.band / CRORE, inputs + band, True
         return self.first(self.fresh_cr_stated, at_band)
 
     def ofs_cr(self):
         def at_band():
             shares, inputs, _ = self.fact("ofs_shares", _count)
-            return shares * self.band / CRORE, inputs + self.band_input(), True
+            band = self.band_input()  # first: a missing band must not reach the arithmetic
+            return shares * self.band / CRORE, inputs + band, True
         return self.first(lambda: self.fact("ofs_amount", to_crore), at_band)
 
     def issue_cr(self):
@@ -131,14 +141,14 @@ class _Calc:
         def rupees():
             ofs, ofs_in, _ = self.fact("ofs_amount", to_crore)
             issue, issue_in, _ = self.fact("issue_size", to_crore)
-            return 100 * ofs / issue, ofs_in + issue_in, False
+            return 100 * ofs / self.positive(issue, f"{PREFIX}.issue_size"), ofs_in + issue_in, False
         return self.first(rupees, lambda: self._share_of_issue(ofs=True))
 
     def fresh_pct(self):
         def rupees():
             fresh, fresh_in, _ = self.fact("fresh_issue", to_crore)
             issue, issue_in, _ = self.fact("issue_size", to_crore)
-            return 100 * fresh / issue, fresh_in + issue_in, False
+            return 100 * fresh / self.positive(issue, f"{PREFIX}.issue_size"), fresh_in + issue_in, False
         return self.first(rupees, lambda: self._share_of_issue(ofs=False))
 
     def _share_of_issue(self, ofs: bool):

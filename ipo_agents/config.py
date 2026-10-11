@@ -81,5 +81,15 @@ class Config(BaseModel):
         return self
 
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
 def load_config(path: str | Path) -> Config:
-    return Config.model_validate(yaml.safe_load(Path(path).read_text()))
+    """The config, with a relative db_path or work_dir resolved against the repo root: a manual run from
+    any directory uses the same store, budget log and checkpoints as the scheduled one."""
+    raw = yaml.safe_load(Path(path).read_text())
+    for key in ("db_path", "work_dir"):
+        if isinstance(raw.get(key), str):
+            p = Path(raw[key]).expanduser()
+            raw[key] = str(p if p.is_absolute() else REPO_ROOT / p)
+    return Config.model_validate(raw)

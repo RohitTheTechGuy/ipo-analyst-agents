@@ -80,7 +80,7 @@ def test_rerun_after_a_crash_does_not_repeat_the_branches_that_finished(tiny_rhp
 
     adapters.search = FakeSearch(articles("a", "b"))
     adapters.llm = llm = ScriptedLLM({OfferObjects: offer, SentimentPoints: points,
-                                      StanceTag: StanceTag(stance="subscribe", key_reasons=["growth"])},
+                                      StanceTag: StanceTag(stance="subscribe", key_reasons=["growth"], claimed_numbers=[])},
                                      models=config.models)
 
     with pytest.raises(ConnectionError):
@@ -115,6 +115,7 @@ def test_resumed_run_counts_the_spend_from_before_the_crash(tiny_rhp, adapters, 
     assert len(llm.calls) == 1
 
 
+@pytest.mark.synthesizer
 def test_budget_stop_carries_a_partial_report_of_what_was_verified(tiny_rhp, adapters, config):
     offer_done = threading.Event()
 
@@ -123,10 +124,11 @@ def test_budget_stop_carries_a_partial_report_of_what_was_verified(tiny_rhp, ada
         return OFFER
 
     # The offer read is billed 125,000 out x $12/1M = $1.50: the whole cap. Sentiment searches only after
-    # it; its stance tag runs on groq ($0), then the luna summary call can't fit and stops the run.
+    # it; its stance tag runs on groq ($0), then the luna summary call can't fit. Sentiment is optional, so
+    # it is reported unavailable (ticket 26); the synthesizer's call can't fit either and stops the run.
     adapters.search = BlockingSearch(articles("a"), offer_done)
     adapters.llm = llm = ScriptedLLM({OfferObjects: offer, SentimentPoints: POINTS,
-                                      StanceTag: StanceTag(stance="subscribe")},
+                                      StanceTag: StanceTag(stance="subscribe", key_reasons=[], claimed_numbers=[])},
                                      models=config.models, usage=[(0, 0, 125_000)])
 
     with pytest.raises(BudgetExceeded) as stop:
@@ -136,7 +138,8 @@ def test_budget_stop_carries_a_partial_report_of_what_was_verified(tiny_rhp, ada
     assert report.status == "partial_budget"
     assert report.offer.issue_size.value == 1250.0
     assert report.offer.issue_size.page == 2
-    assert report.sentiment is None
+    assert report.sentiment.available is False and "BudgetExceeded" in report.sentiment.note
+    assert report.synthesis is None
     assert tasks(llm) == {"offer_objects": 1, "sentiment_stance_tag": 1}
 
 
@@ -160,7 +163,7 @@ def test_crashed_ipo_resumes_on_the_next_run_and_is_reported_once(adapters, conf
     adapters.exchange = FakeExchange([make_ipo()])
     adapters.search = FakeSearch(articles("a"))
     adapters.llm = llm = ScriptedLLM({OfferObjects: offer, SentimentPoints: points,
-                                      StanceTag: StanceTag(stance="avoid")}, models=config.models)
+                                      StanceTag: StanceTag(stance="avoid", key_reasons=[], claimed_numbers=[])}, models=config.models)
 
     first = run_daily(TODAY, adapters, config)
     crash["on"] = False
@@ -174,6 +177,7 @@ def test_crashed_ipo_resumes_on_the_next_run_and_is_reported_once(adapters, conf
     assert "Sentiment: 1 avoid" in msg
 
 
+@pytest.mark.synthesizer
 def test_budget_stop_sends_the_partial_summary_and_is_never_retried(adapters, config):
     offer_done = threading.Event()
 
@@ -183,9 +187,10 @@ def test_budget_stop_sends_the_partial_summary_and_is_never_retried(adapters, co
 
     adapters.exchange = FakeExchange([make_ipo()])
     adapters.search = BlockingSearch(articles("a"), offer_done)
-    # As above: the offer read spends the whole $1.50, so sentiment's luna call stops the run.
+    # As above: the offer read spends the whole $1.50; sentiment's luna call can't fit (sentiment is then
+    # unavailable) and neither can the synthesizer's, which stops the run.
     adapters.llm = llm = ScriptedLLM({OfferObjects: offer, SentimentPoints: POINTS,
-                                      StanceTag: StanceTag(stance="subscribe")},
+                                      StanceTag: StanceTag(stance="subscribe", key_reasons=[], claimed_numbers=[])},
                                      models=config.models, usage=[(0, 0, 125_000)])
 
     first = run_daily(TODAY, adapters, config)

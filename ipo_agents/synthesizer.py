@@ -15,7 +15,8 @@ has a stable evidence ID:
   S:tally, S:gmp, S:subscription   sentiment tally; GMP and subscription (third-party, unofficial)
 
 The model makes one call. Python then keeps only the points whose IDs are all in the digest and whose
-numbers all appear in the items they cite, and applies the GMP rule (GMP never the sole basis).
+numbers all appear in the items they cite, and applies the GMP rule (GMP never the sole basis). A section
+summary is kept only if its numbers appear in that section's own items, page numbers not counted.
 """
 from __future__ import annotations
 
@@ -27,6 +28,7 @@ from pydantic import BaseModel
 
 from ipo_agents.contracts import (CheckedSynthesis, ClaimedFact, EvidencedPoint, Fact, Quote, Report, Synthesis)
 from ipo_agents.cross_checks import corroborated_risks
+from ipo_agents.grounding import numbers, unsupported
 from ipo_agents.llm import LLM
 from ipo_agents.sections import SECTIONS
 from ipo_agents.verifier import COULD_NOT_VERIFY
@@ -62,7 +64,6 @@ SYSTEM = (
 )
 
 _ID = re.compile(r"\b[EFQNDGCXSV]:[\w.\[\]#-]+")
-_NUMBER = re.compile(r"(?<![A-Za-z\d,])\d[\d,]*(?:\.\d+)?")
 
 
 # --- the digest ------------------------------------------------------------------------------
@@ -199,20 +200,31 @@ def synthesize(report: Report, llm: LLM) -> CheckedSynthesis | None:
                         separators=(",", ":"), default=str)
     result = llm.invoke_structured(task=TASK, system=SYSTEM, user=f"Digest:\n{digest}", schema=Synthesis,
                                    max_tokens=MAX_TOKENS)
-    return check_synthesis(result.parsed, items)
+    return check_synthesis(result.parsed, items, _derived_by_section(report))
 
 
-def check_synthesis(s: Synthesis, items: dict[str, dict]) -> CheckedSynthesis:
+def _derived_by_section(report: Report) -> dict[str, set[str]]:
+    """Section group -> the D: items computed from that section's facts (e.g. D:ofs_pct for offer_objects)."""
+    out: dict[str, set[str]] = {}
+    for name, d in report.calculations.items():
+        for group in {i.field.split(".", 1)[0] for i in d.inputs}:
+            out.setdefault(group, set()).add(f"D:{name}")
+    return out
+
+
+def check_synthesis(s: Synthesis, items: dict[str, dict],
+                    derived: dict[str, set[str]] | None = None) -> CheckedSynthesis:
     notes: list[str] = []
     reasons = _keep(s.reasons, items, "reason", notes)[:MAX_REASONS]
     red_flags = _keep(s.top_red_flags, items, "red flag", notes)[:MAX_RED_FLAGS]
     positives = _keep(s.top_positives, items, "positive", notes)[:MAX_POSITIVES]
-    everything = set().union(*(_numbers_in(k, v) for k, v in items.items()))
     summaries = []
     for summary in s.section_summaries:
-        bad = _unsupported(summary.text, everything)
+        # A section's summary may use only its own section's numbers, and a page number is not a value.
+        own = _section_items(items, summary.section, (derived or {}).get(summary.section, set()))
+        bad = unsupported(summary.text, set().union(set(), *(_numbers_in(k, v, pages=False) for k, v in own.items())))
         if bad:
-            notes.append(f"dropped the {summary.section} summary: {', '.join(bad)} not in the digest")
+            notes.append(f"dropped the {summary.section} summary: {', '.join(bad)} not in that section's items")
         else:
             summaries.append(summary)
     verdict, confidence = s.verdict, s.confidence
@@ -247,19 +259,29 @@ def _keep(points: list[EvidencedPoint], items: dict[str, dict], kind: str, notes
 
 
 def _unsupported(text: str, allowed: set[float]) -> list[str]:
-    """The numbers in the text that match none of the allowed values at the precision written."""
-    bad = []
-    for raw in _NUMBER.findall(_ID.sub(" ", text)):
-        number = float(raw.replace(",", ""))
-        decimals = len(raw.split(".", 1)[1]) if "." in raw else 0
-        if not any(abs(round(a, decimals) - number) < 1e-9 for a in allowed):
-            bad.append(raw)
-    return bad
+    """The numbers in the text (evidence IDs aside) that match none of the allowed values."""
+    return unsupported(_ID.sub(" ", text), allowed)
 
 
-def _numbers_in(key: str, value) -> set[float]:
-    """Every number an item holds: its values, the numbers in its text (and in its ID, e.g. top10)."""
-    found = {abs(float(n.replace(",", ""))) for n in _NUMBER.findall(key)}
+def _section_items(items: dict[str, dict], section: str, derived: set[str]) -> dict[str, dict]:
+    """The digest items of one section: its F:/Q: facts and quotes, its N: list, and the D: items computed
+    from its facts."""
+    def own(key: str) -> bool:
+        kind, _, path = key.partition(":")
+        if kind in ("F", "Q"):
+            return path == section or path.startswith((f"{section}.", f"{section}["))
+        return key == f"N:{section}" or key in derived
+    return {k: v for k, v in items.items() if own(k)}
+
+
+_INDEX = re.compile(r"\[\d+\]")
+_PAGE_KEYS = {"page", "pages"}
+
+
+def _numbers_in(key: str, value, pages: bool = True) -> set[float]:
+    """Every number an item holds: its values, the numbers in its text (and in its ID, e.g. top10).
+    With pages=False, page numbers and list indices in the ID (periods[0]) are not counted."""
+    found = {abs(n) for n in numbers(key if pages else _INDEX.sub(" ", key))}
 
     def walk(v):
         if isinstance(v, bool) or v is None:
@@ -267,10 +289,11 @@ def _numbers_in(key: str, value) -> set[float]:
         if isinstance(v, (int, float)):
             found.add(abs(float(v)))
         elif isinstance(v, str):
-            found.update(float(n.replace(",", "")) for n in _NUMBER.findall(v))
+            found.update(numbers(v))
         elif isinstance(v, dict):
-            for x in v.values():
-                walk(x)
+            for k, x in v.items():
+                if pages or k not in _PAGE_KEYS:
+                    walk(x)
         elif isinstance(v, (list, tuple)):
             for x in v:
                 walk(x)
