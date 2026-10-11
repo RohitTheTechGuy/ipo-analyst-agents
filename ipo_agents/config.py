@@ -69,6 +69,7 @@ class Config(BaseModel):
     map_max_tokens: int = Field(default=8000, gt=0)
     db_path: str
     work_dir: str
+    reports_dir: str = "reports"  # archive of every report and Telegram message (gitignored)
     sentiment: SentimentConfig = SentimentConfig()
     peers: PeersConfig = PeersConfig()
     advisor: AdvisorConfig = AdvisorConfig()
@@ -100,7 +101,7 @@ def load_config(path: str | Path) -> Config:
     """The config, with a relative db_path or work_dir resolved against the repo root: a manual run from
     any directory uses the same store, budget log and checkpoints as the scheduled one."""
     raw = yaml.safe_load(Path(path).read_text())
-    for key in ("db_path", "work_dir"):
+    for key in ("db_path", "work_dir", "reports_dir"):
         if isinstance(raw.get(key), str):
             p = Path(raw[key]).expanduser()
             raw[key] = str(p if p.is_absolute() else REPO_ROOT / p)

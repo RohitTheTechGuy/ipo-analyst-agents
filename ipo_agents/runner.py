@@ -7,6 +7,7 @@ from datetime import date
 from pathlib import Path
 
 from ipo_agents.adapters import Adapters
+from ipo_agents.archive import archive_report
 from ipo_agents.analysis import analyse_rhp, report_json_path
 from ipo_agents.budget import BudgetExceeded
 from ipo_agents.config import Config
@@ -228,7 +229,10 @@ def run_daily(today: date, adapters: Adapters, config: Config, force_ipo: str | 
             summary.failed.append(ipo.ipo_id)
             partial = exc.report  # None only if the stop came from outside the graph
             text = _summary_text(partial) if partial else f"{ipo.name}: nothing was verified"
-            _send(ipo, f"{partial_marker(config)}\n{text}", partial and partial.pdf_path, adapters, summary)
+            text = f"{partial_marker(config)}\n{text}"
+            if partial:
+                archive_report(partial, text, config.reports_dir, today, partial=True)
+            _send(ipo, text, partial and partial.pdf_path, adapters, summary)
             continue
         except Exception:
             log.exception("analysis failed for %s", ipo.ipo_id)
@@ -241,7 +245,9 @@ def run_daily(today: date, adapters: Adapters, config: Config, force_ipo: str | 
         summary.analysed.append(ipo.ipo_id)
         # The summary is today's notice, even if sending fails: no reminder on top of it.
         store.mark_reminded(ipo.ipo_id, today)
-        _send(ipo, _summary_text(report), report.pdf_path, adapters, summary)
+        text = _summary_text(report)
+        archive_report(report, text, config.reports_dir, today)
+        _send(ipo, text, report.pdf_path, adapters, summary)
     summary.notify_failed += send_daily_updates(today, store, adapters, config, VERDICT_LABELS)
     store.close()
     return summary

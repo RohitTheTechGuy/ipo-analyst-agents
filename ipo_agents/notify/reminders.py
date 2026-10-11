@@ -16,6 +16,7 @@ from ipo_agents.advisor import refresh_advice
 from ipo_agents.config import Config
 from ipo_agents.contracts import CheckedAdvice, ClaimedFact, Ipo, Report, SubscriptionStatus
 from ipo_agents.report.labels import CALL_LABELS, advice_text, subscription_text
+from ipo_agents.archive import archive_update
 from ipo_agents.store import Store
 
 log = logging.getLogger(__name__)
@@ -108,9 +109,10 @@ def send_daily_updates(today: date, store: Store, adapters: Adapters, config: Co
             except Exception:
                 log.exception("%s: closing-day advisor refresh failed; sending the normal update", ipo.ipo_id)
         gmp, sub = market if market is not None else _market(adapters.market, ipo)
+        text = update_text(ipo, verdict_labels.get(verdict, "N/A"), today, gmp, sub, advice, earlier)
+        archive_update(ipo.ipo_id, text, config.reports_dir, today)
         try:
-            adapters.notifier.send_message(update_text(ipo, verdict_labels.get(verdict, "N/A"), today, gmp, sub,
-                                                       advice, earlier))
+            adapters.notifier.send_message(text)
         except Exception:
             log.exception("daily update send failed for %s", ipo.ipo_id)
             failed.append(ipo.ipo_id)
