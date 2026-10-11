@@ -1,5 +1,27 @@
 # Session handoff: IPO Analyst Agents
 
+## Status (updated 2026-10-11)
+- **Built and merged into local `main`:** tickets 01–23 plus 25–26 (pre-live hardening). `pytest -q -p no:warnings` gives 468 passed (about 42s, offline, no keys).
+- **Remaining:** ticket 24 (live golden runs). It's blocked on the user:
+  1. Verify `tests/golden/*/expected.yaml`, then set `needs_human_review: false`. Check these first:
+     - Ola's WACA row (the re-cited p.158 row is primary-transaction WACA).
+     - The re-citations in `FINANCIALS_CITATIONS`, `CONTINGENT_CITATIONS` and `PRICE_BASIS_CITATIONS` in the tests.
+  2. Create `.env` with `OPENAI_API_KEY`, `GROQ_API_KEY`, `TAVILY_API_KEY`, `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`, and set an OpenAI monthly spend limit.
+- **Live run order:**
+  1. `.venv/bin/python run_daily.py --smoke`: about $0.02. It checks model IDs and strict schemas.
+  2. `run_daily.py --ipo <id>` on one real IPO, then compare its `llm_calls` cost with the $0.93 estimate.
+  3. The golden runs.
+  4. `scheduler/install.py install`.
+- **Dev notes:**
+  - Spend per ipo_id never resets. To start over, use `run_daily.py --ipo X --reset-budget`, which asks for typed confirmation.
+  - After code or prompt changes, reset or force, because stale checkpoints resume.
+  - WeasyPrint needs `DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib`. The CLI re-execs with it and the plist sets it.
+- **Watch in the first live runs:**
+  - Groq output for governance and other disclosures (1,500 tokens) may cut off.
+  - The degrade switch triggers on RHPs over about 675 pages.
+  - `reasoning_effort=low` drops `temperature=0`.
+  - Peer prices are current, not as of the IPO date.
+
 ## Goal for the next session
 Build the **IPO Analyst Agents** system: a daily Python/LangGraph pipeline that analyses each open Indian mainboard IPO's RHP and sends a verdict and a PDF report to Telegram, capped at **$1.50 of OpenAI usage per IPO**. Build it ticket by ticket with TDD, using sub-agents in git worktrees, with this session acting as the master that reviews and merges into local `main`.
 
