@@ -151,7 +151,7 @@ def test_a_valid_groq_reply_is_parsed(monkeypatch):
     assert call(llm, model="groq", max_tokens=1500).parsed.issue_size.value is None
 
 
-@pytest.mark.parametrize("model, effort", [("luna", "low"), ("terra", "low"), ("groq", None)])
+@pytest.mark.parametrize("model, effort", [("luna", "none"), ("terra", "low"), ("groq", None)])
 def test_reasoning_effort_is_sent_only_where_configured(monkeypatch, model, effort):
     body = (groq_tool_call(json.dumps({"issue_size": NOT_DISCLOSED_JSON})) if model == "groq"
             else completion({"content": json.dumps({"issue_size": NOT_DISCLOSED_JSON})}))
@@ -171,7 +171,7 @@ def test_reasoning_models_are_sent_reasoning_effort_and_no_temperature(monkeypat
     call(llm, model=model)
 
     assert "temperature" not in sent[0]
-    assert sent[0]["reasoning_effort"] in {"low", "high"}
+    assert sent[0]["reasoning_effort"] in {"none", "low", "high"}
 
 
 def test_a_model_without_reasoning_effort_keeps_temperature_zero(monkeypatch):

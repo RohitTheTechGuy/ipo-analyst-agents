@@ -2,7 +2,7 @@
 # A model used in `routing` without a price makes the run refuse to start.
 # reasoning_effort is sent only where set (reasoning tokens bill as output and count against max_tokens).
 models:
-  luna:  { provider: openai, id: gpt-5.6-luna,        price_in: 0.20, price_cached: 0.02, price_out: 1.20, reasoning_effort: low }
+  luna:  { provider: openai, id: gpt-5.6-luna,        price_in: 0.20, price_cached: 0.02, price_out: 1.20, reasoning_effort: none }  # extraction needs no reasoning; at low it spent whole 4k budgets reasoning and returned nothing (HD Fire live run)
   terra: { provider: openai, id: gpt-5.6-terra,       price_in: 2.00, price_cached: 0.20, price_out: 12.00, reasoning_effort: low }
   groq:  { provider: groq,   id: openai/gpt-oss-120b, price_in: 0.0,  price_cached: 0.0,  price_out: 0.0 }
   sol:   { provider: openai, id: gpt-6.1-sol,         price_in: 2.00, price_cached: 0.10, price_out: 10.00, reasoning_effort: high }
