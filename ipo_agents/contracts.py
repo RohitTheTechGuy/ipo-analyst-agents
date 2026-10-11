@@ -675,6 +675,32 @@ class CheckedSynthesis(Synthesis):
     notes: list[str] = []
 
 
+# --- Financial Advisor (ticket 27) ----------------------------------------------------------
+
+Call = Literal["buy", "no_buy"]
+Horizon = Literal["listing_gains", "long_term", "none"]
+
+
+class Advice(BaseModel):
+    """The advisor's answer. LLM-facing: no defaults, no min/max (OpenAI strict mode); Python then checks
+    every cited ID and number (advisor.py)."""
+
+    call: Call
+    conviction: Confidence
+    horizon: Horizon = Field(description="What a buy is for: listing_gains, long_term; none for no_buy")
+    headline: str = Field(description="One line a retail applicant reads first; numbers only as in the digest")
+    reasons: list[EvidencedPoint] = Field(description="The 3-5 reasons for the call, most important first")
+    key_risks: list[EvidencedPoint] = Field(description="Up to 3 risks to the call, most serious first")
+    what_would_change_my_mind: str = Field(description="One or two sentences: what would flip the call")
+
+
+class CheckedAdvice(Advice):
+    """An Advice after Python's checks, and the day it was given; what was dropped or downgraded is in `notes`."""
+
+    as_of: date
+    notes: list[str] = []
+
+
 class Report(BaseModel):
     ipo: Ipo
     status: Literal["complete", "partial_budget"]
@@ -699,6 +725,8 @@ class Report(BaseModel):
     # None: the synthesizer did not run (budget stop, nothing verified) or failed (synthesis_error says so)
     synthesis: CheckedSynthesis | None = None
     synthesis_error: str | None = None  # the synthesizer raised (not a budget stop): the exception's type name
+    # None: the advisor did not run (partial report), failed, hit its cap or kept < 2 reasons ("not reached")
+    advice: CheckedAdvice | None = None
     rhp_sha256: str
     pdf_path: str | None = None
 

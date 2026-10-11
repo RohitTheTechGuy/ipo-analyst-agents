@@ -13,7 +13,9 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from ipo_agents.analysis import CHECKPOINT_DB
 from ipo_agents.budget import BudgetMeter, MeteredLLM, _status
 from ipo_agents.config import Config
-from ipo_agents.contracts import Synthesis, ValuationPlan
+from ipo_agents.advisor import TASK as ADVISOR_TASK
+from ipo_agents.advisor import ledger_id
+from ipo_agents.contracts import Advice, Synthesis, ValuationPlan
 from ipo_agents.llm import LLM, LLMParseError
 from ipo_agents.router import FALLBACK
 from ipo_agents.sections import SECTIONS
@@ -26,6 +28,10 @@ SMOKE_MODEL = FALLBACK  # Luna: the cheap model, and the one every other model f
 # Small, but with room for low-effort reasoning tokens (billed as output and counted against this),
 # so a cut-off reply means something is wrong rather than that the test was too tight.
 SMOKE_MAX_TOKENS = 500
+# One call on the advisor's model (sol, reasoning effort high): room for its reasoning tokens. Worst case
+# ~600 in x $2/1M + 1,500 out x $10/1M = ~$0.016; a typical reply costs about $0.01.
+SMOKE_ADVISOR_TASK = "smoke_advisor"
+SMOKE_ADVISOR_MAX_TOKENS = 1_500
 SMOKE_SYSTEM = ("This is a connectivity test. Return the smallest valid answer for the schema: empty lists, "
                 "null or not-disclosed values, empty strings, and the most neutral choice where one is required.")
 SMOKE_USER = "[page 1]\nThis page is intentionally blank."
@@ -33,7 +39,7 @@ SMOKE_USER = "[page 1]\nThis page is intentionally blank."
 
 def smoke_schemas() -> list[type]:
     """Every schema the pipeline sends to a model."""
-    return [*(spec.schema for spec in SECTIONS.values()), StanceTag, SentimentPoints, ValuationPlan, Synthesis]
+    return [*(spec.schema for spec in SECTIONS.values()), StanceTag, SentimentPoints, ValuationPlan, Synthesis, Advice]
 
 
 def _diagnose(e: Exception) -> str:
@@ -52,29 +58,35 @@ def _diagnose(e: Exception) -> str:
 
 
 def smoke(config: Config, llm: LLM, today: date, out: Callable[[str], None] = print) -> bool:
-    """One tiny call per schema on Luna, metered under ipo_id SMOKE-<date>. True if every call was OK."""
-    config = config.model_copy(update={"routing": {**config.routing, SMOKE_TASK: SMOKE_MODEL}})
+    """One tiny call per schema on Luna, plus one Advice call on the advisor's model (sol) to check its model
+    ID and the strict schema there; all metered under ipo_id SMOKE-<date>. True if every call was OK."""
+    advisor_model = config.routing[ADVISOR_TASK]
+    config = config.model_copy(update={"routing": {**config.routing, SMOKE_TASK: SMOKE_MODEL,
+                                                   SMOKE_ADVISOR_TASK: advisor_model}})
     meter = BudgetMeter(f"SMOKE-{today:%Y-%m-%d}", config)
     metered = MeteredLLM(llm, meter)
-    ok = 0
     schemas = smoke_schemas()
+    calls = [(SMOKE_TASK, schema, schema.__name__, SMOKE_MAX_TOKENS) for schema in schemas]
+    calls.append((SMOKE_ADVISOR_TASK, Advice, f"Advice on {advisor_model}", SMOKE_ADVISOR_MAX_TOKENS))
     out(f"Smoke test: {len(schemas)} schemas on {SMOKE_MODEL} ({config.models[SMOKE_MODEL].id}), "
-        f"max_tokens {SMOKE_MAX_TOKENS}, metered as {meter.ipo_id}")
-    for schema in schemas:
+        f"max_tokens {SMOKE_MAX_TOKENS}, and Advice on {advisor_model} ({config.models[advisor_model].id}), "
+        f"max_tokens {SMOKE_ADVISOR_MAX_TOKENS}; metered as {meter.ipo_id}")
+    ok = 0
+    for task, schema, name, max_tokens in calls:
         try:
-            result = metered.invoke_structured(task=SMOKE_TASK, system=SMOKE_SYSTEM, user=SMOKE_USER,
-                                               schema=schema, max_tokens=SMOKE_MAX_TOKENS)
+            result = metered.invoke_structured(task=task, system=SMOKE_SYSTEM, user=SMOKE_USER,
+                                               schema=schema, max_tokens=max_tokens)
         except Exception as e:
-            out(f"  {schema.__name__:<22} {_diagnose(e)}")
+            out(f"  {name:<22} {_diagnose(e)}")
             continue
         if not (result.input_tokens and result.output_tokens):
-            out(f"  {schema.__name__:<22} NO USAGE: reply reported {result.input_tokens} in / "
+            out(f"  {name:<22} NO USAGE: reply reported {result.input_tokens} in / "
                 f"{result.output_tokens} out tokens")
             continue
         ok += 1
-        out(f"  {schema.__name__:<22} OK ({result.input_tokens} in / {result.output_tokens} out)")
-    out(f"{ok}/{len(schemas)} OK; ${meter.spent:.4f} spent on {meter.ipo_id} today")
-    return ok == len(schemas)
+        out(f"  {name:<22} OK ({result.input_tokens} in / {result.output_tokens} out)")
+    out(f"{ok}/{len(calls)} OK; ${meter.spent:.4f} spent on {meter.ipo_id} today")
+    return ok == len(calls)
 
 
 # --- dev reset ----------------------------------------------------------------------------------
@@ -95,20 +107,23 @@ def _checkpoint_threads(path: Path, ipo_id: str) -> list[str]:
 
 def reset_budget(ipo_id: str, config: Config, ask: Callable[[str], str] = input,
                  out: Callable[[str], None] = print) -> bool:
-    """Shows the IPO's spend and saved checkpoints, and after the typed word 'reset' deletes its llm_calls
-    rows and checkpoint threads. Dev use only: it lifts the per-IPO cap that otherwise never resets."""
-    meter = BudgetMeter(ipo_id, config)
+    """Shows the IPO's spend on both its ledgers (analysis and advisor) and its saved checkpoints, and after
+    the typed word 'reset' deletes their llm_calls rows and the checkpoint threads. Dev use only: it lifts
+    the per-IPO caps that otherwise never reset."""
+    ledgers = (ipo_id, ledger_id(ipo_id))
+    analysis = BudgetMeter(ipo_id, config)
+    advisor = BudgetMeter(ledger_id(ipo_id), config, cap=config.advisor.cap_usd)
     with closing(sqlite3.connect(config.db_path)) as db:
-        (calls,) = db.execute("SELECT COUNT(*) FROM llm_calls WHERE ipo_id = ?", (ipo_id,)).fetchone()
+        (calls,) = db.execute("SELECT COUNT(*) FROM llm_calls WHERE ipo_id IN (?, ?)", ledgers).fetchone()
     checkpoints = Path(config.db_path).with_name(CHECKPOINT_DB)
     threads = _checkpoint_threads(checkpoints, ipo_id)
-    out(f"{ipo_id}: ${meter.spent:.4f} spent of ${config.budget.cap_usd:.2f} in {calls} logged call(s); "
-        f"{len(threads)} saved checkpoint thread(s)")
+    out(f"{ipo_id}: ${analysis.spent:.4f} spent of ${config.budget.cap_usd:.2f}, advisor ${advisor.spent:.4f} "
+        f"of ${config.advisor.cap_usd:.2f}, in {calls} logged call(s); {len(threads)} saved checkpoint thread(s)")
     if ask("Type 'reset' to delete this IPO's spend log and checkpoints: ").strip() != "reset":
         out("Not reset.")
         return False
     with closing(sqlite3.connect(config.db_path)) as db, db:
-        db.execute("DELETE FROM llm_calls WHERE ipo_id = ?", (ipo_id,))
+        db.execute("DELETE FROM llm_calls WHERE ipo_id IN (?, ?)", ledgers)
     if threads:
         with closing(sqlite3.connect(checkpoints, check_same_thread=False)) as conn:
             saver = SqliteSaver(conn)

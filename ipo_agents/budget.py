@@ -110,12 +110,15 @@ def _rejected(e: Exception) -> bool:
 
 
 class BudgetMeter:
-    """Tracks spend for one IPO against the cap, starting from what is already logged for it."""
+    """Tracks spend on one ledger against its cap, starting from what is already logged for it.
 
-    def __init__(self, ipo_id: str, config: Config):
+    A ledger is an ipo_id (the analysis, capped at budget.cap_usd) or "<ipo_id>:advisor" (the Financial
+    Advisor, with its own `cap`). Spend is summed by exact ledger id, so the two never mix."""
+
+    def __init__(self, ipo_id: str, config: Config, cap: float | None = None):
         self.ipo_id = ipo_id
         self.config = config
-        self.cap = config.budget.cap_usd
+        self.cap = config.budget.cap_usd if cap is None else cap
         self._models = config.models
         self._db_path = config.db_path
         # Parallel graph branches share one meter: reservations stop them all passing the same check.

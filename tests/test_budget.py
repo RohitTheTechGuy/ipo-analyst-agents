@@ -74,9 +74,9 @@ def test_call_without_a_positive_max_tokens_is_rejected(tiny_rhp, adapters, conf
 
 def test_call_to_an_unconfigured_model_never_reaches_the_provider(tiny_rhp, adapters, config):
     adapters.llm = offer_llm(config)
-    config = config.model_copy(update={"routing": {**config.routing, "offer_objects": "sol"}})
+    config = config.model_copy(update={"routing": {**config.routing, "offer_objects": "nova"}})
 
-    with pytest.raises(ValueError, match="'sol'"):
+    with pytest.raises(ValueError, match="'nova'"):
         analyse_rhp(make_ipo(), tiny_rhp, adapters, config)
 
     assert adapters.llm.calls == []

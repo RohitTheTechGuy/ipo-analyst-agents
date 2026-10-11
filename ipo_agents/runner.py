@@ -7,14 +7,14 @@ from datetime import date
 from pathlib import Path
 
 from ipo_agents.adapters import Adapters
-from ipo_agents.analysis import analyse_rhp
+from ipo_agents.analysis import analyse_rhp, report_json_path
 from ipo_agents.budget import BudgetExceeded
 from ipo_agents.config import Config
-from ipo_agents.contracts import Fact, Ipo, Report, RunSummary, Sentiment, SubscriptionStatus
+from ipo_agents.contracts import CheckedAdvice, Fact, Ipo, Report, RunSummary, Sentiment, SubscriptionStatus
 from ipo_agents.discovery import DiscoveryError
 from ipo_agents.flags import summary_line as offer_summary_line
 from ipo_agents.notify.reminders import send_daily_updates
-from ipo_agents.report.labels import DISCLAIMER, VERDICT_LABELS, subscription_text
+from ipo_agents.report.labels import DISCLAIMER, VERDICT_LABELS, advice_text, subscription_text
 from ipo_agents.store import TERMINAL, Store, same_company
 from ipo_agents.valuation import summary_line as valuation_summary_line
 from ipo_agents.verifier import COULD_NOT_VERIFY
@@ -24,6 +24,8 @@ log = logging.getLogger(__name__)
 NO_SOURCE_ALERT = "⚠️ Could not list open IPOs from any source today"
 BULLET_CHARS = 120  # one line on a phone screen, roughly
 SUMMARY_RED_FLAGS = 3
+SUMMARY_ADVICE_REASONS = 3
+SUMMARY_ADVICE_RISKS = 2
 
 
 def _sentiment_line(s: Sentiment) -> str:
@@ -69,8 +71,8 @@ def _verdict_lines(report: Report) -> list[str]:
             why = "synthesizer failed"
         else:
             why = "nothing verified"
-        return [f"Verdict: not reached ({why})"]
-    lines = [f"Verdict: {VERDICT_LABELS[s.verdict]} (confidence: {s.confidence})"]
+        return [f"Analyst view: not reached ({why})"]
+    lines = [f"Analyst view: {VERDICT_LABELS[s.verdict]} (confidence: {s.confidence})"]
     if s.reasons:
         lines += ["Why:", *(_bullet(r.text) for r in s.reasons)]
     if s.top_red_flags:
@@ -78,11 +80,29 @@ def _verdict_lines(report: Report) -> list[str]:
     return lines
 
 
+def _advice_lines(advice: CheckedAdvice | None) -> list[str]:
+    """The advisor's call, headline, top reasons and top risks; or that it was not reached."""
+    if advice is None:
+        return ["🧭 Advisor: advice not reached"]
+    lines = [f"🧭 Advisor: {advice_text(advice)}"]
+    if advice.headline:
+        lines.append(advice.headline)
+    if advice.reasons:
+        lines += ["Reasons:", *(_bullet(r.text) for r in advice.reasons[:SUMMARY_ADVICE_REASONS])]
+    if advice.key_risks:
+        lines += ["Risks:", *(_bullet(r.text) for r in advice.key_risks[:SUMMARY_ADVICE_RISKS])]
+    return lines
+
+
 def format_summary(report: Report) -> str:
     ipo = report.ipo
+    # The IPO's name stays the first line (the chat preview); the advisor's call leads what follows.
     lines = [
         f"📄 {ipo.name} IPO (Mainboard)",
         f"Open: {ipo.open_date:%d %b}–{ipo.close_date:%d %b} · Band {ipo.price_band} · Lot {ipo.lot_size}",
+        "",
+        *_advice_lines(report.advice),
+        "",
     ]
     if report.offer:
         lines.append(f"Issue: {_fact_text(report.offer.issue_size)} · OFS: {_fact_text(report.offer.ofs_shares)}")
@@ -200,7 +220,7 @@ def run_daily(today: date, adapters: Adapters, config: Config, force_ipo: str | 
         store.upsert(ipo, "analysing")
         try:
             rhp = adapters.downloader.download(ipo.rhp_url, Path(config.work_dir) / ipo.ipo_id)
-            report = analyse_rhp(ipo, rhp, adapters, config)
+            report = analyse_rhp(ipo, rhp, adapters, config, today=today)
         except BudgetExceeded as exc:
             # Terminal: retrying would only spend more. Send what was verified before the stop.
             log.warning("budget cap reached for %s: %s", ipo.ipo_id, exc)
@@ -216,10 +236,12 @@ def run_daily(today: date, adapters: Adapters, config: Config, force_ipo: str | 
             summary.failed.append(ipo.ipo_id)
             continue
         store.mark_done(ipo.ipo_id, report.verdict, report.rhp_sha256)
+        if (saved := report_json_path(config, ipo.ipo_id)).exists():
+            store.set_report_path(ipo.ipo_id, str(saved))  # the closing-day advisor refresh reloads it
         summary.analysed.append(ipo.ipo_id)
         # The summary is today's notice, even if sending fails: no reminder on top of it.
         store.mark_reminded(ipo.ipo_id, today)
         _send(ipo, _summary_text(report), report.pdf_path, adapters, summary)
-    summary.notify_failed += send_daily_updates(today, store, adapters.notifier, adapters.market, VERDICT_LABELS)
+    summary.notify_failed += send_daily_updates(today, store, adapters, config, VERDICT_LABELS)
     store.close()
     return summary

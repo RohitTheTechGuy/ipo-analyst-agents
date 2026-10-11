@@ -14,7 +14,7 @@ from ipo_agents.analysis import analyse_rhp
 from ipo_agents.budget import BudgetExceeded
 from ipo_agents.calc import compute_offer
 from ipo_agents.config import load_config
-from ipo_agents.contracts import (AuditorRemark, BusinessIndustry, CitedText, Derived, Fact, IndustryClaim,
+from ipo_agents.contracts import (Advice, AuditorRemark, BusinessIndustry, CitedText, Derived, Fact, IndustryClaim,
                                   MaterialItem, MultipleChoice, OfferObjects, OtherDisclosures, Promoter, Quote,
                                   RiskFactor, RiskFactors, SectionSummary, SuggestedPeer, Synthesis, ValuationPlan)
 from ipo_agents.grounding import ground_section
@@ -91,7 +91,7 @@ def test_a_failing_synthesizer_keeps_the_report_and_says_why_there_is_no_verdict
 
     assert summary.analysed == ["ACME-2026-10-13"]
     [msg] = adapters.notifier.messages
-    assert "Verdict: not reached (synthesizer failed)" in msg
+    assert "Analyst view: not reached (synthesizer failed)" in msg
     assert "Issue: ₹1,250 crore (p. 2)" in msg
 
 
@@ -103,7 +103,7 @@ def test_a_report_with_nothing_verified_still_says_nothing_verified(adapters, co
     run_daily(TODAY, adapters, config)
 
     [msg] = adapters.notifier.messages
-    assert "Verdict: not reached (nothing verified)" in msg
+    assert "Analyst view: not reached (nothing verified)" in msg
 
 
 @pytest.mark.sections("offer_objects", "fine_print_legal")
@@ -322,7 +322,7 @@ def test_data_dir_is_gitignored():
 def _llm_schemas():
     from ipo_agents.sections import SECTIONS
 
-    return [*(s.schema for s in SECTIONS.values()), StanceTag, SentimentPoints, ValuationPlan, Synthesis]
+    return [*(s.schema for s in SECTIONS.values()), StanceTag, SentimentPoints, ValuationPlan, Synthesis, Advice]
 
 
 @pytest.mark.parametrize("schema", _llm_schemas(), ids=lambda s: s.__name__)

@@ -27,7 +27,8 @@ def _golden_dir() -> Path:
 def pytest_configure(config):
     config.addinivalue_line("markers", "sections(*groups): the section agents analyse_rhp runs (default: offer_objects)")
     config.addinivalue_line("markers", "synthesizer: analyse_rhp makes the synthesizer call (default: it is skipped)")
-    config.addinivalue_line("markers", "renderer: analyse_rhp renders the real PDF report (default: no PDF)")
+    config.addinivalue_line("markers", "advisor: the Financial Advisor makes its model call (default: no advice)")
+    config.addinivalue_line("markers", "renderer:analyse_rhp renders the real PDF report (default: no PDF)")
 
 
 @pytest.fixture(autouse=True)
@@ -51,6 +52,21 @@ def _synthesizer_under_test(request, monkeypatch):
 
     if request.node.get_closest_marker("synthesizer") is None:
         monkeypatch.setattr(analysis, "synthesize", lambda report, llm: None)
+
+
+@pytest.fixture(autouse=True)
+def _advisor_under_test(request, monkeypatch):
+    """The Financial Advisor runs after every complete analysis and in the closing-day refresh, but makes
+    its model call only in tests marked `@pytest.mark.advisor`; elsewhere it gives no advice ("not
+    reached"), so tests that script and count other calls aren't changed by it."""
+    import ipo_agents.advisor as advisor
+    import ipo_agents.analysis as analysis
+
+    if request.node.get_closest_marker("advisor") is None:
+        def no_advice(report, sentiment, llm, config, today):
+            return None
+        monkeypatch.setattr(analysis, "advise", no_advice)
+        monkeypatch.setattr(advisor, "advise", no_advice)
 
 
 @pytest.fixture(scope="session")

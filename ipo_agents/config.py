@@ -50,6 +50,14 @@ class PeersConfig(BaseModel):
     symbol_overrides: dict[str, str] = {}
 
 
+class AdvisorConfig(BaseModel):
+    """The Financial Advisor's own ledger per IPO ("<ipo_id>:advisor"), separate from budget.cap_usd."""
+
+    cap_usd: float = Field(default=0.50, gt=0, allow_inf_nan=False)
+    max_tokens: int = Field(default=12_000, gt=0)  # reasoning + answer
+    closing_day_refresh: bool = True
+
+
 class Config(BaseModel):
     models: dict[str, ModelConfig]
     routing: dict[str, str]
@@ -60,6 +68,7 @@ class Config(BaseModel):
     work_dir: str
     sentiment: SentimentConfig = SentimentConfig()
     peers: PeersConfig = PeersConfig()
+    advisor: AdvisorConfig = AdvisorConfig()
 
     @model_validator(mode="after")
     def _routed_models_are_priced(self):
