@@ -1,10 +1,19 @@
 # IPO Analyst Agents
 
+> [!CAUTION]
+> ## ⚠️ THIS IS NOT INVESTMENT ADVICE
+> This project is an **experimental, educational software project**. Its reports, BUY / NO BUY calls and Telegram messages are **generated automatically by AI models** from IPO prospectuses and public sources. **They can be incomplete or wrong.**
+>
+> - Nothing here is a recommendation to buy, sell or apply for any security.
+> - The author is **not a SEBI-registered investment adviser or research analyst**.
+> - Grey-market premium (GMP) figures are **unofficial**.
+> - **Do your own research and consult a SEBI-registered adviser before investing.** You alone are responsible for your investment decisions and any losses.
+
 A daily multi-agent system that reads the prospectus (RHP) of every **Indian mainboard IPO** open that day. It produces a verified analyst report and a **BUY / NO BUY** call, and sends them to Telegram: a short plain-English summary plus a full PDF. It then follows the IPO with daily grey-market (GMP) and subscription updates until the IPO closes.
 
 Built with **Python · LangGraph · OpenAI (GPT-5.6 Luna / Terra, GPT-6.1 Sol) · Groq · Telegram**.
 
-> Recommend and remind only: it never places a bid. Not investment advice.
+> Recommend and remind only: it never places a bid. **Not investment advice.**
 
 ---
 
@@ -163,4 +172,6 @@ run_daily.py  CLI wrapper
 
 ---
 
-*Generated analysis from the RHP and public sources. GMP is unofficial. Not investment advice.*
+## ⚠️ Disclaimer: NOT INVESTMENT ADVICE
+
+**This is not investment advice.** All output is AI-generated analysis of RHPs and public sources. It may contain errors or omissions and must not be relied on for investment decisions. The author is not a SEBI-registered investment adviser or research analyst. GMP figures are unofficial. Consult a SEBI-registered adviser and read the full offer document before investing. Investing in IPOs carries risk, including loss of capital.
