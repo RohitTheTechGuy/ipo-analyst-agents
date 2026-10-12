@@ -34,14 +34,27 @@ flowchart TD
 
     REP --> ADV[🤖 Financial Advisor<br/>BUY / NO BUY]
     ADV --> PDF[PDF renderer]
-    PDF --> TG[Telegram: summary + PDF]
+    PDF --> ED[🤖 Summary Editor<br/>plain-English draft]
+    ED --> EV{🤖 Summary Eval<br/>rulebook + Sol judge}
+    EV -->|failed: feedback, 1 revision| ED
+    EV -->|passed, or best faithful draft| TG[Telegram: one summary + PDF]
+    EV -->|no faithful draft| FULL[full summary] --> TG
     PDF --> ARC[Archive<br/>reports/&lt;ipo_id&gt;/]
 
     PLAN -->|analysed IPO still open| UPD[Daily update<br/>GMP + subscription]
     UPD -->|closing day| ADV2[🤖 Advisor refresh<br/>re-gather sentiment · re-advise]
     ADV2 --> TG
     UPD --> TG
+
+    subgraph OFF [Offline regression, run by hand]
+        direction TB
+        CASES[Saved reports + fixtures] --> LOOP[same editor → eval loop<br/>evals/summary_eval.py]
+        LOOP --> RES[evals/results/*.md]
+    end
+    EV -.->|same code| LOOP
 ```
+
+Every newly analysed IPO's summary is **evaluated before it is sent**, and exactly one summary goes out: the plain draft that passed, the best fully faithful draft, or the full summary. The "Offline regression" box runs the same loop on saved reports, so a prompt or model change can be checked before it reaches Telegram. See the Summary Eval section below and `evals/eval.md`.
 
 Inside each section agent, the same loop runs: **map → reduce → verify → retry (up to 2)**.
 
@@ -64,7 +77,9 @@ flowchart LR
 | `luna` | `gpt-5.6-luna` (OpenAI) | 0.20 · 1.20 | Bulk reading (map), long or descriptive sections, sentiment aggregate. Reasoning effort `none`: at `low` it spent whole budgets reasoning and returned nothing. |
 | `terra` | `gpt-5.6-terra` (OpenAI) | 2.00 · 12.00 | Steps that drive the decision, and the peer-fit check. Reasoning effort `low`. |
 | `groq` | `openai/gpt-oss-120b` (Groq) | free tier | Small calls (verifier, stance tags). Any Groq failure, or a call over 6k tokens, falls back to Luna. |
-| `sol` | `gpt-6.1-sol` (OpenAI) | 2.00 · 10.00 | Financial Advisor and Peer Valuation's choice of multiples (high reasoning effort) |
+| `sol` | `gpt-6.1-sol` (OpenAI) | 2.00 · 10.00 | Financial Advisor, Peer Valuation's choice of multiples (high reasoning effort), and the Summary Eval judge |
+
+Terra also runs the Summary Editor. An xAI key (`XAI_API_KEY`, see `.env.example`) can be added, but no `xai` provider is wired into routing yet.
 
 The routing lives in `config.yaml` (`routing:`). Once spend passes 70% of the $4.00 analysis cap, Terra tasks move down to Luna. Models with a reasoning effort are sent no temperature (Sol rejects it).
 
@@ -158,6 +173,78 @@ Two model calls. Neither ever outputs a number.
   - Other daily updates repeat the analysis-day call with no model call.
 - **Fails soft:** if the advisor errors or hits its $1.00 cap, the analysis summary and PDF still go out.
 
+### Summary Editor 🤖 (`plain_summary.py`): the Telegram summary in plain English
+- **Role:** rewrites the full summary for a reader with no finance background, keeping only what decides apply or not. The full detail stays in the attached PDF.
+- **Output:**
+  - one plain "why"
+  - up to 3 reasons
+  - up to 2 watch-outs
+  - a listing signal (unofficial pre-listing trading and demand so far)
+- **Model:** Terra (`summary_editor`). It runs one or two calls per newly analysed IPO: a draft, plus one revision if the Summary Eval fails it.
+- **Python owns:**
+  - the header: dates, band, smallest application = lot × upper price
+  - the 🧭 call: the advisor's BUY / NO BUY in plain words, else the analyst view
+  - the 📊 peer-multiples line, copied unchanged from the full summary (e.g. "P/E 24.6× vs peer median 26.3× (7% discount)"), at the user's request
+  - the footer
+  The model writes none of these.
+- **Prompt rules:**
+  - plain words with examples
+  - no jargon or flag codes
+  - "plainer, never broader": keep who did what, and what is pending or unchecked
+  - never repeat a point
+  - numbers only as written in the full summary
+  - on a revision, it also gets its previous draft and the judge's feedback
+- **Live checks:** any item with a number that isn't in the full summary, or with a flag code, is dropped. With no "why" or no reason left, there is no draft.
+- **Tests:** `tests/test_plain_summary.py`. A conftest gate turns the editor and judge off unless a test is marked `@pytest.mark.summary_editor`.
+
+### Summary Eval 🤖 (`summary_judge.py` + `plain_summary.evaluated_summary`): the gate before sending
+- **Role:** evaluates every plain draft in the daily run, before anything goes to Telegram. Exactly one summary is sent per newly analysed IPO. Full explanation: [`evals/eval.md`](../evals/eval.md).
+- **Rulebook (Python, free):** `plain_summary.problems()` checks:
+  - 15 non-blank lines or fewer
+  - no jargon and no flag codes (the 🧭 and 📊 lines are exempt)
+  - every number traceable to the full summary
+  - no line over 30 words
+  - the call shown exactly
+- **Judge (Sol, `summary_judge`):** a different model from the editor, so the editor doesn't grade its own work. It sees the full and the plain text and skips the lines Python writes. It scores five questions from 1 to 5:
+
+  | Score | Question |
+  |---|---|
+  | readability_non_finance | can someone with no finance background follow it? |
+  | decision_relevance | is every line about apply or not, with no filler? |
+  | coverage | are the decisive points, the biggest risk and the listing signal there? |
+  | faithfulness | does it say no more and no less than the source? |
+  | no_repetition | is each point made once? |
+
+  It also lists the leftover jargon, the missing decisive points and the filler lines.
+- **Pass bar:** no rulebook problem, every score 4 or higher, and faithfulness 5.
+- **Loop:** up to `MAX_ROUNDS = 2`.
+  1. Draft, then evaluate.
+  2. If it fails, the editor revises once with the feedback (rule problems, low scores with reasons, jargon to explain, points to add, filler to drop), then the eval runs again.
+- **What is sent:**
+  - the first draft that passes
+  - else, the fully faithful draft (faithfulness 5) with the fewest rule problems and the highest total score
+  - else, the full summary
+  If the editor or the judge errors or hits the cap, the full summary is sent. A draft is never sent without a judge's score.
+- **Budget:** about $0.03–0.06 per IPO (Terra editor plus Sol judge, 1–2 rounds), billed to the IPO's advisor ledger. The $5 per IPO cap doesn't change.
+- **Archive:** in `reports/<ipo_id>/<run>/`:
+  - `telegram_summary.txt`: what was sent
+  - `telegram_summary_full.txt`: the full summary it came from
+  - `summary_review.json`: every draft, with its rule problems, judge scores and pass/fail
+- **Offline regression:** `evals/summary_eval.py` runs the same loop on the saved FusionCX and HD Fire reports and two fixtures.
+  - **Ledger:** `eval-summary`, capped at $1.00 in total.
+  - **Output:** `evals/results/<date>_<time>.md`.
+  - **`--offline`:** runs the rulebook alone, with no model.
+- **Status (2026-10-12, before the gate existed, single drafts):**
+
+  | Score | Result |
+  |---|---|
+  | faithfulness | 5 on every case |
+  | decision relevance | 5 |
+  | readability | 3–4 |
+  | coverage | 3–4 |
+
+  No case passes yet. Faithful drafts are still sent; the full summary is sent only when no draft is faithful.
+
 ### Deterministic steps (no model)
 | Step | Module | Does |
 |---|---|---|
@@ -170,7 +257,7 @@ Two model calls. Neither ever outputs a number.
 | KPI tables | `kpis.py` | Looks up the company's and peers' KPIs for Peer Valuation; latest full year, units to amounts. |
 | Budget meter and router | `budget.py`, `router.py` | Checks worst-case cost before each call, logs actual cost after, handles degrade, Groq fallback and retries. |
 | Renderer | `report/` | Report JSON → HTML → PDF with page references. Never calls a model. |
-| Notifier | `notify/` | Telegram summary and PDF, daily GMP and subscription updates, closing reminders. The summary carries the advisor's call, reasons and risks in full; the valuation line; an operating-KPI line; a Peers block (one line per peer: verdict, multiples, revenue and growth, PAT margin, what it shares with the IPO); and "What the market is saying" (a Python read of stance tally, GMP and subscription). Messages over Telegram's 4,096 characters are split between lines. |
+| Notifier | `notify/` | Telegram summary and PDF, daily GMP and subscription updates, closing reminders. The message sent is the Summary Editor's plain-English one, after the Summary Eval passes it. The full summary (`runner.format_summary`), which the editor works from and which is sent when the editor can't produce a message, carries the advisor's call, reasons and risks in full; the valuation line; an operating-KPI line; a Peers block (one line per peer: verdict, multiples, revenue and growth, PAT margin, what it shares with the IPO); and "What the market is saying" (a Python read of stance tally, GMP and subscription). Messages over Telegram's 4,096 characters are split between lines. |
 | Archive | `archive.py` | Saves each analysis under `reports/<ipo_id>/<date>_<time>[_partial]/` (report JSON, PDF, the exact summary sent) and each daily update under `updates/<date>.txt`. Archiving never stops a send. |
 
 ## How context is shared
@@ -210,6 +297,7 @@ These are files the run reads and writes. All of them are local and gitignored.
 
 ## Budget across agents (per IPO)
 - **Analysis ledger** (`<ipo_id>`, $4.00): all section agents, sentiment, peer valuation (both calls) and synthesizer. $0.40 is reserved for the verdict. At 70% of the cap it switches Terra steps to Luna. At 100% it sends a partial report and doesn't retry.
-- **Advisor ledger** (`<ipo_id>:advisor`, $1.00): the advisor and its closing-day sentiment refresh.
+- **Advisor ledger** (`<ipo_id>:advisor`, $1.00): the advisor, its closing-day sentiment refresh, the summary editor and the summary judge.
+- **Eval ledger** (`eval-summary`, $1.00 total): the offline regression run only (`evals/summary_eval.py`); never an IPO's budget.
 - **In all:** $5.00 per IPO at most. Live runs: peer valuation's two calls cost about $0.02–0.05.
 - **Free:** daily GMP and subscription updates, discovery, rendering and all Python steps.

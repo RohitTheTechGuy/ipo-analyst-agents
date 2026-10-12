@@ -24,6 +24,8 @@ routing:
   verifier:             groq
   sentiment_stance_tag: groq
   advisor:              sol
+  summary_editor:       terra  # the Telegram summary in plain English, revised once on the judge's feedback (advisor ledger)
+  summary_judge:        sol    # evaluates each plain draft before it is sent (advisor ledger); not the editor's model
 
 budget:
   cap_usd: 4.00  # analysis ledger; with the advisor's $1.00, $5.00 per IPO in all
@@ -43,7 +45,8 @@ budget:
   synth_reserve_usd: 0.40
 
 # The Financial Advisor (ticket 27): BUY / NO BUY from the verified report, on its own ledger per IPO
-# ("<ipo_id>:advisor"), on top of the analysis cap above, so the worst case is $1.50 + $0.50 = $2.00 per IPO.
+# ("<ipo_id>:advisor"), on top of the analysis cap above, so the worst case is $4.00 + $1.00 = $5.00 per IPO.
+# The plain-English summary editor (Terra, ~$0.03) is billed to this ledger too.
 #   worst case reserved per advisor call: prompt (~25k tokens x $2/1M = $0.05) + 12,000 out x $10/1M ($0.12) = $0.17
 #   analysis day + closing-day refresh: 2 x $0.17 = $0.34, plus the refresh's stance tags (Groq $0; on the
 #   Luna fallback ~8 x $0.002 + ~$0.002 for the bull/bear points = ~$0.02) = ~$0.36, under the $0.50 cap.

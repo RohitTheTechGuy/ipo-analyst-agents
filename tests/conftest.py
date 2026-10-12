@@ -28,6 +28,7 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "sections(*groups): the section agents analyse_rhp runs (default: offer_objects)")
     config.addinivalue_line("markers", "synthesizer: analyse_rhp makes the synthesizer call (default: it is skipped)")
     config.addinivalue_line("markers", "advisor: the Financial Advisor makes its model call (default: no advice)")
+    config.addinivalue_line("markers", "summary_editor: run_daily makes the plain-summary editor and judge calls (default: full summary sent)")
     config.addinivalue_line("markers", "renderer:analyse_rhp renders the real PDF report (default: no PDF)")
 
 
@@ -67,6 +68,17 @@ def _advisor_under_test(request, monkeypatch):
             return None
         monkeypatch.setattr(analysis, "advise", no_advice)
         monkeypatch.setattr(advisor, "advise", no_advice)
+
+
+@pytest.fixture(autouse=True)
+def _summary_editor_under_test(request, monkeypatch):
+    """The plain-English summary editor and its judge run before every summary is sent, but make their model
+    calls only in tests marked `@pytest.mark.summary_editor`; elsewhere the full summary is sent, so tests
+    that check the summary or count calls aren't changed by them."""
+    import ipo_agents.runner as runner
+
+    if request.node.get_closest_marker("summary_editor") is None:
+        monkeypatch.setattr(runner, "evaluated_summary", lambda report, full_text, llm: (None, []))
 
 
 @pytest.fixture(scope="session")

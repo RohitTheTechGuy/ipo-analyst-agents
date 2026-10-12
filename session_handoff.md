@@ -78,7 +78,7 @@ What changed:
 
 ## Open items, in the order to tackle them
 
-1. **Commit and push the uncommitted work**, but only after the user says so. Suggested message: "Peer valuation: the agent defines business-specific multiples on RHP KPIs".
+1. **Run the summary-eval regression** (`.venv/bin/python -m evals.summary_eval`, ~$0.15–0.25, no Telegram). The user deferred it on 2026-10-12 and asked to be reminded. It checks that the in-run draft → judge → revision loop lifts readability and coverage to the pass bar on real models. See `evals/eval.md`.
 2. **Peer-KPI extraction recall is poor and varies between runs.**
    - On FusionCX it got headcount for 3 of 6 peers. IKS (13,331) and Sagility (46,860) sit further along the same row on RHP p. 132 and were dropped.
    - A correctly formed quote *does* verify; I checked offline with `verifier._why_not`. So the cause is the extractor (Luna map, then Terra merge), not the verifier.

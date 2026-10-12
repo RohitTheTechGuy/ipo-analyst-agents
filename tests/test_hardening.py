@@ -16,7 +16,8 @@ from ipo_agents.calc import compute_offer
 from ipo_agents.config import load_config
 from ipo_agents.contracts import (Advice, AuditorRemark, BusinessIndustry, CitedText, Derived, Fact, IndustryClaim,
                                   MaterialItem, MultipleChoice, OfferObjects, OtherDisclosures, Promoter, Quote,
-                                  RiskFactor, RiskFactors, SectionSummary, SuggestedPeer, Synthesis, ValuationPlan)
+                                  PlainSummary, RiskFactor, RiskFactors, SectionSummary, SuggestedPeer, Synthesis,
+                                  ValuationPlan)
 from ipo_agents.grounding import ground_section
 from ipo_agents.runner import run_daily
 from ipo_agents.sentiment import SentimentPoints, StanceTag
@@ -329,7 +330,7 @@ def test_data_dir_is_gitignored():
 def _llm_schemas():
     from ipo_agents.sections import SECTIONS
 
-    return [*(s.schema for s in SECTIONS.values()), StanceTag, SentimentPoints, ValuationPlan, Synthesis, Advice]
+    return [*(s.schema for s in SECTIONS.values()), StanceTag, SentimentPoints, ValuationPlan, Synthesis, Advice, PlainSummary]
 
 
 @pytest.mark.parametrize("schema", _llm_schemas(), ids=lambda s: s.__name__)

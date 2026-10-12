@@ -7,6 +7,7 @@ from datetime import date
 from pathlib import Path
 
 from ipo_agents.adapters import Adapters
+from ipo_agents.advisor import advisor_llm
 from ipo_agents.archive import archive_report
 from ipo_agents.analysis import analyse_rhp, report_json_path
 from ipo_agents.budget import BudgetExceeded
@@ -15,6 +16,7 @@ from ipo_agents.contracts import CheckedAdvice, Fact, Ipo, Report, RunSummary, S
 from ipo_agents.discovery import DiscoveryError
 from ipo_agents.flags import summary_line as offer_summary_line
 from ipo_agents.notify.reminders import send_daily_updates
+from ipo_agents.plain_summary import evaluated_summary
 from ipo_agents.report.labels import (DISCLAIMER, MARKET_HEADING, VERDICT_LABELS, advice_text, market_read,
                                       subscription_text)
 from ipo_agents.store import TERMINAL, Store, same_company
@@ -147,6 +149,17 @@ def _summary_text(report: Report) -> str:
         return f"📄 {report.ipo.name} IPO\nsummary could not be formatted; see report"
 
 
+def _plain_text(report: Report, full: str, adapters: Adapters, config: Config) -> tuple[str, list]:
+    """(the one message to send, the evaluated drafts): the plain-English summary that passed the summary
+    judge (billed to the IPO's advisor ledger), else the full one. Never fails the run."""
+    try:
+        text, drafts = evaluated_summary(report, full, advisor_llm(adapters.llm, report.ipo.ipo_id, config))
+        return text or full, drafts
+    except Exception:
+        log.exception("plain summary failed for %s; sending the full summary", report.ipo.ipo_id)
+        return full, []
+
+
 def partial_marker(config: Config) -> str:
     return f"⚠️ PARTIAL: stopped at the ${config.budget.cap_usd:.2f} budget cap"
 
@@ -265,8 +278,10 @@ def run_daily(today: date, adapters: Adapters, config: Config, force_ipo: str | 
         summary.analysed.append(ipo.ipo_id)
         # The summary is today's notice, even if sending fails: no reminder on top of it.
         store.mark_reminded(ipo.ipo_id, today)
-        text = _summary_text(report)
-        archive_report(report, text, config.reports_dir, today)
+        full = _summary_text(report)
+        text, drafts = _plain_text(report, full, adapters, config)
+        archive_report(report, text, config.reports_dir, today, full_text=full if text != full else None,
+                       review=[d.as_dict() for d in drafts] or None)
         _send(ipo, text, report.pdf_path, adapters, summary)
     if daily_updates:
         summary.notify_failed += send_daily_updates(today, store, adapters, config, VERDICT_LABELS)

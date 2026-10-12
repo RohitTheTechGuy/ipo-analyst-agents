@@ -762,6 +762,18 @@ Call = Literal["buy", "no_buy"]
 Horizon = Literal["listing_gains", "long_term", "none"]
 
 
+class PlainSummary(BaseModel):
+    """The summary editor's answer: the Telegram summary rewritten for a reader with no finance background.
+    LLM-facing (strict mode: no defaults). Python writes the header and the call; every number must be in
+    the full summary it was given (plain_summary.py)."""
+
+    one_line_why: str = Field(description="One plain sentence: why apply or not, the single biggest reason")
+    reasons: list[str] = Field(description="Up to 3 points that decide buy or not, most important first; no jargon")
+    watch_outs: list[str] = Field(description="Up to 2 risks a buyer must know, most serious first; no jargon")
+    listing_signal: str = Field(description="One plain line on the grey market price and demand so far; "
+                                            "empty if neither is in the summary")
+
+
 class Advice(BaseModel):
     """The advisor's answer. LLM-facing: no defaults, no min/max (OpenAI strict mode); Python then checks
     every cited ID and number (advisor.py)."""
