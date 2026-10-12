@@ -12,7 +12,8 @@ import textwrap
 from matplotlib.figure import Figure
 
 from ipo_agents.calc import to_crore
-from ipo_agents.contracts import MULTIPLE_LABELS, Fact, Financials, Valuation
+from ipo_agents.contracts import Fact, Financials, Valuation
+from ipo_agents.report.fmt import number
 from ipo_agents.fin_calc import _YEAR, _is_stub
 
 # Categorical slots 1-3 of the validated reference palette (dataviz skill), print/light mode.
@@ -110,7 +111,7 @@ def peer_multiple(valuation: Valuation | None) -> str | None:
     rows.append(("IPO (upper band)", h.ipo.value))
     if len(rows) < 2:
         return None
-    label = MULTIPLE_LABELS[h.multiple]
+    label = h.title
     fig = Figure(figsize=(6.4, 0.45 * len(rows) + 0.8))
     ax = fig.add_subplot()
     for side in ("top", "right", "bottom"):
@@ -125,12 +126,15 @@ def peer_multiple(valuation: Valuation | None) -> str | None:
     ax.barh(range(len(rows)), values, 0.6, color=colors)
     ax.set_yticks(range(len(rows)), names)
     ax.invert_yaxis()
+    def text(v):  # 42.0× for a ratio; ₹35 lakh for rupees per unit of a KPI
+        return f"{v:.1f}×" if h.unit == "×" else number(v, h.unit)
+
     for y, v in enumerate(values):
-        ax.annotate(f"{v:.1f}×", (v, y), xytext=(3, 0), textcoords="offset points", va="center",
+        ax.annotate(text(v), (v, y), xytext=(3, 0), textcoords="offset points", va="center",
                     fontsize=8, color=INK, fontweight="bold" if y == len(rows) - 1 else "normal")
     if h.median.value is not None:
         ax.axvline(h.median.value, color=INK, linewidth=1, linestyle="--")
-        ax.annotate(f"peer median {h.median.value:.1f}×", (h.median.value, -0.6), xytext=(3, 0),
+        ax.annotate(f"peer median {text(h.median.value)}", (h.median.value, -0.6), xytext=(3, 0),
                     textcoords="offset points", fontsize=8, color=MUTED)
-    ax.set_xlabel(f"{label}, times", color=MUTED, fontsize=8)
+    ax.set_xlabel(f"{label}, times" if h.unit == "×" else f"{label}, ₹ per unit", color=MUTED, fontsize=8)
     return _svg(fig)

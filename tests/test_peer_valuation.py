@@ -9,9 +9,9 @@ import pytest
 
 import ipo_agents.analysis as analysis
 from ipo_agents.analysis import analyse_rhp
-from ipo_agents.contracts import (BusinessIndustry, ClaimedFact, Fact, Financials, MultipleChoice, OfferObjects,
-                                  OfferPriceBasis, Peer, PeerFit, PeerFitCheck, PeerQuote, SuggestedPeer,
-                                  ValuationPlan)
+from ipo_agents.contracts import (BusinessIndustry, ClaimedFact, Fact, Financials, Kpi, MultipleChoice, OfferObjects,
+                                  OfferPriceBasis, Peer, PeerFit, PeerFitCheck, PeerKpi, PeerQuote, PeriodFact,
+                                  SuggestedPeer, ValuationPlan)
 from ipo_agents.runner import run_daily
 from tests.conftest import TINY_OFFER_PAGE, make_tiny_rhp
 from tests.fakes import (NOT_DISCLOSED, FakeDownloader, FakeExchange, FakePeerData, ScriptedLLM, found_nothing,
@@ -21,7 +21,7 @@ from tests.test_offer_objects import golden_facts as offer_golden_facts
 
 pytestmark = pytest.mark.sections("offer_objects", "financials", "offer_price_basis", "business_industry")
 
-OFFER, FIN = 2, 3  # tiny RHP pages: the offer page, then the financials page
+OFFER, FIN, BASIS = 2, 3, 9  # tiny RHP pages: the offer page, the financials page, the basis page
 AS_OF = date(2026, 10, 9)
 PEER_NAMES = ["Alpha Motors Limited", "Beta Motors Limited", "Gamma Motors Limited"]
 POST_SHARES = Fact(value=100_000_000, unit="equity shares", page=OFFER,
@@ -36,6 +36,16 @@ ROWS = {  # FinancialPeriod field -> row label as printed
     "total_borrowings": "Total borrowings",
     "cash_and_equivalents": "Cash and cash equivalents",
 }
+# The RHP's KPI tables: the company's own KPIs, then the comparison of KPIs with listed peers.
+KPI_LINES = [
+    "Number of subscribers (million) Fiscal 2024 2.50",
+    "Subscribers added in the three months ended June 30, 2024 (million) 0.70",
+    "ARPU (Rs.) Fiscal 2024 210.00",
+    "Attrition Fiscal 2024 30.00%",
+    "Comparison of KPIs with listed peers",
+    "Alpha Motors Number of subscribers (million) Fiscal 2024 4.00 ARPU (Rs.) 190.00",
+    "Beta Motors Number of subscribers (million) Fiscal 2024 6.00 ARPU (Rs.) 230.00",
+]
 FY24 = dict(revenue_from_operations=700, pat=35, ebitda=70, net_worth=350, total_borrowings=100, cash_and_equivalents=50)
 FY23 = dict(revenue_from_operations=500, pat=25, ebitda=50, net_worth=300, total_borrowings=90, cash_and_equivalents=40)
 
@@ -49,7 +59,7 @@ def make_rhp(tmp_path, fy24=FY24, fy23=FY23):
     fin_page = "\n".join(["RESTATED FINANCIAL INFORMATION",
                           "(Rs. crore) Fiscal 2024" + (" Fiscal 2023" if fy23 else ""), *rows])
     offer_page = "\n".join([TINY_OFFER_PAGE, PRE_SHARES.verbatim_quote, POST_SHARES.verbatim_quote])
-    basis_page = "\n".join(["BASIS FOR OFFER PRICE", "Comparison with listed industry peers", *PEER_NAMES])
+    basis_page = "\n".join(["BASIS FOR OFFER PRICE", "Comparison with listed industry peers", *PEER_NAMES, *KPI_LINES])
     return make_tiny_rhp(tmp_path / "val_rhp.pdf", (offer_page, fin_page), extra_pages=(basis_page,))
 
 
@@ -165,7 +175,7 @@ def test_the_model_picks_multiples_from_the_business_and_peers_but_gives_no_numb
     analyse(rhp, adapters, config, valuation_plan=plan("pe"))
 
     [call] = [c for c in adapters.llm.calls if c["task"] == "peer_valuation"]
-    assert call["model"] == "terra"
+    assert call["model"] == "sol"
     assert "Petrol scooters for commuters" in call["user"]
     assert all(name in call["user"] for name in PEER_NAMES)
     assert "Fiscal 2024): profit" in call["user"]
@@ -546,3 +556,140 @@ def test_the_summary_lists_each_peer_with_its_numbers_verdict_and_what_it_shares
                         "PAT margin 10.0% · common: petrol scooters, commuters")
     assert peers[1].startswith("• Beta Motors Limited (BETA) · ⚠️ weak peer · P/E 25×")
     assert peers[2] == "• No market data: Gamma Motors Limited"
+
+
+
+# --- business-specific multiples from the RHP's KPI tables -----------------------------------
+
+def kpi_fact(value, quote, unit):
+    return Fact(value=value, unit=unit, page=BASIS, verbatim_quote=quote)
+
+
+IPO_KPIS = [
+    Kpi(name="Number of subscribers (1)", values=[
+        PeriodFact(period="Three months ended June 30, 2024", value=kpi_fact(0.70, "three months ended June 30, 2024 (million) 0.70", "million subscribers")),
+        PeriodFact(period="Fiscal 2024", value=kpi_fact(2.50, "Number of subscribers (million) Fiscal 2024 2.50",
+                                                        "million subscribers"))]),
+    Kpi(name="ARPU", values=[PeriodFact(period="Fiscal 2024", value=kpi_fact(210.00, "ARPU (Rs.) Fiscal 2024 210.00", "₹"))]),
+    Kpi(name="Attrition", values=[PeriodFact(period="Fiscal 2024", value=kpi_fact(30.00, "Attrition Fiscal 2024 30.00%", "%"))]),
+]
+
+
+def peer_kpi(company, kpi, value, quote, unit):
+    return PeerKpi(company=company, kpi=kpi, values=[PeriodFact(period="Fiscal 2024", value=kpi_fact(value, quote, unit))])
+
+
+PEER_KPIS = [  # the KPI table names the peers without "Limited"; Gamma is not in it
+    peer_kpi("Alpha Motors", "Number of subscribers", 4.00, "Alpha Motors Number of subscribers (million) Fiscal 2024 4.00",
+             "million subscribers"),
+    peer_kpi("Beta Motors", "Number of subscribers", 6.00, "Beta Motors Number of subscribers (million) Fiscal 2024 6.00",
+             "million subscribers"),
+    peer_kpi("Alpha Motors", "ARPU", 190.00, "Fiscal 2024 4.00 ARPU (Rs.) 190.00", "₹"),
+    peer_kpi("Beta Motors", "ARPU", 230.00, "Fiscal 2024 6.00 ARPU (Rs.) 230.00", "₹"),
+]
+EV_PER_SUBSCRIBER = MultipleChoice(multiple="ev_per_subscriber", label="EV per subscriber", numerator="enterprise_value",
+                                   kpi="Number of subscribers", reason="subscriber businesses are valued per subscriber")
+
+
+def kpi_basis(kpis=IPO_KPIS, peer_kpis=PEER_KPIS):
+    return found_nothing(OfferPriceBasis).model_copy(update={
+        "peers": [peer(n) for n in PEER_NAMES], "kpis": kpis, "peer_kpis": peer_kpis})
+
+
+def analyse_kpis(rhp, adapters, config, *choices, operating=(), basis=None):
+    adapters.peers = FakePeerData(dict(PEERS))
+    adapters.llm = ScriptedLLM({
+        OfferObjects: offer_objects(post_issue_shares=POST_SHARES), Financials: fin_answer(),
+        OfferPriceBasis: basis or kpi_basis(),
+        ValuationPlan: ValuationPlan(multiples_to_use=list(choices), additional_peers=[],
+                                     operating_metrics=list(operating)),
+    }, models=config.models)
+    return analyse_rhp(make_ipo(), rhp, adapters, config)
+
+
+def test_the_model_can_value_on_a_business_specific_multiple_from_the_rhp_kpis(rhp, adapters, config):
+    report = analyse_kpis(rhp, adapters, config, EV_PER_SUBSCRIBER, MultipleChoice(multiple="pe", reason="earner"))
+
+    assert report.unverified_fields == []
+    m = stats(report, "kpi_ev_per_subscriber")
+    assert (m.title, m.unit, m.kpi) == ("EV per subscriber", "₹", "Number of subscribers")
+    # IPO EV = 1,050 + 100 - 50 = ₹1,100 crore over Fiscal 2024's 2.5 million subscribers (the June quarter
+    # is a stub, never used): ₹11,000,000,000 / 2,500,000 = ₹4,400 per subscriber.
+    assert m.ipo.value == pytest.approx(4400.0)
+    assert ("price_basis.kpis[0].Fiscal 2024", BASIS) in [(i.field, i.page) for i in m.ipo.inputs]
+    # Alpha (2,000 + 200 - 100) / 4.0 million = ₹5,250; Beta 3,000 / 6.0 million = ₹5,000; Gamma has no KPI.
+    # Median ₹5,125, so 4,400 / 5,125 - 1 = -14.15% (a discount).
+    assert (m.median.value, m.min.value, m.max.value) == pytest.approx((5125.0, 5000.0, 5250.0))
+    assert m.premium_pct.value == pytest.approx(100 * (4400 / 5125 - 1))
+    [gamma] = [r for r in report.valuation.rhp_peers if r.name == "Gamma Motors Limited"]
+    assert "not disclosed for Gamma Motors Limited" in gamma.multiples["kpi_ev_per_subscriber"].not_computable_reason
+    assert stats(report, "pe").median.value == pytest.approx(25.0)  # the standard multiple still runs
+    assert "Priced at ₹4,400 EV per subscriber vs RHP peer median ₹5,125" in report.valuation.read
+
+
+def test_the_model_is_shown_the_kpis_the_rhp_discloses_for_the_company_and_its_peers(rhp, adapters, config):
+    analyse_kpis(rhp, adapters, config, EV_PER_SUBSCRIBER)
+
+    [call] = [c for c in adapters.llm.calls if c["task"] == "peer_valuation"]
+    assert "KPIs the RHP discloses for the company: Number of subscribers (1); ARPU; Attrition" in call["user"]
+    assert "KPIs the RHP discloses for its listed peers (number of peers): Number of subscribers (2); ARPU (2)" in call["user"]
+    assert "EV per subscriber" in call["system"]  # examples, not a whitelist
+
+
+def test_a_kpi_the_rhp_does_not_have_leaves_that_multiple_not_computable(rhp, adapters, config):
+    beds = MultipleChoice(multiple="ev_per_bed", label="EV per bed", numerator="enterprise_value", kpi="Beds",
+                          reason="hospitals")
+    report = analyse_kpis(rhp, adapters, config, beds, MultipleChoice(multiple="pe", reason="earner"))
+
+    m = stats(report, "kpi_ev_per_bed")
+    assert m.ipo.not_computable_reason == "KPI 'Beds' is not among the company's KPIs in the RHP"
+    assert m.premium_pct.value is None
+    assert report.valuation.headline.multiple == "pe"
+
+
+def test_a_rate_is_never_divided_by(rhp, adapters, config):
+    per_attrition = MultipleChoice(multiple="per_attrition", numerator="market_cap", kpi="Attrition", reason="x")
+    report = analyse_kpis(rhp, adapters, config, per_attrition)
+
+    assert "'%' is a rate, not an amount" in stats(report, "kpi_per_attrition").ipo.not_computable_reason
+
+
+def test_a_made_up_multiple_with_no_kpi_is_dropped(rhp, adapters, config):
+    vague = MultipleChoice(multiple="ev_per_vibes", label="EV per vibe", reason="x")
+    report = analyse_kpis(rhp, adapters, config, vague, MultipleChoice(multiple="ps", reason="sales"))
+
+    assert [m.multiple for m in report.valuation.multiples] == ["ps"]
+
+
+def test_operating_kpis_are_compared_with_the_peer_median(rhp, adapters, config):
+    report = analyse_kpis(rhp, adapters, config, EV_PER_SUBSCRIBER, operating=["ARPU", "Number of subscribers", "Beds"])
+
+    arpu, subs = report.valuation.operating  # "Beds" is in no KPI table: left out
+    assert arpu.ipo.value == 210.00 and arpu.ipo_period == "Fiscal 2024"
+    assert {p: f.value for p, f in arpu.peers.items()} == {"Alpha Motors Limited": 190.00, "Beta Motors Limited": 230.00}
+    # Median of ₹190 and ₹230 = ₹210, held in ₹ crore (₹210 / 10,000,000).
+    assert (arpu.median.value, arpu.median.unit) == (pytest.approx(210 / 10_000_000), "₹ crore")
+    assert subs.median.value == pytest.approx(5.0) and subs.median.unit == "million subscribers"
+
+
+def test_the_summary_has_an_operating_line(rhp, adapters, config):
+    adapters.exchange = FakeExchange([make_ipo()])
+    adapters.downloader = FakeDownloader(rhp)
+    adapters.peers = FakePeerData(dict(PEERS))
+    adapters.llm = ScriptedLLM({
+        OfferObjects: offer_objects(post_issue_shares=POST_SHARES), Financials: fin_answer(),
+        OfferPriceBasis: kpi_basis(),
+        ValuationPlan: ValuationPlan(multiples_to_use=[EV_PER_SUBSCRIBER], additional_peers=[], operating_metrics=["ARPU"]),
+    }, models=config.models)
+
+    run_daily(make_ipo().open_date, adapters, config)
+
+    [message] = adapters.notifier.messages
+    assert "Operating: ARPU ₹210 vs peer median ₹210" in message.splitlines()
+    assert "Valuation: EV per subscriber ₹4,400 vs peer median ₹5,125 (14% discount)" in message.splitlines()
+
+
+def test_an_operating_kpi_no_peer_discloses_is_left_out_and_footnote_marks_are_dropped(rhp, adapters, config):
+    report = analyse_kpis(rhp, adapters, config, EV_PER_SUBSCRIBER, operating=["Attrition", "Number of subscribers (1)"])
+
+    assert [m.name for m in report.valuation.operating] == ["Number of subscribers"]

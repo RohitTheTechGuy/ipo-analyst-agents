@@ -327,11 +327,23 @@
 <table>
   <tr><th>Multiple</th><th class="n">IPO (upper band)</th><th class="n">Peer median</th><th class="n">Min</th><th class="n">Max</th><th class="n">Premium / discount</th></tr>
   {% for m in v.multiples %}
-  <tr><td>{{ multiple_labels[m.multiple] }}<div class="note">{{ m.reason }}</div></td><td class="n">{{ D(m.ipo) }}</td><td class="n">{{ D(m.median) }}</td>
+  <tr><td>{{ m.title }}{% if m.kpi %} <span class="pg">on RHP KPI “{{ m.kpi }}”</span>{% endif %}<div class="note">{{ m.reason }}</div></td><td class="n">{{ D(m.ipo) }}</td><td class="n">{{ D(m.median) }}</td>
       <td class="n">{{ D(m.min) }}</td><td class="n">{{ D(m.max) }}</td><td class="n">{{ D(m.premium_pct) }}</td></tr>
   {% endfor %}
 </table>
 {% else %}{{ none_listed([], "No multiple was computed.") }}{% endif %}
+{% if v.operating %}
+<h3>How the business compares <span class="note">(operating KPIs, as the RHP's KPI tables state them)</span></h3>
+{% set cols = [] %}{% for om in v.operating %}{% for p in om.peers %}{% if p not in cols %}{% set _ = cols.append(p) %}{% endif %}{% endfor %}{% endfor %}
+<table class="dense">
+  <tr><th>KPI</th><th class="n">{{ ipo.name }}</th>{% for p in cols %}<th class="n">{{ p }}</th>{% endfor %}<th class="n">Peer median</th></tr>
+  {% for om in v.operating %}
+  <tr><td>{{ om.name }}{% if om.ipo_period %}<div class="note">{{ om.ipo_period }}</div>{% endif %}</td><td class="n">{{ F(om.ipo) }}</td>
+    {% for p in cols %}<td class="n">{% if p in om.peers %}{{ F(om.peers[p]) }}{% else %}<span class="na">n/a</span>{% endif %}</td>{% endfor %}
+    <td class="n">{{ D(om.median) }}</td></tr>
+  {% endfor %}
+</table>
+{% endif %}
 <div class="chart">
 {% if charts.peers %}<img src="{{ charts.peers }}" alt="Peer multiples with the IPO marked"><div class="caption">Headline multiple per peer (third-party data), the IPO at the upper band in blue, peer median dashed.</div>
 {% else %}<p class="na">Peer chart: not enough peer multiples.</p>{% endif %}
@@ -341,7 +353,7 @@
 {% if rows %}
 <h4>Market data and multiples</h4>
 <table>
-  <tr><th>Company</th><th class="n">Price</th><th class="n">Market cap</th>{% for m in v.multiples %}<th class="n">{{ multiple_labels[m.multiple] }}</th>{% endfor %}</tr>
+  <tr><th>Company</th><th class="n">Price</th><th class="n">Market cap</th>{% for m in v.multiples %}<th class="n">{{ m.title }}</th>{% endfor %}</tr>
   <tr class="ipo"><td>{{ ipo.name }} <span class="pg">IPO, upper band</span></td><td class="n">{{ ipo.price_band }}</td><td class="n">{{ D(v.ipo_market_cap) }}</td>
     {% for m in v.multiples %}<td class="n">{{ D(m.ipo) }}</td>{% endfor %}</tr>
   {% for p in rows %}

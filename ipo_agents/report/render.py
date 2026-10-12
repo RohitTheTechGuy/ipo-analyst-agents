@@ -137,7 +137,7 @@ def _tiles(report: Report) -> list[dict]:
     return [
         {"label": "Issue size", "value": issue},
         {"label": "OFS share of issue", "value": calcs.get("ofs_pct")},
-        {"label": f"{MULTIPLE_LABELS[pe.multiple]} at upper band vs peer median" if pe else "P/E vs peer median",
+        {"label": f"{pe.title} at upper band vs peer median" if pe else "P/E vs peer median",
          "multiple": pe},
         {"label": "GMP (unofficial)", "value": s.gmp if s else None},
     ]

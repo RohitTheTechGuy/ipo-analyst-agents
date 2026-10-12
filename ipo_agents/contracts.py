@@ -450,6 +450,14 @@ class Kpi(BaseModel):
     values: list[PeriodFact]
 
 
+class PeerKpi(BaseModel):
+    """One listed peer's operating KPI, from the RHP's comparison of KPIs with listed peers."""
+
+    company: str = Field(description="The peer as the KPI table names it")
+    kpi: str = Field(description="KPI name as written")
+    values: list[PeriodFact] = Field(description="The latest full fiscal year's value only")
+
+
 class Waca(BaseModel):
     """Weighted average cost of acquisition of one kind of recent share transaction."""
 
@@ -469,6 +477,9 @@ class OfferPriceBasis(BaseModel):
     industry_pe: IndustryPe = Field(description="Industry (peer group) P/E: highest, lowest, average")
     peers: list[Peer] = Field(description="Listed peers in the RHP's comparison table, not the company itself")
     kpis: list[Kpi] = Field(description="Key performance indicators the section discloses")
+    peer_kpis: list[PeerKpi] | None = Field(  # None in reports saved before it was read
+        default=None, description="Operational KPIs of each listed peer from the RHP's comparison of KPIs with listed "
+                                "peers (not revenue, profit, EBITDA, margins or returns), latest full fiscal year")
     waca_primary: Waca = Field(description="Primary issuances (new shares) in the period the RHP reports")
     waca_secondary: Waca = Field(description="Secondary transactions (transfers) in the period the RHP reports")
 
@@ -574,7 +585,7 @@ class Flag(BaseModel):
 
 # --- Peer valuation -------------------------------------------------------------------------
 
-Multiple = Literal["pe", "ev_ebitda", "pb", "ps"]
+Multiple = Literal["pe", "ev_ebitda", "pb", "ps"]  # the standard multiples; the model may define others
 MULTIPLE_LABELS: dict[str, str] = {"pe": "P/E", "ev_ebitda": "EV/EBITDA", "pb": "P/B", "ps": "P/S"}
 
 
@@ -601,8 +612,15 @@ class PeerQuote(BaseModel):
 
 
 class MultipleChoice(BaseModel):
-    multiple: Multiple
+    multiple: str = Field(description="pe, ev_ebitda, pb or ps for a standard multiple; for a business-specific "
+                                      "one, a short snake_case key of your own, e.g. ev_per_subscriber")
     reason: str = Field(description="Why this multiple fits this business, in one sentence")
+    label: str | None = Field(default=None, description="Business-specific only: the multiple as analysts write it, "
+                                               "e.g. 'EV per subscriber'")
+    numerator: Literal["market_cap", "enterprise_value"] | None = Field(
+        default=None, description="Business-specific only: market_cap or enterprise_value")
+    kpi: str | None = Field(default=None, description="Business-specific only: the KPI it divides by, its name "
+                                                       "exactly as listed in the KPIs available")
 
 
 class SuggestedPeer(BaseModel):
@@ -618,6 +636,9 @@ class ValuationPlan(BaseModel):
                     "lenders/NBFCs, ev_ebitda for capex-heavy businesses, ps for loss-makers, pe for steady earners")
     additional_peers: list[SuggestedPeer] = Field(
         description="Up to 3 more NSE-listed peers the RHP's table leaves out; empty if the table is complete")
+    operating_metrics: list[str] | None = Field(
+        default=None, description="3 to 6 KPIs, names exactly as listed, that show how this business compares with "
+                                "its peers (e.g. ARPU, utilisation, attrition)")
 
 
 PeerVerdict = Literal["strong", "partial", "weak"]
@@ -655,13 +676,30 @@ class PeerRow(BaseModel):
 class MultipleStats(BaseModel):
     """One chosen multiple: the IPO at the upper band against the peer set's median, min and max."""
 
-    multiple: Multiple
+    multiple: str  # a standard key (MULTIPLE_LABELS) or the model's own key for a business-specific one
     reason: str
+    label: str = ""
+    unit: str = "×"  # "×" for a ratio of rupee amounts; "₹" for rupees per unit of a KPI (e.g. per subscriber)
+    kpi: str | None = None  # the RHP KPI a business-specific multiple divides by
     ipo: Derived
     median: Derived
     min: Derived
     max: Derived
     premium_pct: Derived  # IPO vs the peer median; negative is a discount
+
+    @property
+    def title(self) -> str:
+        return self.label or MULTIPLE_LABELS.get(self.multiple, self.multiple)
+
+
+class OperatingMetric(BaseModel):
+    """One operating KPI, the IPO against its peers, as the RHP's KPI tables state them."""
+
+    name: str
+    ipo: Fact | None = None
+    ipo_period: str | None = None
+    peers: dict[str, Fact] = {}  # peer name -> its latest full fiscal year value
+    median: Derived  # of the peers whose unit is the IPO's
 
 
 class Valuation(BaseModel):
@@ -677,6 +715,7 @@ class Valuation(BaseModel):
     ipo_year: str | None = None
     ipo_figures: dict[str, Derived] = {}  # revenue, ebitda, pat, net_worth in ₹ crore
     ipo_ratios: dict[str, Derived] = {}  # the PeerRow.ratios keys
+    operating: list[OperatingMetric] = []  # the KPIs the model chose to compare
     read: str = ""  # one paragraph, from a Python template
 
     @property

@@ -1,7 +1,10 @@
 """Peer valuation (plan 5.3; spec stories 31-34): is the offer price cheap or dear against listed peers?
 
-One model call (task "peer_valuation") picks the multiples that fit the business and may suggest up to
-3 more peers, each with a reason. It never outputs a number. Everything numeric is plain Python here:
+One model call (task "peer_valuation") reasons about how this kind of business is valued and picks the
+multiples: the standard ones (P/E, EV/EBITDA, P/B, P/S) and business-specific ones it defines on a KPI the
+RHP discloses for the company and its peers (EV per subscriber, EV per bed, market cap / AUM, ...; see
+kpis.py). It also picks operating KPIs to compare and may suggest up to 3 more peers, each with a reason.
+It never outputs a number. Everything numeric is plain Python here:
 - the IPO's market cap at the upper band (calc.py: post-issue shares x upper band),
 - the IPO's multiples on its latest full fiscal year (a stub period is never annualised),
 - each peer's multiples from the peer-data adapter's ClaimedFacts (each input cites source and date),
@@ -18,6 +21,7 @@ differ. Words only. A weak peer is flagged (PEER_SET_WEAK), never dropped from t
 from __future__ import annotations
 
 import logging
+import re
 import statistics
 
 from ipo_agents.adapters import Adapters
@@ -28,15 +32,17 @@ from ipo_agents.contracts import (MULTIPLE_LABELS, BusinessIndustry, CalcInput, 
                                   Valuation, ValuationPlan)
 from ipo_agents.fin_calc import full_years
 from ipo_agents.grounding import grounded_or_blank
+from ipo_agents.kpis import KpiBook, Missing, operating_metric, per_kpi
 from ipo_agents.peers import name_key
-from ipo_agents.report.fmt import number
+from ipo_agents.report.fmt import fact_value, number
 from ipo_agents.verifier import COULD_NOT_VERIFY
 
 log = logging.getLogger(__name__)
 
 TASK = SECTION = "peer_valuation"
 FIT_TASK = "peer_fit"
-MAX_TOKENS = 4_000  # Terra reasons (effort low) before answering
+MAX_TOKENS = 16_000  # Sol reasons (effort high) about the business before answering
+MAX_OPERATING = 6
 FIT_MAX_TOKENS = 6_000  # a verdict and a few phrases per peer, up to 3 RHP peers + 3 suggested and more
 MAX_SUGGESTED = 3
 RICH_PREMIUM_PCT = 30.0  # premium to the peer median above which an advantage must justify it
@@ -45,13 +51,22 @@ DEFAULT_CHOICE = MultipleChoice(multiple="pe", reason="default: the model chose 
 UNAVAILABLE = "data unavailable"
 
 SYSTEM = (
-    "You value an Indian IPO against companies listed on NSE. Choose the valuation multiples that fit this "
-    "business, from pe, ev_ebitda, pb and ps, most important first, each with a one-sentence reason: pb "
-    "(read with RoE) for banks, NBFCs, housing finance and other lenders; ev_ebitda for capex-heavy or "
-    "manufacturing businesses; ps for loss-makers; pe for steady earners. You may suggest up to 3 more "
-    "NSE-listed companies that are comparable but missing from the RHP's peer table, each with a reason; "
-    "suggest none if the table is complete. Never write a number: market data is fetched and every "
-    "multiple is computed separately."
+    "You are an equity analyst valuing an Indian IPO against companies listed on NSE. First think about how "
+    "analysts value this kind of business, then choose 2 to 4 valuation multiples, most important first, "
+    "each with a one-sentence reason.\n"
+    "Standard multiples: pe, ev_ebitda, pb, ps. Read pb with RoE for banks, NBFCs and other lenders; use ps "
+    "for a loss-maker; ev_ebitda suits capex-heavy businesses.\n"
+    "Where a business is valued on an operating measure, define a business-specific multiple: market_cap "
+    "or enterprise_value divided by a KPI, e.g. EV per subscriber (telecom), EV per bed (hospitals), EV per "
+    "MW (power), EV per tonne of capacity (cement, steel), market cap / AUM (asset managers, lenders), "
+    "EV/GMV (marketplaces), EV per employee (IT and BPO services), EV per store (retail). Give it a short "
+    "snake_case key, the label analysts write, the numerator, and the KPI name exactly as listed. Use only "
+    "a KPI listed for the company and for at least two peers; never a percentage, ratio or number of days.\n"
+    "Also choose 3 to 6 operating KPIs, names exactly as listed, that best show how this business compares "
+    "with its peers (e.g. ARPU, utilisation, attrition, revenue per employee).\n"
+    "You may suggest up to 3 more NSE-listed companies that are comparable but missing from the RHP's peer "
+    "table, each with a reason; suggest none if the table is complete.\n"
+    "Never write a number: market data is fetched and every multiple is computed separately."
 )
 FIT_SYSTEM = (
     "You check whether listed Indian companies are true peers of a company going public. For each peer, "
@@ -76,7 +91,8 @@ def run_peer_valuation(ipo: Ipo, adapters: Adapters, *, offer: OfferObjects | No
     mcap, fresh = calcs.get("market_cap_cr", unread), calcs.get("fresh_issue_cr", unread)
 
     rhp_names = [p.name for p in price_basis.peers] if price_basis else []
-    plan = _plan(ipo, adapters, business, rhp_names, latest)
+    book = KpiBook(price_basis)
+    plan = _plan(ipo, adapters, business, rhp_names, latest, book)
     chosen = _choices(plan)
     taken = {name_key(n) for n in rhp_names}
     suggested = []
@@ -85,28 +101,35 @@ def run_peer_valuation(ipo: Ipo, adapters: Adapters, *, offer: OfferObjects | No
             taken.add(name_key(s.name))
             suggested.append(s.model_copy(update={"reason": _no_numbers(s.reason)}))
 
-    keys = [c.multiple for c in chosen] + (["roe_pct"] if any(c.multiple == "pb" for c in chosen) else [])
-    rhp_rows = [_row(n, "rhp", None, adapters, keys) for n in rhp_names]
-    suggested_rows = [_row(s.name, "agent_suggested", s.reason, adapters, keys) for s in suggested]
+    roe = any(c.multiple == "pb" for c in chosen)
+    rhp_rows = [_row(n, "rhp", None, adapters, chosen, book, roe) for n in rhp_names]
+    suggested_rows = [_row(s.name, "agent_suggested", s.reason, adapters, chosen, book, roe) for s in suggested]
     rhp_rows, suggested_rows = _with_fit(ipo, adapters, business, rhp_rows, suggested_rows)
     peer_set = "rhp" if any(r.quote for r in rhp_rows) or not any(r.quote for r in suggested_rows) else "agent_suggested"
     peers = rhp_rows if peer_set == "rhp" else suggested_rows
 
     stats = []
     for c in chosen:
-        ipo_x = ipo_multiple(c.multiple, mcap, latest, fresh)
-        median, low, high = _spread(c.multiple, peers)
-        stats.append(MultipleStats(multiple=c.multiple, reason=c.reason, ipo=ipo_x, median=median, min=low,
-                                   max=high, premium_pct=_premium(ipo_x, median)))
-    checks = _checks(latest, prior, peers, pb_chosen="roe_pct" in keys)
+        ipo_x = (ipo_multiple(c.multiple, mcap, latest, fresh) if c.kpi is None
+                 else _ipo_kpi_multiple(c, mcap, latest, book))
+        unit = ipo_x.unit if ipo_x.value is not None else next(
+            (r.multiples[c.multiple].unit for r in peers if r.multiples.get(c.multiple) and r.multiples[c.multiple].value
+             is not None), ipo_x.unit)
+        median, low, high = _spread(c.multiple, peers, unit)
+        stats.append(MultipleStats(multiple=c.multiple, reason=c.reason, label=c.label or "", unit=unit, kpi=c.kpi,
+                                   ipo=ipo_x, median=median, min=low, max=high, premium_pct=_premium(ipo_x, median)))
+    operating = [m for name in (plan.operating_metrics or [])[:MAX_OPERATING]
+                 if (m := operating_metric(book, name, [r.name for r in peers])) is not None]
+    checks = _checks(latest, prior, peers, pb_chosen=roe)
     valuation = Valuation(ipo_market_cap=mcap, multiples=stats, rhp_peers=rhp_rows, suggested_peers=suggested_rows,
                           peer_set=peer_set, checks=checks, ipo_year=latest.period.label if latest else None,
                           ipo_figures={f: _ipo_figure(latest, f) for f in IPO_FIGURES},
-                          ipo_ratios={f"{k}_pct": _ipo_ratio(latest, prior, k) for k in PEER_RATIOS})
+                          ipo_ratios={f"{k}_pct": _ipo_ratio(latest, prior, k) for k in PEER_RATIOS},
+                          operating=operating)
     return valuation.model_copy(update={"read": _read(valuation, ipo)})
 
 
-def _plan(ipo, adapters, business, rhp_names, latest) -> ValuationPlan:
+def _plan(ipo, adapters, business, rhp_names, latest, book: KpiBook) -> ValuationPlan:
     if latest is None or latest.period.pat.value is None:
         earnings = "PAT not verified"
     else:
@@ -122,17 +145,33 @@ def _plan(ipo, adapters, business, rhp_names, latest) -> ValuationPlan:
         (f"Latest full fiscal year ({latest.period.label}): {earnings}; EBITDA "
          f"{'disclosed' if latest.period.ebitda.value is not None else 'not disclosed'}") if latest
         else "Latest full fiscal year: financials not available",
+        "KPIs the RHP discloses for the company: " + ("; ".join(book.ipo_names()) or "none"),
+        "KPIs the RHP discloses for its listed peers (number of peers): "
+        + ("; ".join(f"{n} ({c})" for n, c in book.peer_names().items()) or "none"),
     ]
     return adapters.llm.invoke_structured(task=TASK, system=SYSTEM, user="\n".join(lines), schema=ValuationPlan,
                                           max_tokens=MAX_TOKENS).parsed
 
 
 def _choices(plan: ValuationPlan) -> list[MultipleChoice]:
+    """The model's multiples, deduplicated: a standard key is the standard multiple whatever else it says; a
+    business-specific one needs a KPI (its numerator defaults to EV) and gets a key of its own."""
     seen, out = set(), []
     for c in plan.multiples_to_use:
-        if c.multiple not in seen:
-            seen.add(c.multiple)
-            out.append(c.model_copy(update={"reason": _no_numbers(c.reason)}))
+        update = {"reason": _no_numbers(c.reason)}
+        if c.multiple in MULTIPLE_LABELS:
+            update.update(label=MULTIPLE_LABELS[c.multiple], numerator=None, kpi=None)
+        elif c.kpi and c.kpi.strip():
+            key = "kpi_" + (re.sub(r"[^a-z0-9]+", "_", c.multiple.casefold()).strip("_") or "multiple")
+            numerator = c.numerator or "enterprise_value"
+            label = _no_numbers((c.label or "").strip()) or f"{'EV' if numerator == 'enterprise_value' else 'Market cap'} / {c.kpi}"
+            update.update(multiple=key, label=label, numerator=numerator)
+        else:
+            log.warning("peer valuation: dropped the multiple %r: neither standard nor on a KPI", c.multiple)
+            continue
+        if update.get("multiple", c.multiple) not in seen:
+            seen.add(update.get("multiple", c.multiple))
+            out.append(c.model_copy(update=update))
     return out or [DEFAULT_CHOICE]
 
 
@@ -189,7 +228,8 @@ def _fit_prompt(ipo: Ipo, business: BusinessIndustry | None, rows: list[PeerRow]
     return "\n".join(lines)
 
 
-def _row(name: str, origin: str, reason: str | None, adapters: Adapters, keys: list[str]) -> PeerRow:
+def _row(name: str, origin: str, reason: str | None, adapters: Adapters, chosen: list[MultipleChoice],
+         book: KpiBook, roe: bool) -> PeerRow:
     try:
         quote = adapters.peers.quote(name)
     except Exception as exc:  # a third-party source, optional: a failure means this peer has no data
@@ -198,8 +238,11 @@ def _row(name: str, origin: str, reason: str | None, adapters: Adapters, keys: l
     if quote is None:
         return PeerRow(name=name, origin=origin, reason=reason,
                        unavailable=f"{UNAVAILABLE}: not found on NSE or Yahoo Finance")
-    return PeerRow(name=name, origin=origin, reason=reason, quote=quote,
-                   multiples={k: peer_multiple(quote, k) for k in keys},
+    multiples = {c.multiple: peer_multiple(quote, c.multiple) if c.kpi is None
+                 else _peer_kpi_multiple(c, quote, name, book) for c in chosen}
+    if roe:
+        multiples["roe_pct"] = peer_multiple(quote, "roe_pct")
+    return PeerRow(name=name, origin=origin, reason=reason, quote=quote, multiples=multiples,
                    ratios={f"{kind}_pct": _peer_ratio(quote, kind) for kind in PEER_RATIOS})
 
 
@@ -224,8 +267,7 @@ class _Year:
             raise _Missing(f"{path}: {exc}") from None
 
 
-class _Missing(Exception):
-    pass
+_Missing = Missing
 
 
 # multiple -> (denominator field on FinancialPeriod / PeerQuote, its name in reasons)
@@ -275,6 +317,38 @@ def ipo_multiple(m: str, mcap: Derived, latest: _Year | None, fresh: Derived | N
                    basis=basis + f"{latest.period.label} {label} ₹{denom:,.2f} crore")
 
 
+def _ipo_kpi_multiple(c: MultipleChoice, mcap: Derived, latest: _Year | None, book: KpiBook) -> Derived:
+    """The IPO's market cap or EV at the upper band per unit of an RHP KPI, latest full fiscal year."""
+    if mcap.value is None:
+        return _nc(TIMES, f"market cap: {mcap.not_computable_reason}")
+    numerator, inputs, what = mcap.value, list(mcap.inputs), "market cap at the upper band"
+    try:
+        if c.numerator == "enterprise_value":
+            if latest is None:
+                raise _Missing("financials: no full fiscal year for debt and cash")
+            debt, debt_in = latest.crore("total_borrowings")
+            cash, cash_in = latest.crore("cash_and_equivalents")
+            numerator, inputs, what = numerator + debt - cash, inputs + [debt_in, cash_in], "EV at the upper band"
+        kpi = book.ipo(c.kpi)
+    except _Missing as exc:
+        return _nc(TIMES, str(exc), inputs)
+    return per_kpi(numerator, inputs, kpi, f"{what} ₹{numerator:,.2f} crore")
+
+
+def _peer_kpi_multiple(c: MultipleChoice, q: PeerQuote, name: str, book: KpiBook) -> Derived:
+    try:
+        numerator, m_in = _claim(q, "market_cap")
+        inputs, what = [m_in], f"{q.symbol}: market cap"
+        if c.numerator == "enterprise_value":
+            debt, debt_in = _claim(q, "debt")
+            cash, cash_in = _claim(q, "cash")
+            numerator, inputs, what = numerator + debt - cash, inputs + [debt_in, cash_in], f"{q.symbol}: EV"
+        kpi = book.peer(name, c.kpi)
+    except _Missing as exc:
+        return _nc(TIMES, str(exc))
+    return per_kpi(numerator, inputs, kpi, what)
+
+
 # --- peer side -----------------------------------------------------------------------------------
 
 def _claim(q: PeerQuote, field: str) -> tuple[float, CalcInput]:
@@ -311,17 +385,18 @@ def peer_multiple(q: PeerQuote, m: str) -> Derived:
     return Derived(value=numerator / denom, unit=unit, inputs=inputs, basis=f"{q.symbol}: {MULTIPLE_LABELS[m]}")
 
 
-def _spread(m: str, peers: list[PeerRow]) -> tuple[Derived, Derived, Derived]:
-    got = [(r, r.multiples[m]) for r in peers if r.multiples.get(m) and r.multiples[m].value is not None]
+def _spread(m: str, peers: list[PeerRow], unit: str = TIMES) -> tuple[Derived, Derived, Derived]:
+    got = [(r, r.multiples[m]) for r in peers
+           if r.multiples.get(m) and r.multiples[m].value is not None and r.multiples[m].unit == unit]
     if not got:
         why = f"no peer with data for {MULTIPLE_LABELS.get(m, m)}"
-        return _nc(TIMES, why), _nc(TIMES, why), _nc(TIMES, why)
+        return _nc(unit, why), _nc(unit, why), _nc(unit, why)
     values = [d.value for _, d in got]
     inputs = [i for _, d in got for i in d.inputs]
     names = ", ".join(r.quote.symbol for r, _ in got)
 
     def stat(value, what):
-        return Derived(value=value, unit=TIMES, inputs=inputs, basis=f"{what} of {len(got)} peers ({names})")
+        return Derived(value=value, unit=unit, inputs=inputs, basis=f"{what} of {len(got)} peers ({names})")
     return stat(statistics.median(values), "median"), stat(min(values), "min"), stat(max(values), "max")
 
 
@@ -332,7 +407,7 @@ def _premium(ipo_x: Derived, median: Derived) -> Derived:
     if median.value is None or median.value <= 0:
         return _nc(unit, f"peer median: {median.not_computable_reason or 'zero or negative'}")
     return Derived(value=100 * (ipo_x.value / median.value - 1), unit=unit, inputs=ipo_x.inputs + median.inputs,
-                   basis=f"{ipo_x.value:.2f}× vs peer median {median.value:.2f}×")
+                   basis=f"{_fmt(ipo_x.value, ipo_x.unit, 2)} vs peer median {_fmt(median.value, median.unit, 2)}")
 
 
 # --- growth and margin (VALUATION_RICH) ----------------------------------------------------------
@@ -442,8 +517,7 @@ def _rich_flags(v: Valuation | None) -> list[Flag]:
     growth, margin = _advantage(v.checks, "revenue_growth"), _advantage(v.checks, "pat_margin")
     if growth or margin:
         return []
-    label = MULTIPLE_LABELS[h.multiple]
-    head = (f"Priced at {h.ipo.value:.1f}× {label} vs peer median {h.median.value:.1f}×, a "
+    head = (f"Priced at {_fmt(h.ipo.value, h.unit)} {h.title} vs peer median {_fmt(h.median.value, h.unit)}, a "
             f"{h.premium_pct.value:.0f}% premium")
     if growth is False and margin is False:
         c = v.checks
@@ -479,11 +553,12 @@ def _read(v: Valuation, ipo: Ipo) -> str:
     else:
         parts.append(f"Market cap at the upper band not computable ({v.ipo_market_cap.not_computable_reason}).")
     for m in v.multiples:
-        label = MULTIPLE_LABELS[m.multiple]
+        label = m.title
         if m.premium_pct.value is not None:
             word = "premium" if m.premium_pct.value >= 0 else "discount"
-            parts.append(f"Priced at {m.ipo.value:.1f}× {label} vs {whose} median {m.median.value:.1f}× "
-                         f"(range {m.min.value:.1f}×–{m.max.value:.1f}×) → {abs(m.premium_pct.value):.0f}% {word}.")
+            parts.append(f"Priced at {_fmt(m.ipo.value, m.unit)} {label} vs {whose} median {_fmt(m.median.value, m.unit)} "
+                         f"(range {_fmt(m.min.value, m.unit)}–{_fmt(m.max.value, m.unit)}) → "
+                         f"{abs(m.premium_pct.value):.0f}% {word}.")
         else:
             parts.append(f"{label}: not computable ({m.premium_pct.not_computable_reason}).")
     c = v.checks
@@ -513,8 +588,16 @@ def summary_line(report: Report) -> str | None:
     if h is None:
         return None
     word = "premium" if h.premium_pct.value >= 0 else "discount"
-    return (f"Valuation: {MULTIPLE_LABELS[h.multiple]} {h.ipo.value:.1f}× vs peer median {h.median.value:.1f}× "
+    return (f"Valuation: {h.title} {_fmt(h.ipo.value, h.unit)} vs peer median {_fmt(h.median.value, h.unit)} "
             f"({abs(h.premium_pct.value):.0f}% {word})")
+
+
+def operating_line(report: Report) -> str | None:
+    """E.g. "Operating: ARPU ₹208 vs peer median ₹190 · Beds 1,200 vs 2,400"; None with nothing to compare."""
+    v = report.valuation
+    parts = [f"{m.name} {fact_value(m.ipo)} vs peer median {number(m.median.value, m.median.unit)}"
+             for m in (v.operating if v else []) if m.ipo and m.ipo.value is not None and m.median.value is not None]
+    return "Operating: " + " · ".join(parts) if parts else None
 
 
 VERDICT_MARK = {"strong": "✅ strong peer", "partial": "🟡 partial peer", "weak": "⚠️ weak peer"}
@@ -533,7 +616,7 @@ def peer_lines(report: Report) -> list[str]:
         parts = [f"{r.name} ({r.quote.symbol})" + (" [suggested]" if r.origin == "agent_suggested" else "")]
         if r.fit:
             parts.append(VERDICT_MARK[r.fit.verdict])
-        parts += [f"{MULTIPLE_LABELS[m.multiple]} {number(d.value, d.unit)}" for m in v.multiples
+        parts += [f"{m.title} {number(d.value, d.unit)}" for m in v.multiples
                   if (d := r.multiples.get(m.multiple)) and d.value is not None]
         if r.quote.revenue:
             growth = r.ratios.get("revenue_growth_pct")
@@ -548,6 +631,11 @@ def peer_lines(report: Report) -> list[str]:
     if missing:
         lines.append(f"No market data: {', '.join(missing)}")
     return lines
+
+
+def _fmt(value: float, unit: str, decimals: int = 1) -> str:
+    """30.0× for a ratio (as the read has always written it); ₹ amounts per unit as the report writes them."""
+    return f"{value:.{decimals}f}×" if unit == TIMES else number(value, unit)
 
 
 def _nc(unit: str, why: str, inputs: list[CalcInput] | None = None) -> Derived:

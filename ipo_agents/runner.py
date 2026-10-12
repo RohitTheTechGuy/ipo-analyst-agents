@@ -18,7 +18,7 @@ from ipo_agents.notify.reminders import send_daily_updates
 from ipo_agents.report.labels import (DISCLAIMER, MARKET_HEADING, VERDICT_LABELS, advice_text, market_read,
                                       subscription_text)
 from ipo_agents.store import TERMINAL, Store, same_company
-from ipo_agents.valuation import peer_lines
+from ipo_agents.valuation import operating_line, peer_lines
 from ipo_agents.valuation import summary_line as valuation_summary_line
 from ipo_agents.verifier import COULD_NOT_VERIFY
 
@@ -128,6 +128,8 @@ def format_summary(report: Report) -> str:
     lines += ["", *_verdict_lines(report)]
     if valuation_line := valuation_summary_line(report):
         lines.append(valuation_line)
+    if operating := operating_line(report):
+        lines.append(operating)
     if peers := peer_lines(report):
         lines += ["Peers:", *(_bullet(p) for p in peers)]
     if report.sentiment:

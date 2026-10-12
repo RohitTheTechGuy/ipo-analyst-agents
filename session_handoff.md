@@ -1,70 +1,121 @@
 # Session handoff: IPO Analyst Agents
 
-_Updated 2026-10-11 (end of session `de846e29`)._ For the system design, read [`docs/specs/ipo-agents.md`](docs/specs/ipo-agents.md) and [`docs/agents.md`](docs/agents.md) (every agent, its model, tools, state and the orchestration diagram). Tickets 01–27 are in `.scratch/ipo-agents/issues/`, and the advisor plan is in `docs/plans/27-financial-advisor.md`. Lessons are in the user's Obsidian vault at `~/Obsidian Docs/IPO Analyst Agents/`. Repo: github.com/RohitTheTechGuy/ipo-analyst-agents (private). `main` matches `origin/main` at `6bdd6a2`.
+_Updated 2026-10-12, at the end of the peer-valuation session._
 
-## ⚠️ Four background shell tasks did not finish before the session ended
+**Where to read first:**
+- System design: [`docs/specs/ipo-agents.md`](docs/specs/ipo-agents.md).
+- [`docs/agents.md`](docs/agents.md): every agent, its model, tools, state and the orchestration diagram. Updated this session to the current code.
+- Tickets 01–27: `.scratch/ipo-agents/issues/`. Advisor plan: `docs/plans/27-financial-advisor.md`.
+- Lessons: the user's Obsidian vault at `~/Obsidian Docs/IPO Analyst Agents/`.
 
-The harness reported 4 background tasks as "stopped, no completion record": **`bh5ipxl8w`, `bgey9lbjd`, `bht13phiu`, `btfm34iu3`**.
+**Repo:** github.com/RohitTheTechGuy/ipo-analyst-agents (private). `origin/main` is at `99b9abd`. **The working tree has uncommitted work**; see the next section.
 
-**What they were:** `Monitor` **log watchers** (`tail -F <run log> | grep …`), one per live HD Fire test run (runs 1–4). They were not the analysis runs. They never exit on their own and were cut off when the session ended. **Nothing is lost.**
+## ⚠️ Uncommitted: business-specific multiples (needs a commit once the user OKs it)
 
-**What I verified before writing this:**
-- No `run_daily.py` or `tail -F` process is running (`pgrep` came back empty).
-- Every run had ended before the session closed:
-  - Run 1: stopped by me after it wasted tokens on reasoning.
-  - Run 2: failed in Promoters & Governance, which led to the fail-soft fix.
-  - Run 3: finished, but incomplete.
-  - Run 4: finished complete. It was analysed, with no failed sends and no truncations.
-- The store shows `HDFIRE-2026-10-13` as `done`, verdict `neutral`, `report_path` set, and last update `2026-10-13`.
-- The cost ledger shows `HDFIRE-2026-10-13` at **$1.3339** (144 calls) and `HDFIRE-2026-10-13:advisor` at **$0.0922**, matching run 4. `SMOKE-2026-10-11` is at $0.018.
+The user challenged the old design: "why only these multiples… otherwise why would I need an agent". The agent may now define its own multiples on RHP KPIs.
 
-**What the next session should do:**
-- Nothing to clean up.
-- The per-run log files lived in that session's scratchpad and are gone. The run outcomes are in the DB and in `reports/`.
-- For future runs, write logs to `logs/` (gitignored) rather than the scratchpad, so they outlive the session.
+- The plan is in `~/.claude/plans/for-the-peer-vlauation-zesty-charm.md`.
+- `docs/agents.md` § Peer Valuation describes the result.
+- 537 offline tests pass.
+
+What changed:
+
+- **`ipo_agents/kpis.py` (new).** Reads the RHP's KPI tables.
+  - Looks up a KPI by name with footnote markers ignored (`kpi_key`), and a peer by name, matching on the start of the name.
+  - Takes the latest full fiscal year; a stub never counts.
+  - Turns units into amounts: rupee KPIs become ₹ crore; counted KPIs keep their scale.
+  - Refuses to divide by a %, a ratio or a number of days.
+  - `operating_metric` builds the IPO-vs-peers operating table.
+- **`contracts.py`.**
+  - `MultipleChoice` is open: a standard key, or its own key plus `label`, `numerator` and `kpi`.
+  - `MultipleStats` gains `label`, `unit`, `kpi` and a `.title` property.
+  - New: `PeerKpi`, `OfferPriceBasis.peer_kpis`, `ValuationPlan.operating_metrics`, `OperatingMetric` and `Valuation.operating`.
+  - New LLM fields default to `None`, never `[]` or `""`. Two reasons: OpenAI strict mode rejects non-null defaults (`tests/test_hardening.py`), and reminders reload old `report.json` files.
+- **`valuation.py`.**
+  - New Sol prompt: think like an analyst, with examples rather than a whitelist.
+  - Shows the model the KPI names the RHP discloses.
+  - New functions `_ipo_kpi_multiple` / `_peer_kpi_multiple`.
+  - `_spread` is now unit-aware.
+  - New: `operating_line` (Telegram).
+- **Routing.** `config.yaml` sends `peer_valuation` to **sol**.
+- **Extraction prompt.** `sections.py` now extracts the peer-KPI table, one item per peer per KPI. It adds that tables often put several peers side by side in one row.
+- **Output.**
+  - PDF: per-multiple labels and units, plus a "How the business compares" table.
+  - Chart: unit-aware.
+  - Telegram: an "Operating:" line.
+
+**Live results** (no Telegram sent; scripts in that session's scratchpad, now gone):
+
+| IPO | What the agent chose | Result |
+|---|---|---|
+| FusionCX | **EV per employee**, by itself | ₹32.6 lakh vs peer median ₹59.6 lakh (−45%), against 3 peers |
+| HD Fire | P/E and EV/EBITDA only | Correct: the only peer KPI in its RHP is customer count |
+
+## Already merged this session
+
+- `ecc7b26`: each peer's own financials (growth, margins, RoE) beside the IPO's.
+  - **Peer-fit check:** task `peer_fit` on Terra. It gives strong / partial / weak, with commonalities and differences, using Yahoo profiles.
+  - **`PEER_SET_WEAK`** note: weak peers are flagged, never dropped (the user's choice).
+  - **Telegram:** a Peers block.
+- `99b9abd`:
+  - A "Nil" RHP amount now reads as ₹0. This fixed HD Fire's EV/EBITDA.
+  - Symbol overrides added for Elgi (`ELGIEQUIP`) and Ingersoll-Rand (`INGERRAND`).
 
 ## Where things stand
 
-- **All 27 tickets are built and merged**, with 506 offline tests passing (`.venv/bin/pytest -q -p no:warnings`, about 47s). Ticket 24 (live golden runs) is still open; it needs the user to hand-verify `tests/golden/*/expected.yaml`.
-- **Budget: $5.00 per IPO**, split as `budget.cap_usd: 4.00` for analysis and `advisor.cap_usd: 1.00`. All the output limits were revised after the live runs; see `config.yaml` and commit `fed65c3`. The tests pin the old $1.50 / 4k figures in `tests/conftest.py`, so their hand-worked arithmetic stays valid.
-- **First live IPO: HD Fire Protect** (`HDFIRE-2026-10-13`; band ₹258–₹271, lot 55), analysed by running the CLI with `--date 2026-10-13`.
-  - **Run 4:** all 8 sections, sentiment, valuation and verdict made it into the report.
-  - **Analyst view:** NEUTRAL. **Advisor:** NO BUY at medium conviction.
-  - **Cost:** $1.43.
-  - **Archived** at `reports/HDFIRE-2026-10-13/2026-10-11_1644_run4/`, which holds the report JSON, the PDF and the exact Telegram text.
-- **Test spend today:** about $4.8 in total across the smoke test and runs 1–4.
-- **Telegram works.** The bot is `@IPOSummary_bot` and the chat is verified. The summary now shows reasons in full (`BULLET_CHARS 500`), and any message over 4,096 characters is split at line breaks.
-- **The launchd 10:30 schedule is not installed.** The user asked to wait until they had checked the run. Install it with `.venv/bin/python scheduler/install.py install`.
-- **Next automatic step for HD Fire:** once the schedule is installed, the daily GMP + subscription updates run on 14–15 Oct, plus the closing-day advisor refresh on 15 Oct. HD Fire is already `done`, so it won't be re-analysed.
+- **Tickets.** All 27 are built. Ticket 24 (golden numbers) still needs the user to hand-verify `tests/golden/*/expected.yaml`.
+- **Budget.** $5.00 per IPO: `budget.cap_usd: 4.00` + `advisor.cap_usd: 1.00`. Tests pin the old $1.50 / 4k figures in `tests/conftest.py` on purpose.
+- **HD Fire Protect** (`HDFIRE-2026-10-13`).
+  - Analysed: `done`, analyst view NEUTRAL, advisor NO BUY.
+  - Archive: `reports/HDFIRE-2026-10-13/2026-10-11_1644_run4/`.
+  - Its saved report predates this session's valuation changes.
+- **FusionCX** (`FUSIONCX-2026-10-14`). RHP and `report.json` are in `data/work/`.
+- **Spend this session.**
+  - About $1.40 on live checks, mostly re-extracting Basis for Offer Price three times (≈$0.43 each).
+  - The meter ledgers `FUSIONCX-2026-10-14-kpicheck` and `HDFIRE-2026-10-13-kpicheck`, plus `-peercheck`, hold that spend. They are separate from the IPOs' own ledgers.
+- **Schedule.** The launchd 10:30 schedule is **not installed**; the user is still waiting on it. Install with `.venv/bin/python scheduler/install.py install`.
+- **Claude Code.** `~/.claude/settings.json` model is now `opus[1m]`.
 
 ## Open items, in the order to tackle them
 
-1. **"Issue: not disclosed" in the summary.** The RHP prints `[●]`, but `calculations["issue_size_cr"]` already holds the value computed at the upper band (26,284,500 × ₹271 ≈ ₹712 cr). Show it, labelled as computed.
-2. **Peer median P/E of 96×** looks inflated for a fire-safety maker. Check the RHP peer table against the agent-suggested peers in `report.valuation` before trusting "58% discount".
-3. **31 "could not verify" fields**, mostly Business list quotes rejected by the exact-match rule for `Quote`s in `verifier._quoted`. Consider normalising hyphenation and Unicode dashes as well as whitespace, without going back to fuzzy matching (that let a different firm's name through).
-4. **Offer Price Basis verifier re-asks cost $0.37.** Tune this, for example by capping the re-asks for dense tables.
-5. **Golden-number review** (ticket 24) is the user's task.
-6. **Optional:** resend the full HD Fire summary from the saved `report.json`. That's free, with no model calls; the user hasn't asked for it yet.
+1. **Commit and push the uncommitted work**, but only after the user says so. Suggested message: "Peer valuation: the agent defines business-specific multiples on RHP KPIs".
+2. **Peer-KPI extraction recall is poor and varies between runs.**
+   - On FusionCX it got headcount for 3 of 6 peers. IKS (13,331) and Sagility (46,860) sit further along the same row on RHP p. 132 and were dropped.
+   - A correctly formed quote *does* verify; I checked offline with `verifier._why_not`. So the cause is the extractor (Luna map, then Terra merge), not the verifier.
+   - Proposed fix, which the user hasn't approved yet: a focused extraction pass over just the peer-KPI table pages with a stronger model. Estimate $0.10–0.20 per IPO.
+3. **Kirloskar Brothers Limited** (suggested peer for HD Fire) has no NSE match. Add a `symbol_overrides` entry (`KIRLOSBROS`, but verify it live).
+4. **"Issue: not disclosed" in the Telegram summary.** Show `calculations["issue_size_cr"]`, labelled as computed.
+5. **31 "could not verify" fields**, mostly Business `Quote`s. Normalise hyphenation and dashes in `verifier._quoted`; don't go back to fuzzy matching for Quotes.
+6. **Offer Price Basis re-asks cost $0.37** on HD Fire. Peer-KPI extraction makes this section bigger still, so watch it.
+7. **Stale comment.** `config.yaml` line ~46 still says "$1.50 + $0.50 = $2.00 per IPO".
+8. **Golden-number review** (ticket 24) is the user's task.
 
-## Gotchas learned live (all fixed; don't regress them)
+## Gotchas (don't regress)
 
-Details are in commits `47b8465`, `7b13dba`, `fbe7d10` and `fed65c3`, and in the vault lessons note.
-- **Reasoning effort:**
-  - Luna's `reasoning_effort` is `none`. At `low`, hidden reasoning used up whole output budgets.
-  - Both GPT-5.6 models accept `none` and reject `minimal`.
-  - Reasoning models get no `temperature` (`gpt-6.1-sol` rejects 0).
-- **Output limits:** map calls get `map_max_tokens`, separate from a section's own limit.
-- **Fail-soft:** a section whose own reply can't be parsed is skipped as "could not read". Provider errors still fail the IPO so it gets retried.
-- **Groq:** Governance and Other Disclosures route to Luna, because their real prompts exceed Groq's 6k limit. Groq's free tier caps at 8k tokens per minute; stance tags fall back to Luna.
-- **Budget resets:** spend per IPO never resets on its own. `--ipo X --reset-budget` (with a typed confirmation) clears both ledgers and the checkpoint. **Only do it with the user's explicit OK.**
+- **Reasoning effort and limits.**
+  - Luna runs at `reasoning_effort: none`.
+  - Reasoning models get no `temperature`.
+  - Map calls have their own `map_max_tokens`.
+  - A section whose reply can't be parsed is skipped; provider errors still fail the IPO.
+  - Commits: `47b8465`, `7b13dba`, `fbe7d10`, `fed65c3`.
+- **Groq.** Governance and Other Disclosures route to Luna, because Groq's limit is 6k per call.
+- **Budget resets.** `--reset-budget` only with the user's explicit OK.
+- **Running Python.** Use `.venv/bin/python`; there is no `python` on PATH. Scripts outside the repo need `PYTHONPATH=.`.
+- **WeasyPrint** needs `DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib`.
+- **Unit detection.** `calc._RUPEE_MARKS` contains `"rs"`, which matches "use**rs**" and "subscribe**rs**". `kpis.py` uses its own word-bounded `_RUPEE` regex for that reason; don't swap it for `to_crore`'s check.
+- **Live runs.** For a single section or the valuation step, without sending Telegram, call `section_agent.run_section` + `valuation.run_peer_valuation` with a `MeteredLLM` on a separate ledger id.
 
 ## How the user works
 
-The user writes terse instructions, and "yes" means go ahead with the recommendation. They want autonomy once a build is approved (see memory `build-autonomy`), but every spend or reset decision, and anything that touches the outside world, needs their OK. They like being kept informed of progress during long runs.
+- **Instructions.** Terse; "yes" means go ahead with the recommendation.
+- **Autonomy.** They want it once a build is approved (memory `build-autonomy`).
+- **Needs their OK.** Every spend, reset, commit or push, and anything that touches the outside world.
+- **Feedback this session.** They want agents that genuinely reason, not lookup tables. "Otherwise why would I need an agent".
+- **Communication.** Keep them informed during long runs.
 
 ## Suggested skills
 
-- `mattpocock-skills:tdd`: every fix so far has been red then green at the three agreed test seams (`run_daily`, `analyse_rhp`, `ingest`).
-- `superpowers:verification-before-completion`: run the suite, then a live `run_daily.py --smoke` after any change to models or limits. It costs about $0.02.
-- `code-review` or a reviewer sub-agent: before merging anything that touches `budget.py`, `verifier.py` or `grounding.py`.
-- `mattpocock-skills:diagnosing-bugs`: for live-run anomalies, starting from the `llm_calls` ledger and the per-run log.
+- `mattpocock-skills:tdd`: fixes go red then green at the seams (`run_daily`, `analyse_rhp`, `ingest`). `tests/test_peer_valuation.py` has the KPI fixtures (`KPI_LINES`, `IPO_KPIS`, `PEER_KPIS`, `analyse_kpis`).
+- `superpowers:verification-before-completion`: run the full suite, then one cheap live check after changing prompts or models.
+- `mattpocock-skills:diagnosing-bugs`: for the peer-KPI recall problem, start from the extracted `peer_kpis` quotes against the page text.
+- `code-review`: before committing anything that touches `verifier.py`, `budget.py` or `grounding.py`.

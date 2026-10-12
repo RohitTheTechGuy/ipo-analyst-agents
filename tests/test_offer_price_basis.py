@@ -4,7 +4,7 @@ import yaml
 
 import ipo_agents.analysis as analysis
 from ipo_agents.analysis import analyse_rhp
-from ipo_agents.contracts import Eps, Fact, Kpi, OfferPriceBasis, PeriodFact, Peer, Waca
+from ipo_agents.contracts import Eps, Fact, Kpi, OfferPriceBasis, PeerKpi, PeriodFact, Peer, Waca
 from tests.conftest import make_tiny_rhp
 from tests.fakes import NOT_DISCLOSED, ScriptedLLM, found_nothing, make_ipo
 
@@ -24,6 +24,7 @@ def basis_page(primary_waca="40.00"):
         "Alpha Motors Limited P/E 32.50 EPS 12.40 RoNW 15.60% NAV 80.20",
         "Alpha Motors Limited revenue (Rs. million) 1,520.75",
         "Units sold in Fiscal 2024: 125,000 units",
+        "Comparison of KPIs with listed peers: Alpha Motors Limited units sold Fiscal 2024 98,000 units",
         f"WACA of primary issuances (Rs. per share) {primary_waca}",
         "WACA of secondary transactions (Rs. per share) 60.00",
     ])
@@ -75,6 +76,8 @@ def test_price_basis_fields_and_the_peer_table_are_extracted_as_facts_that_verif
         peers=[PEER],
         kpis=[Kpi(name="Units sold", values=[PeriodFact(
             period="Fiscal 2024", value=fact(125000, "Units sold in Fiscal 2024: 125,000 units", "units"))])],
+        peer_kpis=[PeerKpi(company="Alpha Motors Limited", kpi="Units sold", values=[PeriodFact(
+            period="Fiscal 2024", value=fact(98000, "Alpha Motors Limited units sold Fiscal 2024 98,000 units", "units"))])],
         waca_primary=PRIMARY,
         waca_secondary=SECONDARY,
     )
@@ -89,6 +92,7 @@ def test_price_basis_fields_and_the_peer_table_are_extracted_as_facts_that_verif
     assert pb.pe_at_cap.value is None  # printed as [●]
     assert pb.peers == [PEER]  # the RHP's own peer table, for peer valuation
     assert pb.kpis[0].values[0].value.value == 125000
+    assert pb.peer_kpis[0].values[0].value.value == 98000  # the peers' KPIs, for business-specific multiples
     assert (pb.waca_primary.waca.value, pb.waca_secondary.waca.value) == (40.00, 60.00)
 
 
@@ -98,6 +102,7 @@ def test_the_agent_reads_the_basis_for_offer_price_pages(rhp, adapters, config):
     [call] = [c for c in adapters.llm.calls if c["task"] == "offer_price_basis"]
     assert call["model"] == "terra"
     assert "WACA of primary issuances" in call["user"]
+    assert "comparison of KPIs with listed peers" in call["system"]
     assert "We make scooters" not in call["user"]
 
 
