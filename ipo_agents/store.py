@@ -18,6 +18,8 @@ CREATE TABLE IF NOT EXISTS ipos (
   verdict TEXT, report_path TEXT,
   analysed_at TIMESTAMP, last_reminded_at TIMESTAMP
 );
+-- Telegram picks: the last update read and the latest offer of IPOs to analyse
+CREATE TABLE IF NOT EXISTS telegram_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 """
 
 def _symbol_from_id(ipo_id: str) -> str:
@@ -99,6 +101,15 @@ class Store:
 
     def close(self) -> None:
         self._db.close()
+
+    def state(self, key: str) -> str | None:
+        row = self._db.execute("SELECT value FROM telegram_state WHERE key = ?", (key,)).fetchone()
+        return row[0] if row else None
+
+    def set_state(self, key: str, value: str) -> None:
+        self._db.execute("INSERT INTO telegram_state (key, value) VALUES (?, ?) "
+                         "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (key, value))
+        self._db.commit()
 
     # --- closing reminders (ticket 05) ---
 

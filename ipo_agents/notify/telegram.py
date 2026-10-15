@@ -37,7 +37,14 @@ class TelegramNotifier:
             self._call("sendDocument", data={"chat_id": self._chat_id, "caption": caption},
                        files={"document": (path.name, f, "application/pdf")})
 
-    def _call(self, method: str, **kwargs) -> None:
+    def get_updates(self, offset: int | None = None) -> list[dict]:
+        """Updates (incoming messages) after `offset`, oldest first; Telegram keeps them for 24 hours."""
+        params = {"timeout": 0, "allowed_updates": ["message"]}
+        if offset is not None:
+            params["offset"] = offset
+        return self._call("getUpdates", json=params) or []
+
+    def _call(self, method: str, **kwargs):
         # Errors are re-raised without httpx's message, which would include the URL and so the token.
         try:
             resp = self._client.post(f"{API_BASE}/bot{self._token}/{method}", **kwargs)
@@ -49,6 +56,7 @@ class TelegramNotifier:
         if not isinstance(body, dict) or not body.get("ok"):
             body = body if isinstance(body, dict) else {}
             raise TelegramError(f"{method} failed: HTTP {resp.status_code}: {body.get('description', 'no description')}")
+        return body.get("result")
 
 
 def telegram_notifier_from_env(client: httpx.Client | None = None) -> TelegramNotifier:

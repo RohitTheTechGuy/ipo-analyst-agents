@@ -122,3 +122,25 @@ def test_a_summary_longer_than_telegrams_limit_is_sent_as_several_messages_split
     assert len(sent) > 1
     assert all(len(part) <= 4096 for part in sent)
     assert "\n".join(sent) == text  # split only between lines, in order
+
+
+def test_get_updates_reads_after_the_offset_and_keeps_the_token_out_of_errors():
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, json={"ok": True, "result": [{"update_id": 7, "message": {"text": "1"}}]})
+
+    notifier = TelegramNotifier(TOKEN, CHAT_ID, client=httpx.Client(transport=httpx.MockTransport(handler)))
+
+    assert notifier.get_updates(7) == [{"update_id": 7, "message": {"text": "1"}}]
+    assert str(requests[0].url).endswith("/getUpdates")
+    assert json.loads(requests[0].content)["offset"] == 7
+
+    def failing(request):
+        raise httpx.ConnectError(f"cannot reach {request.url}")
+
+    broken = TelegramNotifier(TOKEN, CHAT_ID, client=httpx.Client(transport=httpx.MockTransport(failing)))
+    with pytest.raises(Exception) as exc:
+        broken.get_updates()
+    assert TOKEN not in str(exc.value)

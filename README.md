@@ -122,12 +122,15 @@ Discovery, GMP, subscription and peer prices come from public sites and need no 
 
 ```bash
 .venv/bin/python run_daily.py --dry-run            # what would run today; no model calls, no Telegram
-.venv/bin/python run_daily.py                      # the daily run
+.venv/bin/python run_daily.py                      # the daily run: updates, then asks which new IPOs to analyse (Enter = none)
+.venv/bin/python run_daily.py --updates-only       # analyse no IPO; only GMP/subscription updates for analysed ones
+.venv/bin/python run_daily.py --ask-telegram       # updates, then offer new IPOs on Telegram (the scheduled run)
+.venv/bin/python run_daily.py --telegram-picks     # analyse the IPOs picked by Telegram reply (scheduled every 5 min)
 .venv/bin/python run_daily.py --ipo FUSIONCX       # one open IPO only (no daily updates for others)
 .venv/bin/python run_daily.py --ipo FUSIONCX --force   # re-run it, within what is left of its budget
 .venv/bin/python run_daily.py --date 2026-10-14    # run as if on another date
 .venv/bin/python run_daily.py --smoke              # ~$0.03 pre-flight check of every model and schema
-.venv/bin/python scheduler/install.py install      # schedule weekdays at 10:30 IST (launchd)
+.venv/bin/python scheduler/install.py install      # weekdays 10:30 IST updates + Telegram offer, and the 5-min picks job (launchd)
 ```
 
 Outputs:

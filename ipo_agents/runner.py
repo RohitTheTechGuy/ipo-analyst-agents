@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -235,11 +236,15 @@ def _send(ipo: Ipo, text: str, pdf_path: str | None, adapters: Adapters, summary
 
 
 def run_daily(today: date, adapters: Adapters, config: Config, force_ipo: str | None = None,
-              daily_updates: bool = True) -> RunSummary:
+              daily_updates: bool = True, select: Callable[[list[Ipo]], list[Ipo]] | None = None) -> RunSummary:
     """`force_ipo` (ipo_id or symbol) re-runs that IPO even if it is done or failed_budget. Spend is
     logged per ipo_id and never resets, so a forced re-run can only spend what is left of the cap.
-    `daily_updates=False` skips the GMP/subscription updates for analysed IPOs (a single-IPO run)."""
+    `daily_updates=False` skips the GMP/subscription updates for analysed IPOs (a single-IPO run).
+    `select` picks which of the IPOs ready for analysis to analyse; the rest are left untouched in the
+    store, so a later run offers them again while they are open."""
     todo = plan(today, adapters, config, force_ipo)
+    if select is not None and todo.analyse:
+        todo.analyse = select(list(todo.analyse))
     summary = RunSummary(skipped=[ipo.ipo_id for ipo, _ in todo.skip])
     if todo.discovery_error is not None:
         try:

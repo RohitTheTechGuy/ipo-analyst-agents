@@ -140,7 +140,7 @@ def test_dry_run_shows_done_ipos_as_skipped_with_their_reminders_and_force_as_an
         adapters, config, config_file, tmp_path, capsys):
     adapters.exchange = FakeExchange([make_ipo()])
     adapters.llm = offer_llm(config)
-    run(["--date", "2026-10-13"], adapters, config_file, tmp_path)
+    run(["--ipo", "ACME", "--date", "2026-10-13"], adapters, config_file, tmp_path)
     capsys.readouterr()
 
     run(["--dry-run", "--date", "2026-10-14"], adapters, config_file, tmp_path)
@@ -353,7 +353,8 @@ def test_single_ipo_run_sends_no_daily_updates_for_other_ipos(adapters, config_f
     acme = make_ipo().model_copy(update={"close_date": date(2026, 10, 16)})
     zeta = acme.model_copy(update={"ipo_id": "ZETA-2026-10-14", "name": "Zeta Ltd", "symbol": "ZETA"})
     adapters.exchange = FakeExchange([acme])
-    run(["--date", "2026-10-13"], adapters, config_file, tmp_path)
+    adapters.llm = offer_llm(config)
+    run(["--ipo", "ACME", "--date", "2026-10-13"], adapters, config_file, tmp_path)
     adapters.exchange = FakeExchange([acme, zeta])
 
     code, _ = run(["--ipo", "ZETA", "--date", "2026-10-14"], adapters, config_file, tmp_path)

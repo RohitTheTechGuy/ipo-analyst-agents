@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Rendered by scheduler/install.py; edit the template, not the installed copy.
+     Every 5 minutes: reads Telegram replies to the daily offer and analyses the IPOs picked.
+     launchd never starts a second copy while one is still running. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>$label</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$python</string>
+    <string>$script</string>
+    <string>--telegram-picks</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>$repo</string>
+  <key>StartInterval</key>
+  <integer>300</integer>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- WeasyPrint needs Homebrew's libraries; ingestion needs Homebrew's tesseract on PATH. -->
+    <key>DYLD_FALLBACK_LIBRARY_PATH</key>
+    <string>/opt/homebrew/lib</string>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>$logs/launchd-picks.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>$logs/launchd-picks.err.log</string>
+</dict>
+</plist>

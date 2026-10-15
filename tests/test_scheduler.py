@@ -23,7 +23,7 @@ def test_install_writes_a_weekday_1030_plist_and_bootstraps_it(tmp_path):
     path = agents / "com.ipoagents.daily.plist"
     plist = plistlib.loads(path.read_bytes())
     assert plist["Label"] == "com.ipoagents.daily"
-    assert plist["ProgramArguments"] == [str(repo / ".venv/bin/python"), str(repo / "run_daily.py")]
+    assert plist["ProgramArguments"] == [str(repo / ".venv/bin/python"), str(repo / "run_daily.py"), "--ask-telegram"]
     assert plist["WorkingDirectory"] == str(repo)
     assert plist["StartCalendarInterval"] == [{"Weekday": d, "Hour": 10, "Minute": 30} for d in range(1, 6)]
     env = plist["EnvironmentVariables"]
@@ -48,7 +48,26 @@ def test_uninstall_boots_out_and_removes_the_plist(tmp_path):
     install.install(repo=tmp_path / "repo", agents_dir=agents, runner=runner, uid=501)
     path = agents / "com.ipoagents.daily.plist"
 
+    picks = agents / "com.ipoagents.picks.plist"
+
     install.uninstall(agents_dir=agents, runner=runner, uid=501)
 
-    assert runner.calls[-1] == ["launchctl", "bootout", "gui/501", str(path)]
-    assert not path.exists()
+    assert runner.calls[-2:] == [["launchctl", "bootout", "gui/501", str(path)],
+                                 ["launchctl", "bootout", "gui/501", str(picks)]]
+    assert not path.exists() and not picks.exists()
+
+
+def test_install_adds_a_five_minute_job_that_reads_telegram_picks(tmp_path):
+    agents, repo, runner = tmp_path / "LaunchAgents", tmp_path / "repo", RecordingRunner()
+
+    install.install(repo=repo, agents_dir=agents, runner=runner, uid=501)
+
+    path = agents / "com.ipoagents.picks.plist"
+    plist = plistlib.loads(path.read_bytes())
+    assert plist["Label"] == "com.ipoagents.picks"
+    assert plist["ProgramArguments"][-1] == "--telegram-picks"
+    assert plist["StartInterval"] == 300
+    assert "StartCalendarInterval" not in plist
+    assert plist["EnvironmentVariables"]["DYLD_FALLBACK_LIBRARY_PATH"] == "/opt/homebrew/lib"
+    assert plist["StandardErrorPath"] != plistlib.loads((agents / "com.ipoagents.daily.plist").read_bytes())["StandardErrorPath"]
+    assert ["launchctl", "bootstrap", "gui/501", str(path)] in runner.calls

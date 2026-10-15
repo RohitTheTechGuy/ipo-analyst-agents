@@ -1,5 +1,7 @@
 """Command line for the daily job (spec stories 1, 60): python run_daily.py [--date D] [--ipo ID [--force]] [--dry-run]
-Also: --smoke (pre-flight model check) and --ipo ID --reset-budget (dev reset of one IPO's spend)."""
+Without --ipo, a run asks which open IPOs to analyse (in the terminal, or on Telegram with --ask-telegram);
+--updates-only analyses none. Also: --telegram-picks (analyse the IPOs picked by Telegram reply), --smoke
+(pre-flight model check) and --ipo ID --reset-budget (dev reset of one IPO's spend)."""
 from __future__ import annotations
 
 import argparse
@@ -21,6 +23,7 @@ from ipo_agents.contracts import Ipo
 from ipo_agents.budget import BudgetMeter
 from ipo_agents.llm import LLM, LangChainLLM
 from ipo_agents.maintenance import reset_budget, smoke
+from ipo_agents.notify.picks import ask_in_terminal, process_picks, send_offer
 from ipo_agents.runner import plan, run_daily
 from ipo_agents.store import Store
 from ipo_agents.wiring import MissingSecrets, build_adapters
@@ -144,6 +147,7 @@ def provider_llm(config: Config) -> LLM:
 
 def main(argv: Sequence[str] | None = None, *, build: Callable[..., Adapters] = build_adapters,
          smoke_llm: Callable[[Config], LLM] = provider_llm, ask: Callable[[str], str] = input,
+         interactive: Callable[[], bool] = lambda: sys.stdin.isatty(),
          log_dir: Path = REPO_ROOT / "logs", env_file: Path = REPO_ROOT / ".env") -> int:
     parser = argparse.ArgumentParser(prog="run_daily.py", description="Analyse today's open mainboard IPOs.")
     parser.add_argument("--date", type=_parse_date, help="run as if on this date (YYYY-MM-DD); default: today in IST")
@@ -159,12 +163,22 @@ def main(argv: Sequence[str] | None = None, *, build: Callable[..., Adapters] = 
     parser.add_argument("--reset-budget", action="store_true",
                         help="dev only, with --ipo ID: show the IPO's spend (analysis and advisor), then after "
                              "typing 'reset' delete both call logs and its saved checkpoints")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--updates-only", action="store_true",
+                      help="analyse no IPO; only send the GMP/subscription updates for IPOs already analysed")
+    mode.add_argument("--ask-telegram", action="store_true",
+                      help="analyse no IPO; send the updates, then offer the IPOs ready for analysis on Telegram "
+                           "(the scheduled run)")
+    mode.add_argument("--telegram-picks", action="store_true",
+                      help="read Telegram replies to the offer and analyse the IPOs picked (run every few minutes)")
     parser.add_argument("--config", type=Path, default=REPO_ROOT / "config.yaml", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if args.force and not args.ipo:
         parser.error("--force needs --ipo")
     if args.reset_budget and not args.ipo:
         parser.error("--reset-budget needs --ipo ID")
+    if args.ipo and (args.updates_only or args.ask_telegram or args.telegram_picks):
+        parser.error("--ipo can't be combined with --updates-only, --ask-telegram or --telegram-picks")
 
     setup_logging(log_dir)
     load_dotenv(env_file)  # never overrides variables already set
@@ -179,6 +193,19 @@ def main(argv: Sequence[str] | None = None, *, build: Callable[..., Adapters] = 
         if args.dry_run:
             dry_run(today, adapters, config, only=args.ipo, force=args.force)
             return 0
+        if args.telegram_picks:
+            process_picks(today, adapters, config, adapters.notifier, os.environ.get("TELEGRAM_CHAT_ID", ""))
+            return 0
+        select, offered = None, []
+        if args.ask_telegram:
+            select = lambda ipos: offered.extend(ipos) or []  # noqa: E731
+        elif args.updates_only:
+            select = lambda ipos: []  # noqa: E731
+        elif not args.ipo:
+            if interactive():
+                select = ask_in_terminal(ask, config.budget.cap_usd)
+            else:
+                select = lambda ipos: offered.extend(ipos) or []  # noqa: E731
         if args.ipo:
             ipos = adapters.exchange.open_ipos(today)
             chosen = [i for i in ipos if _matches(i, args.ipo)]
@@ -193,8 +220,13 @@ def main(argv: Sequence[str] | None = None, *, build: Callable[..., Adapters] = 
                       f"budget already spent, ${left:.2f} left (spend never resets)")
         log.info("run starting for %s%s", today, f" (only {args.ipo})" if args.ipo else "")
         summary = run_daily(today, adapters, config, force_ipo=args.ipo if args.force else None,
-                            daily_updates=not args.ipo)
+                            daily_updates=not args.ipo, select=select)
         log.info("run finished: %s", summary.model_dump())
+        if offered and args.ask_telegram:
+            send_offer(today, offered, adapters, config)
+        elif offered:
+            log.info("not analysed (no terminal to ask; use --ipo or --ask-telegram): %s",
+                     ", ".join(i.ipo_id for i in offered))
         if args.ipo and summary.skipped:
             log.warning("%s was already analysed (done or failed_budget); add --force to re-run it",
                         ", ".join(summary.skipped))
