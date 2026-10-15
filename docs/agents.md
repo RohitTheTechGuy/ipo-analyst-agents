@@ -6,13 +6,15 @@ Only steps marked 🤖 call a model. Everything else is deterministic Python. Th
 
 ## The run at a glance
 
-`launchd` starts the job at 10:30 IST on weekdays: `run_daily.py` → `cli.main` → `runner.run_daily`.
+`launchd` starts the job at 10:30 IST on weekdays: `run_daily.py --ask-telegram` → `cli.main` → `runner.run_daily`. That run analyses nothing: it sends the daily updates and a numbered Telegram list of new IPOs. A second launchd job runs `run_daily.py --telegram-picks` every 5 minutes (`notify/picks.py`). It reads replies from your chat only and analyses just the IPOs picked. A manual `run_daily.py` asks in the terminal instead (Enter = none), and `--updates-only` analyses none.
 
 ```mermaid
 flowchart TD
     CRON([launchd 10:30 IST Mon–Fri]) --> PLAN[runner.plan<br/>discover · dedupe · hold · skip]
     PLAN -->|exchange listing| DISC[Discovery<br/>NSE + BSE + Chittorgarh, merged]
-    PLAN -->|new IPO with final RHP| DL[RHP downloader]
+    PLAN -->|new IPOs with final RHP| OFFER[Telegram: numbered list<br/>nothing analysed yet]
+    OFFER -.->|your reply| PICKS([launchd every 5 min<br/>--telegram-picks])
+    PICKS -->|IPO picked| DL[RHP downloader]
     DL --> G
 
     subgraph G [analyse_rhp — LangGraph, checkpointed per IPO + RHP hash]
@@ -290,6 +292,7 @@ These are files the run reads and writes. All of them are local and gitignored.
 |---|---|---|---|
 | `data/ipo.db`, table `ipos` | Runner, Store | Runner, daily updates, dry run | Each IPO's status (`discovered`, `waiting_rhp`, `analysing`, `done`, `failed`, `failed_budget`), dates, band, symbol, verdict, report path, date of last update |
 | `data/ipo.db`, table `llm_calls` | Budget meter | Budget meter, router, `--reset-budget` | Every model call: ledger, task, model, tokens, cost. Spend per IPO and Groq's 24-hour usage are summed from here. |
+| `data/ipo.db`, table `telegram_state` | Offer, picks job | Picks job | The latest offer (which IPO each number means) and the next Telegram update to read, so no reply is acted on twice |
 | `data/checkpoints.db` | LangGraph `SqliteSaver` | `analyse_rhp` on resume | Graph state per `ipo_id:rhp_sha256`. Deleted when a run finishes. |
 | `data/work/<ipo_id>/` | Downloader, renderer, advisor | Analysis, closing-day refresh | `rhp.pdf`, `report_<SYMBOL>.pdf`, `report.json` (path also kept in `ipos.report_path`), `advice_<date>.json` |
 | `reports/<ipo_id>/` | Archive | You | Every run's report JSON, PDF and Telegram text, plus daily updates. Re-runs get their own folder. |

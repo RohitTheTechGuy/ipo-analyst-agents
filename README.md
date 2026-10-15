@@ -9,7 +9,7 @@
 > - Grey-market premium (GMP) figures are **unofficial**.
 > - **Do your own research and consult a SEBI-registered adviser before investing.** You alone are responsible for your investment decisions and any losses.
 
-A daily multi-agent system that reads the prospectus (RHP) of every **Indian mainboard IPO** open that day. It produces a verified analyst report and a **BUY / NO BUY** call, and sends them to Telegram: a short plain-English summary plus a full PDF. It then follows the IPO with daily grey-market (GMP) and subscription updates until the IPO closes.
+A daily multi-agent system for **Indian mainboard IPOs**. Each weekday it lists the IPOs open that day on Telegram, and for each one you pick it reads the prospectus (RHP). It produces a verified analyst report and a **BUY / NO BUY** call, and sends them to Telegram: a short plain-English summary plus a full PDF. It then follows the IPO with daily grey-market (GMP) and subscription updates until the IPO closes.
 
 Built with **Python · LangGraph · OpenAI (GPT-5.6 Luna / Terra, GPT-6.1 Sol) · Groq · Telegram**.
 
@@ -18,6 +18,18 @@ Built with **Python · LangGraph · OpenAI (GPT-5.6 Luna / Terra, GPT-6.1 Sol) �
 ---
 
 ## What you get on Telegram
+
+Each weekday at 10:30 IST, a numbered list of the new IPOs ready for analysis. Nothing is analysed (or paid for) until you reply:
+
+```
+🆕 IPOs open and ready for analysis (up to $5.00 each). Reply with numbers or symbols to analyse, e.g. "1,3":
+1. TONBO — Tonbo Imaging India Limited (closes 17 Oct)
+2. ZETWERK — Zetwerk Manufacturing Businesses Limited (closes 17 Oct)
+
+Reply "all" for every one, or "none" to skip. GMP/subscription updates for analysed IPOs continue either way.
+```
+
+Reply `1`, `ZETWERK`, `1,2` or `all`. Within about 5 minutes the bot confirms ("▶️ Starting analysis of …"), and when the analysis is done you get the summary below:
 
 ```
 📄 Fusion CX Ltd. IPO
@@ -50,8 +62,8 @@ While the IPO is open, a **daily update** reports the GMP and subscription. On t
 
 ```
 launchd 10:30 IST ─► discover open mainboard IPOs (NSE + BSE + Chittorgarh) ─► skip already analysed
-     │
-     ▼  per new IPO with a final RHP
+     │                 ─► GMP/subscription updates ─► Telegram: numbered list of new IPOs
+     ▼  per IPO you reply with (read every 5 min by a second launchd job)
 download RHP ─► ingest (PDF → 8 section groups, OCR fallback)
      │
      ├─► 8 section agents in parallel: map → reduce → verify → re-ask (max 2)
@@ -118,6 +130,17 @@ cp .env.example .env                  # then fill it in
 
 Discovery, GMP, subscription and peer prices come from public sites and need no keys.
 
+### Keeping it running
+
+`scheduler/install.py install` loads two launchd jobs: the 10:30 weekday run, and the job that reads your Telegram replies every 5 minutes. They run without Claude Code or a terminal open, but only while the Mac is on and logged in. To recover from sleep, shutdowns and power cuts on their own:
+
+```bash
+sudo pmset repeat wakeorpoweron MTWRF 10:25:00   # wake or power on before the 10:30 run
+sudo pmset -a autorestart 1                      # boot again after a power cut
+```
+
+After a boot, the jobs start only once you are logged in. Logging in by itself needs FileVault off and automatic login on. That is a security trade-off: anyone with the machine can read the disk, `.env` keys included. If a run was missed, run `run_daily.py --ask-telegram` once you are back.
+
 ## Usage
 
 ```bash
@@ -136,7 +159,7 @@ Discovery, GMP, subscription and peer prices come from public sites and need no 
 Outputs:
 - **Reports:** `reports/<ipo_id>/<run>/` holds `report.json`, the PDF, the message sent, the full summary and the summary review.
 - **Working files:** `data/work/<ipo_id>/`.
-- **Logs:** `logs/`.
+- **Logs:** `logs/ipo-agents.log`; launchd output in `logs/launchd*.log` (`launchd-picks*` for the reply job).
 
 ## Tests and evals
 
@@ -154,7 +177,7 @@ Outputs:
 
 ```
 ipo_agents/
-  cli.py, runner.py          entry point; the daily run (discover → analyse → notify)
+  cli.py, runner.py          entry point; the daily run (discover → pick → analyse → notify)
   analysis.py                the LangGraph graph per IPO (checkpointed)
   section_agent.py           map → reduce → verify → re-ask loop; sections.py has the prompts
   verifier.py, grounding.py  fact and quote verification; number grounding for prose
@@ -164,10 +187,10 @@ ipo_agents/
   plain_summary.py, summary_judge.py   plain-English Telegram summary and its eval gate
   calc.py, fin_calc.py, legal_calc.py, flags.py, cross_checks.py   deterministic maths and flags
   budget.py, router.py, llm.py   metering, model routing, provider boundary
-  discovery/, notify/, report/   IPO sources, Telegram and reminders, PDF renderer
+  discovery/, notify/, report/   IPO sources, Telegram (offer, picks, reminders), PDF renderer
 evals/        summary eval (eval.md, summary_eval.py, results/)
 docs/         agents.md, specs/, plans/
-scheduler/    launchd installer
+scheduler/    launchd installer: daily run + Telegram picks job
 tests/        offline test suite, fakes, golden RHPs
 config.yaml   models, prices, routing, budgets, paths
 run_daily.py  CLI wrapper
