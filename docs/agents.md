@@ -27,7 +27,9 @@ flowchart TD
         S7[🤖 Offer Price Basis]
         S8[🤖 Other Disclosures]
         SENT[🤖 Market Sentiment<br/>articles · GMP · subscription]
-        S1 & S2 & S3 & S4 & S5 & S6 & S7 & S8 --> VAL[🤖 Peer Valuation<br/>multiples · peer-fit check]
+        S1 & S2 & S3 & S4 & S5 & S6 & S7 & S8 --> VER{Verifier: Python, no model<br/>value + unit in quote,<br/>quote on cited page}
+        VER -.->|failed fields + reasons:<br/>🤖 section re-asked, max 2| S1 & S2 & S3 & S4 & S5 & S6 & S7 & S8
+        VER -->|verified · prose grounded| VAL[🤖 Peer Valuation<br/>multiples · peer-fit check]
         VAL & SENT --> SYN[🤖 Synthesizer<br/>analyst view]
         SYN --> REP[_report: Python calcs · flags · cross-checks]
     end
@@ -56,7 +58,7 @@ flowchart TD
 
 Every newly analysed IPO's summary is **evaluated before it is sent**, and exactly one summary goes out: the plain draft that passed, the best fully faithful draft, or the full summary. The "Offline regression" box runs the same loop on saved reports, so a prompt or model change can be checked before it reaches Telegram. See the Summary Eval section below and `evals/eval.md`.
 
-Inside each section agent, the same loop runs: **map → reduce → verify → retry (up to 2)**.
+The Verifier diamond above is the **verifier feedback loop**: each section agent's output is checked field by field, and failed fields go back to that agent with the reasons (up to 2 re-asks). Fields that still fail are kept as "could not verify", never guessed. In detail, inside each section agent: **map → reduce → verify → retry (up to 2)**.
 
 ```mermaid
 flowchart LR
@@ -76,7 +78,7 @@ flowchart LR
 |---|---|---|---|
 | `luna` | `gpt-5.6-luna` (OpenAI) | 0.20 · 1.20 | Bulk reading (map), long or descriptive sections, sentiment aggregate. Reasoning effort `none`: at `low` it spent whole budgets reasoning and returned nothing. |
 | `terra` | `gpt-5.6-terra` (OpenAI) | 2.00 · 12.00 | Steps that drive the decision, and the peer-fit check. Reasoning effort `low`. |
-| `groq` | `openai/gpt-oss-120b` (Groq) | free tier | Small calls (verifier, stance tags). Any Groq failure, or a call over 6k tokens, falls back to Luna. |
+| `groq` | `openai/gpt-oss-120b` (Groq) | free tier | Small calls (sentiment stance tags). Any Groq failure, or a call over 6k tokens, falls back to Luna. |
 | `sol` | `gpt-6.1-sol` (OpenAI) | 2.00 · 10.00 | Financial Advisor, Peer Valuation's choice of multiples (high reasoning effort), and the Summary Eval judge |
 
 Terra also runs the Summary Editor. An xAI key (`XAI_API_KEY`, see `.env.example`) can be added, but no `xai` provider is wired into routing yet.

@@ -21,7 +21,7 @@ routing:
   sentiment_agent:      luna
   promoters_governance: luna  # real prompts exceed Groq's 6k call limit (HD Fire live run)
   other_disclosures:    luna  # same
-  verifier:             groq
+  verifier:             groq   # no call uses this task: verification is pure Python (verifier.py)
   sentiment_stance_tag: groq
   advisor:              sol
   summary_editor:       terra  # the Telegram summary in plain English, revised once on the judge's feedback (advisor ledger)

@@ -91,7 +91,7 @@ Full agent map, models, context flow and diagrams: **[`docs/agents.md`](docs/age
 | `luna` | gpt-5.6-luna | bulk RHP reading, descriptive sections |
 | `terra` | gpt-5.6-terra | decision-critical sections, synthesizer, peer-fit check, summary editor |
 | `sol` | gpt-6.1-sol | Financial Advisor, choice of peer multiples, summary judge |
-| `groq` | gpt-oss-120b | small calls (verifier, stance tags), with a fallback to Luna |
+| `groq` | gpt-oss-120b | small calls (sentiment stance tags), with a fallback to Luna |
 
 ---
 
