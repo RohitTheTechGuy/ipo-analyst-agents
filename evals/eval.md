@@ -43,7 +43,7 @@ passes: send it   fails, but a draft has          no draft has
 
 - **One message.** Exactly one summary goes to Telegram, followed by the PDF.
 - **Never unscored.** A draft is never sent unless the judge scored it. If the editor or the judge errors or hits the budget cap, the full summary is sent.
-- **Cost:** about $0.03–0.06 per IPO (1–2 rounds), billed to the IPO's advisor budget. The $5 per IPO cap doesn't change.
+- **Cost:** about $0.02–0.04 per IPO (1–2 rounds: Terra editor ~$0.003, Grok judge ~$0.015), billed to the IPO's advisor budget. The $5 per IPO cap doesn't change.
 - **Archive:** everything is kept in `reports/<ipo_id>/<run>/`:
   - `telegram_summary.txt`: what was sent
   - `telegram_summary_full.txt`: the full summary
@@ -132,7 +132,7 @@ A draft passes only if all of these hold:
 .venv/bin/python -m evals.summary_eval
 ```
 
-- **Cost:** about $0.10–0.25 per run (4 cases, 1–2 rounds each). Spend is logged on its own budget ledger, `eval-summary`, capped at $1.00 in total (`--cap` changes it), separate from every IPO's budget.
+- **Cost:** about $0.10 per run with the Grok judge (4 cases, 1–2 rounds each). Spend is logged on its own budget ledger, `eval-summary`, capped at $1.00 in total (`--cap` changes it), separate from every IPO's budget.
 - **No side effects:** it sends no Telegram message and never analyses an IPO.
 - **Output:** a terminal table: pass, what would be sent (plain or full), the number of drafts, the line count and each score. Full details go to `evals/results/<date>_<time>.md`.
 

@@ -96,6 +96,33 @@ Full agent map, models, context flow and diagrams: **[`docs/agents.md`](docs/age
   - Every call is metered against an SQLite ledger.
   - Near the cap, the run moves Terra tasks down to cheaper models.
 
+### What a run actually costs
+
+Measured from the spend ledger (`data/ipo.db`, table `llm_calls`) on the two IPOs analysed so far:
+
+| Step | Ledger | HD Fire (460-page RHP) | Fusion CX (559 pages) |
+|---|---|---|---|
+| RHP reading: 111–156 Luna page-batch calls | analysis | $0.26 | $0.46 |
+| Terra sections: price basis, financials, fine print, offer | analysis | $0.87 | $1.03 |
+| Luna sections: business, governance, risks, other | analysis | $0.11 | $0.13 |
+| Synthesizer (Terra) | analysis | $0.08 | $0.08 |
+| Sentiment (stance tags on Groq, free, or Luna) | analysis | $0.01 | $0.01 |
+| Peer valuation: Sol multiples plus the Terra peer-fit check | analysis | ~$0.02 | ~$0.05 |
+| **Analysis subtotal** (cap $4.00) | | **~$1.35** | **~$1.76** |
+| Advisor (Sol), analysis day | advisor | $0.09 | $0.09 |
+| Summary editor (Terra) plus judge (Grok), 1–2 rounds | advisor | ~$0.02–0.04 | ~$0.02–0.04 |
+| Closing day: fresh sentiment, advisor again, demand check (Grok) | advisor | ~$0.15 | ~$0.15 |
+| **Advisor subtotal** (cap $1.00) | | **~$0.28** | **~$0.28** |
+| **Per IPO, start to close** (cap $5.00) | | **~$1.63** | **~$2.04** |
+
+- The cost grows with the RHP's length, mostly from page reading and the Terra sections. Expect about $1.50–2.50 per IPO.
+- The other daily updates (GMP and subscription) make no model calls and cost $0.
+- Outside any IPO:
+  - `--smoke` costs about $0.014;
+  - `evals.summary_eval` costs about $0.10;
+  - `evals.advisor_compare` costs about $0.28.
+- Some figures are estimates, marked ~. The two analyses ran before the peer-fit check and the Grok judge existed, so those rows use what the same calls cost in later runs.
+
 ### Models (routing in `config.yaml`)
 
 | Key | Model | Used for |
@@ -153,7 +180,7 @@ After a boot, the jobs start only once you are logged in. Logging in by itself n
 .venv/bin/python run_daily.py --ipo FUSIONCX       # one open IPO only (no daily updates for others)
 .venv/bin/python run_daily.py --ipo FUSIONCX --force   # re-run it, within what is left of its budget
 .venv/bin/python run_daily.py --date 2026-10-14    # run as if on another date
-.venv/bin/python run_daily.py --smoke              # ~$0.04 pre-flight check of every model and schema
+.venv/bin/python run_daily.py --smoke              # ~$0.02 pre-flight check of every model and schema
 .venv/bin/python scheduler/install.py install      # weekdays 10:30 IST updates + Telegram offer, and the 5-min picks job (launchd)
 ```
 
@@ -167,8 +194,8 @@ Outputs:
 ```bash
 .venv/bin/pytest -q -p no:warnings                 # 550+ offline tests; no network, no spend
 .venv/bin/python -m evals.summary_eval --offline   # summary rulebook only, free
-.venv/bin/python -m evals.summary_eval             # editor + judge on saved reports, ~$0.10–0.25
-.venv/bin/python -m evals.advisor_compare          # Financial Advisor on Sol vs Grok on saved reports, ~$0.60
+.venv/bin/python -m evals.summary_eval             # editor + judge on saved reports, ~$0.10
+.venv/bin/python -m evals.advisor_compare          # Financial Advisor on Sol vs Grok on saved reports, ~$0.28
 ```
 
 - **Tests:** they fake only the outer edges (exchange, downloader, LLM, Telegram) and run the real graph.

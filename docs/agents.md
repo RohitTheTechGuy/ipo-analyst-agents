@@ -185,7 +185,7 @@ Two model calls. Neither ever outputs a number.
 - **Input:** the advisor's digest, plus the call being judged (`R:` items) and the demand reading (`K:demand`).
 - **Checks (Python):** the advisor's evidence-ID and number checks. No surviving reason means no check.
 - **Output:** lines after the subscription in the ⏰ closing message, e.g. "🔎 Demand check: HIGH demand", 2–3 reasons, a "Retail:" line, then "⚠️ HIGH demand vs NO BUY: the call still holds. …" or "❗ … the check thinks demand weakens the call. …". Saved as `demand_check_<date>.json`.
-- **Cost and failure:** about $0.05 on the advisor ledger. Without a subscription figure there is no call; if it fails, the normal update goes out.
+- **Cost and failure:** about $0.05 a call (measured $0.046) on the advisor ledger. Without a subscription figure there is no call; if it fails, the normal update goes out.
 
 ### Summary Editor 🤖 (`plain_summary.py`): the Telegram summary in plain English
 - **Role:** rewrites the full summary for a reader with no finance background, keeping only what decides apply or not. The full detail stays in the attached PDF.
@@ -239,7 +239,7 @@ Two model calls. Neither ever outputs a number.
   - else, the fully faithful draft (faithfulness 5) with the fewest rule problems and the highest total score
   - else, the full summary
   If the editor or the judge errors or hits the cap, the full summary is sent. A draft is never sent without a judge's score.
-- **Budget:** about $0.03–0.06 per IPO (Terra editor plus Grok judge, 1–2 rounds), billed to the IPO's advisor ledger. The $5 per IPO cap doesn't change.
+- **Budget:** about $0.02–0.04 per IPO (Terra editor ~$0.003 plus Grok judge ~$0.015 per round, 1–2 rounds), billed to the IPO's advisor ledger. The $5 per IPO cap doesn't change.
 - **Archive:** in `reports/<ipo_id>/<run>/`:
   - `telegram_summary.txt`: what was sent
   - `telegram_summary_full.txt`: the full summary it came from
@@ -314,5 +314,5 @@ These are files the run reads and writes. All of them are local and gitignored.
 - **Analysis ledger** (`<ipo_id>`, $4.00): all section agents, sentiment, peer valuation (both calls) and synthesizer. $0.40 is reserved for the verdict. At 70% of the cap it switches Terra steps to Luna. At 100% it sends a partial report and doesn't retry.
 - **Advisor ledger** (`<ipo_id>:advisor`, $1.00): the advisor, its closing-day sentiment refresh and demand check, the summary editor and the summary judge.
 - **Eval ledger** (`eval-summary`, $1.00 total): the offline regression run only (`evals/summary_eval.py`); never an IPO's budget.
-- **In all:** $5.00 per IPO at most. Live runs: peer valuation's two calls cost about $0.02–0.05.
+- **In all:** $5.00 per IPO at most. Measured: about $1.63 (HD Fire, a 460-page RHP) and $2.04 (Fusion CX, 559 pages) from start to close, with about $1.35–1.76 on the analysis ledger and about $0.28 on the advisor ledger. The README's cost table has the split by step. Peer valuation's two calls cost about $0.02–0.05.
 - **Free:** daily GMP and subscription updates, discovery, rendering and all Python steps.
