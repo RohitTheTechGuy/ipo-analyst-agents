@@ -11,7 +11,7 @@
 
 A daily multi-agent system for **Indian mainboard IPOs**. Each weekday it lists the IPOs open that day on Telegram, and for each one you pick it reads the prospectus (RHP). It produces a verified analyst report and a **BUY / NO BUY** call, and sends them to Telegram: a short plain-English summary plus a full PDF. It then follows the IPO with daily grey-market (GMP) and subscription updates until the IPO closes.
 
-Built with **Python · LangGraph · OpenAI (GPT-5.6 Luna / Terra, GPT-6.1 Sol) · Groq · Telegram**.
+Built with **Python · LangGraph · OpenAI (GPT-5.6 Luna / Terra, GPT-6.1 Sol) · xAI (Grok 4.20) · Groq · Telegram**.
 
 > Recommend and remind only: it never places a bid. **Not investment advice.**
 
@@ -29,7 +29,7 @@ Each weekday at 10:30 IST, a numbered list of the new IPOs ready for analysis. N
 Reply "all" for every one, or "none" to skip. GMP/subscription updates for analysed IPOs continue either way.
 ```
 
-Reply `1`, `ZETWERK`, `1,2` or `all`. Within about 5 minutes the bot confirms ("▶️ Starting analysis of …"), and when the analysis is done you get the summary below:
+Reply `1`, `ZETWERK`, `1,2`, `all` or `none`. Within about 5 minutes the bot confirms ("▶️ Starting analysis of …" or "OK, nothing will be analysed"); a choice made at the terminal prompt is confirmed in the chat the same way, and when the analysis is done you get the summary below:
 
 ```
 📄 Fusion CX Ltd. IPO
@@ -54,7 +54,7 @@ Full analysis in the attached PDF. Not investment advice.
 
 The **PDF report** follows the message. It covers the offer and use of funds, financials, risk factors, legal and governance, business and industry, peer valuation (each peer's numbers, and whether it is really a peer), market sentiment, the analyst view and the advisor's call. Every figure carries its RHP page.
 
-While the IPO is open, a **daily update** reports the GMP and subscription. On the **closing day**, the advisor gathers fresh news and makes its call again.
+While the IPO is open, a **daily update** reports the GMP and subscription. On the **closing day**, the advisor gathers fresh news and makes its call again, and a **demand check** (Grok) judges that call against the final subscription: why demand is high or low, what retail demand says, and, when demand contradicts the call (a NO BUY on a heavily subscribed IPO, say), why the call still holds or why demand weakens it.
 
 ---
 
@@ -102,7 +102,8 @@ Full agent map, models, context flow and diagrams: **[`docs/agents.md`](docs/age
 |---|---|---|
 | `luna` | gpt-5.6-luna | bulk RHP reading, descriptive sections |
 | `terra` | gpt-5.6-terra | decision-critical sections, synthesizer, peer-fit check, summary editor |
-| `sol` | gpt-6.1-sol | Financial Advisor, choice of peer multiples, summary judge |
+| `sol` | gpt-6.1-sol | Financial Advisor, choice of peer multiples |
+| `grok` | grok-4.20 reasoning (xAI) | closing-day demand check; summary judge: another company's model than the editor's, so it never grades its own family's writing |
 | `groq` | gpt-oss-120b | small calls (sentiment stance tags), with a fallback to Luna |
 
 ---
@@ -126,7 +127,7 @@ cp .env.example .env                  # then fill it in
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | yes | sending summaries and PDFs |
 | `GROQ_API_KEY` | no | free small calls; without it they run on Luna |
 | `TAVILY_API_KEY` | no | news search for sentiment |
-| `XAI_API_KEY` | no | reserved for an xAI (Grok) provider; not wired in yet |
+| `XAI_API_KEY` | yes, while a routed model uses xAI | the summary judge (Grok) |
 
 Discovery, GMP, subscription and peer prices come from public sites and need no keys.
 
@@ -152,7 +153,7 @@ After a boot, the jobs start only once you are logged in. Logging in by itself n
 .venv/bin/python run_daily.py --ipo FUSIONCX       # one open IPO only (no daily updates for others)
 .venv/bin/python run_daily.py --ipo FUSIONCX --force   # re-run it, within what is left of its budget
 .venv/bin/python run_daily.py --date 2026-10-14    # run as if on another date
-.venv/bin/python run_daily.py --smoke              # ~$0.03 pre-flight check of every model and schema
+.venv/bin/python run_daily.py --smoke              # ~$0.04 pre-flight check of every model and schema
 .venv/bin/python scheduler/install.py install      # weekdays 10:30 IST updates + Telegram offer, and the 5-min picks job (launchd)
 ```
 
@@ -167,6 +168,7 @@ Outputs:
 .venv/bin/pytest -q -p no:warnings                 # 550+ offline tests; no network, no spend
 .venv/bin/python -m evals.summary_eval --offline   # summary rulebook only, free
 .venv/bin/python -m evals.summary_eval             # editor + judge on saved reports, ~$0.10–0.25
+.venv/bin/python -m evals.advisor_compare          # Financial Advisor on Sol vs Grok on saved reports, ~$0.60
 ```
 
 - **Tests:** they fake only the outer edges (exchange, downloader, LLM, Telegram) and run the real graph.

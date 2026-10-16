@@ -10,3 +10,4 @@ tests/golden/**/*.pdf
 logs/
 data/
 .DS_Store
+session_handoff.md

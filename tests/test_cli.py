@@ -13,9 +13,10 @@ from ipo_agents import cli
 from ipo_agents.advisor import ledger_id
 from ipo_agents.analysis import CHECKPOINT_DB
 from ipo_agents.budget import BudgetMeter
-from ipo_agents.contracts import Advice, RiskFactors, Synthesis, ValuationPlan
+from ipo_agents.contracts import Advice, DemandCheck, RiskFactors, Synthesis, ValuationPlan
 from ipo_agents.maintenance import smoke_schemas
 from ipo_agents.sentiment import SentimentPoints, StanceTag
+from ipo_agents.summary_judge import SummaryScores
 from ipo_agents.wiring import MissingSecrets, build_adapters
 from tests.fakes import FakeExchange, ScriptedLLM, make_ipo
 
@@ -114,7 +115,7 @@ def test_missing_secrets_are_named_and_values_are_never_shown(config, monkeypatc
 def test_real_market_data_is_wired_without_any_secret_of_its_own(config, monkeypatch):
     from ipo_agents.market import HttpMarketData
 
-    for key in ("OPENAI_API_KEY", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"):
+    for key in ("OPENAI_API_KEY", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "XAI_API_KEY"):
         monkeypatch.setenv(key, "x")
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
 
@@ -227,9 +228,9 @@ def smoke(config_file, tmp_path, llm):
         cli.remove_logging()
 
 
-def test_smoke_calls_every_schema_once_on_luna_plus_advice_on_sol_and_reports_each(config, config_file, tmp_path, capsys):
+def test_smoke_calls_every_schema_once_on_luna_plus_advice_on_sol_and_the_judge_on_grok(config, config_file, tmp_path, capsys):
     schemas = smoke_schemas()
-    responses = {s: "parsed" for s in schemas}
+    responses = {s: "parsed" for s in [*schemas, SummaryScores, DemandCheck]}
     responses[Synthesis] = provider_error(openai.BadRequestError, 400,
                                           "Invalid schema for response_format 'Synthesis': 'additionalProperties'")
     responses[StanceTag] = RuntimeError("luna: provider response carried no token usage")
@@ -239,15 +240,19 @@ def test_smoke_calls_every_schema_once_on_luna_plus_advice_on_sol_and_reports_ea
 
     out = capsys.readouterr().out
     assert code == 1
-    # Every LLM-facing schema once on luna, then Advice once more on the advisor's model.
-    assert [c["schema"] for c in llm.calls] == [*schemas, Advice]
+    # Every LLM-facing schema once on luna, then Advice once more on the advisor's model and the judge's
+    # SummaryScores on its model.
+    assert [c["schema"] for c in llm.calls] == [*schemas, Advice, SummaryScores, DemandCheck]
     assert {Synthesis, StanceTag, ValuationPlan, SentimentPoints, RiskFactors, Advice} <= set(schemas)
-    assert [(c["model"], c["max_tokens"]) for c in llm.calls] == [("luna", 500)] * len(schemas) + [("sol", 1500)]
+    assert [(c["model"], c["max_tokens"]) for c in llm.calls] == ([("luna", 500)] * len(schemas)
+                                                                  + [("sol", 1500), ("grok", 1500), ("grok", 1500)])
     assert "Synthesis              SCHEMA REJECTED" in out
     assert "StanceTag              NO USAGE" in out
     assert "RiskFactors            OK (1000 in / 200 out)" in out
     assert "  Advice on sol          OK (1000 in / 200 out)" in out
-    assert f"{len(schemas) - 1}/{len(schemas) + 1} OK" in out
+    assert "  Judge on grok          OK (1000 in / 200 out)" in out
+    assert "  Demand on grok         OK (1000 in / 200 out)" in out
+    assert f"{len(schemas) + 1}/{len(schemas) + 3} OK" in out  # 2 of the luna calls fail; the 3 others pass
     # Each OK luna call: 1,000 in x $0.20/1M + 200 out x $1.20/1M = $0.00044; the sol call 1,000 x $2/1M
     # + 200 x $10/1M = $0.004; the 400 costs nothing, the missing-usage call its worst case. All logged
     # under SMOKE-<date>, never under an IPO.
@@ -265,7 +270,7 @@ def test_smoke_names_a_wrong_model_id(config, config_file, tmp_path, capsys):
 
 
 def test_smoke_passes_when_every_schema_answers(config, config_file, tmp_path):
-    llm = ScriptedLLM({s: "parsed" for s in smoke_schemas()}, models=config.models)
+    llm = ScriptedLLM({s: "parsed" for s in [*smoke_schemas(), SummaryScores, DemandCheck]}, models=config.models)
 
     assert smoke(config_file, tmp_path, llm) == 0
 
@@ -363,3 +368,14 @@ def test_single_ipo_run_sends_no_daily_updates_for_other_ipos(adapters, config_f
     assert not [m for m in adapters.notifier.messages if m.startswith(("📊", "⏰"))]
     with closing(sqlite3.connect(config.db_path)) as db:
         assert db.execute("SELECT last_reminded_at FROM ipos WHERE ipo_id = 'ACME-2026-10-13'").fetchone() == ("2026-10-13",)
+
+
+def test_a_routed_xai_model_needs_its_key_and_the_value_is_never_shown(config, monkeypatch):
+    for key in ("OPENAI_API_KEY", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"):
+        monkeypatch.setenv(key, "secret-value")
+    monkeypatch.delenv("XAI_API_KEY", raising=False)
+
+    with pytest.raises(MissingSecrets) as exc:
+        build_adapters(config)
+
+    assert "XAI_API_KEY" in str(exc.value) and "secret-value" not in str(exc.value)

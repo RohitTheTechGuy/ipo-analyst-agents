@@ -4,11 +4,13 @@ from __future__ import annotations
 from pathlib import Path
 
 import yaml
+from typing import Literal
+
 from pydantic import BaseModel, Field, model_validator
 
 
 class ModelConfig(BaseModel):
-    provider: str
+    provider: Literal["openai", "groq", "xai"]
     id: str
     price_in: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     price_cached: float | None = Field(default=None, ge=0, allow_inf_nan=False)
@@ -56,6 +58,11 @@ class AdvisorConfig(BaseModel):
     cap_usd: float = Field(default=0.50, gt=0, allow_inf_nan=False)
     max_tokens: int = Field(default=12_000, gt=0)  # reasoning + answer
     closing_day_refresh: bool = True
+    # Closing-day demand check (demand_check.py): hot at or above either threshold, weak below demand_weak_x.
+    demand_hot_total_x: float = Field(default=10.0, gt=0)
+    demand_hot_retail_x: float = Field(default=5.0, gt=0)
+    demand_weak_x: float = Field(default=1.0, gt=0)
+    demand_check_max_tokens: int = Field(default=8_000, gt=0)  # reasoning + answer
 
 
 class Config(BaseModel):

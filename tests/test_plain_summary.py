@@ -118,7 +118,7 @@ def test_run_daily_evaluates_the_plain_summary_then_sends_only_it_and_archives_t
     [msg] = adapters.notifier.messages
     assert msg.startswith("📄 Acme Ltd IPO\n") and "Our call: BUY" in msg
     assert len(_calls(adapters, "summary_editor")) == 1 and len(_calls(adapters, "summary_judge")) == 1
-    assert _calls(adapters, "summary_judge")[0]["model"] == "sol"
+    assert _calls(adapters, "summary_judge")[0]["model"] == "grok"  # another company's model than the editor's
     [run_dir] = Path(config.reports_dir, report.ipo.ipo_id).iterdir()
     assert (run_dir / "telegram_summary.txt").read_text() == msg + "\n"
     assert (run_dir / "telegram_summary_full.txt").read_text() == format_summary(report) + "\n"
@@ -200,3 +200,14 @@ def test_the_peer_multiples_line_is_kept_as_is_and_not_counted_as_jargon(config)
 
     assert "📊 Price vs similar listed companies: P/E 15.0× vs peer median 38.0× (60% discount)" in text
     assert problems(text, full, report) == []
+
+
+def test_the_rulebook_flags_accounting_terms_but_allows_basic_market_words():
+    report = full_report()
+    full = format_summary(report)
+
+    hard = " | ".join(problems("Goodwill and capital spending could not be checked.", full, report))
+    basic = " | ".join(problems("Cheaper than similar listed companies; the auditor flagged it.", full, report))
+
+    assert "jargon: " in hard and "Goodwill" in hard and "capital spending" in hard
+    assert "jargon" not in basic

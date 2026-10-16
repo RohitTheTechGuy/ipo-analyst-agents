@@ -63,8 +63,18 @@ def _keys(ipos: Sequence[Ipo]) -> dict[str, str]:
     return keys
 
 
-def ask_in_terminal(ask: Callable[[str], str], cap_usd: float) -> Callable[[list[Ipo]], list[Ipo]]:
-    """A run_daily `select` that lists the IPOs ready for analysis and asks which to analyse."""
+def confirmation(chosen: Sequence[Ipo], cap_usd: float) -> str:
+    """What was decided: the IPOs whose analysis starts now, or that none will be analysed."""
+    if not chosen:
+        return f"OK, nothing will be analysed. {UPDATES_CONTINUE}"
+    names = ", ".join(f"{_label(i)} ({i.name})" for i in chosen)
+    return f"▶️ Starting analysis of {names}, up to ${cap_usd:.2f} each. The report arrives here when it is done."
+
+
+def ask_in_terminal(ask: Callable[[str], str], cap_usd: float,
+                    notify: Callable[[str], object] | None = None) -> Callable[[list[Ipo]], list[Ipo]]:
+    """A run_daily `select` that lists the IPOs ready for analysis and asks which to analyse; the answer is
+    confirmed through `notify` (Telegram), like a Telegram reply. A failed send never stops the run."""
     def select(ipos: list[Ipo]) -> list[Ipo]:
         print(f"Open IPOs ready for analysis (up to ${cap_usd:.2f} each):")
         print("\n".join(f"  {line}" for line in numbered(ipos)))
@@ -72,8 +82,17 @@ def ask_in_terminal(ask: Callable[[str], str], cap_usd: float) -> Callable[[list
         while True:
             picked, unknown = resolve(ask("Analyse which? (e.g. 1,3 / all / none) [none]: "), ids, _keys(ipos))
             if not unknown:
-                return [i for i in ipos if i.ipo_id in picked]
+                break
             print(f"Not in the list: {', '.join(unknown)}")
+        chosen = [i for i in ipos if i.ipo_id in picked]
+        text = confirmation(chosen, cap_usd)
+        print(text)
+        if notify is not None:
+            try:
+                notify(text)
+            except Exception:
+                log.exception("could not send the pick confirmation")
+        return chosen
     return select
 
 
@@ -159,12 +178,8 @@ def process_picks(today: date, adapters: Adapters, config: Config, updates_sourc
             lines += ["Ready for analysis:", *numbered(todo.analyse)]
         else:
             lines.append("No IPO is waiting for analysis today.")
-    if chosen:
-        names = ", ".join(f"{_label(i)} ({i.name})" for i in chosen)
-        lines.append(f"▶️ Starting analysis of {names}, up to ${config.budget.cap_usd:.2f} each. "
-                     "The report arrives here when it is done.")
-    elif not lines:
-        lines.append(f"OK, nothing will be analysed. {UPDATES_CONTINUE}")
+    if chosen or not lines:
+        lines.append(confirmation(chosen, config.budget.cap_usd))
     adapters.notifier.send_message("\n".join(lines))
     if not chosen:
         return []

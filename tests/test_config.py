@@ -43,6 +43,8 @@ def test_unpriced_model_that_nothing_routes_to_is_allowed(tmp_path):
 
 @pytest.mark.parametrize("edit, match", [
     (lambda raw: raw["models"]["terra"].update(price_out=0.0), "terra.*free"),
+    (lambda raw: raw["models"]["grok"].update(price_in=0.0), "grok.*free"),
+    (lambda raw: raw["models"]["luna"].update(provider="anthropicx"), "provider"),
     (lambda raw: raw["models"]["luna"].update(price_in=-1.0), "greater than or equal"),
     (lambda raw: raw["budget"].update(cap_usd=0), "greater than 0"),
     (lambda raw: raw.update(default_max_tokens=0), "greater than 0"),

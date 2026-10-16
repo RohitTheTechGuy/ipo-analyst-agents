@@ -40,6 +40,8 @@ def build_adapters(config: Config, *, discovery_only: bool = False) -> Adapters:
         return Adapters(exchange=exchange, downloader=downloader,
                         llm=_Disabled("llm"), notifier=_Disabled("notifier"))
     missing = [k for k in REQUIRED_SECRETS if not os.environ.get(k)]
+    if any(config.models[m].provider == "xai" for m in set(config.routing.values())):
+        missing += [] if os.environ.get("XAI_API_KEY") else ["XAI_API_KEY"]
     if missing:
         raise MissingSecrets(f"missing required secrets in .env or the environment: {', '.join(missing)}")
     if not os.environ.get("GROQ_API_KEY"):

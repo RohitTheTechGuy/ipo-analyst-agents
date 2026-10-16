@@ -28,12 +28,13 @@ def test_no_module_but_llm_py_references_a_chat_model():
     assert offenders == []
 
 
-@pytest.mark.parametrize("model", ["luna", "terra", "groq"])
+@pytest.mark.parametrize("model", ["luna", "terra", "groq", "grok"])
 def test_chat_clients_never_retry_behind_the_meter_and_time_out(monkeypatch, model):
     # Client retries would be billed without the meter seeing them, and would make a Groq 429 wait
     # instead of falling back to Luna at once; a hung call must not stall a graph branch forever.
     monkeypatch.setenv("OPENAI_API_KEY", "test")
     monkeypatch.setenv("GROQ_API_KEY", "test")
+    monkeypatch.setenv("XAI_API_KEY", "test")
     chat = LangChainLLM(load_config(REPO_ROOT / "config.yaml").models)._chat(model, 100)
 
     assert chat.max_retries == 0
@@ -180,3 +181,37 @@ def test_a_model_without_reasoning_effort_keeps_temperature_zero(monkeypatch):
     call(llm, model="groq")
 
     assert sent[0]["temperature"] <= 1e-6  # langchain_groq sends 1e-8 for 0: Groq requires temperature > 0
+
+
+def test_an_xai_model_is_called_at_xais_endpoint_with_its_key_and_strict_schema(monkeypatch):
+    monkeypatch.setenv("XAI_API_KEY", "xai-test-key")
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        body = completion({"content": json.dumps({"issue_size": NOT_DISCLOSED_JSON})}, model="grok-4.20-0309-reasoning")
+        # As xAI sends it: reasoning tokens billed on top of completion_tokens, not inside it.
+        body["usage"] = {**USAGE, "completion_tokens_details": {"reasoning_tokens": 36}}
+        return httpx.Response(200, json=body)
+
+    llm = LangChainLLM(load_config(REPO_ROOT / "config.yaml").models,
+                       http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+
+    result = call(llm, model="grok")
+
+    [req] = seen
+    body = json.loads(req.content)
+    assert str(req.url) == "https://api.x.ai/v1/chat/completions"
+    assert req.headers["authorization"] == "Bearer xai-test-key"
+    assert body["model"] == "grok-4.20-0309-reasoning" and body["response_format"]["type"] == "json_schema"
+    assert "reasoning_effort" not in body  # Grok 4 rejects it
+    assert (result.input_tokens, result.cached_tokens, result.output_tokens) == (1000, 100, 336)
+
+
+def test_openai_reasoning_tokens_are_not_counted_twice(monkeypatch):
+    # OpenAI already counts reasoning inside completion_tokens.
+    body = completion({"content": json.dumps({"issue_size": NOT_DISCLOSED_JSON})})
+    body["usage"] = {**USAGE, "completion_tokens_details": {"reasoning_tokens": 36}}
+    llm, _ = real_llm(monkeypatch, body)
+
+    assert call(llm).output_tokens == 300

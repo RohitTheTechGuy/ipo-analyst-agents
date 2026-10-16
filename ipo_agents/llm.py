@@ -1,6 +1,7 @@
 """The LLM provider boundary: one structured call in, parsed object + token usage out."""
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -9,6 +10,7 @@ from ipo_agents.config import ModelConfig
 
 # A hung request must not stall a graph branch; the meter charges a timed-out call its worst case.
 REQUEST_TIMEOUT_S = 120
+XAI_BASE_URL = "https://api.x.ai/v1"  # xAI's API is OpenAI-compatible
 
 
 @dataclass
@@ -43,7 +45,7 @@ class LLM(Protocol):
 
 
 class LangChainLLM:
-    """Real provider: OpenAI or Groq via LangChain, temperature 0, structured output.
+    """Real provider: OpenAI, Groq or xAI via LangChain, temperature 0, structured output.
 
     `http_client` (an httpx.Client) replaces the provider SDK's own transport; tests pass one built on
     httpx.MockTransport to drive this class against real-shaped replies."""
@@ -76,6 +78,13 @@ class LangChainLLM:
             # Also no client retries: a Groq 429 must fall back to Luna at once, never wait.
             return ChatGroq(model=cfg.id, max_tokens=max_tokens,
                             max_retries=0, timeout=REQUEST_TIMEOUT_S, **extra)
+        if cfg.provider == "xai":
+            from langchain_openai import ChatOpenAI
+
+            # Through the OpenAI client at xAI's endpoint: the same strict structured output and usage.
+            return ChatOpenAI(model=cfg.id, max_tokens=max_tokens, base_url=XAI_BASE_URL,
+                              api_key=os.environ.get("XAI_API_KEY", ""),
+                              max_retries=0, timeout=REQUEST_TIMEOUT_S, **extra)
         raise ValueError(f"unknown provider {cfg.provider!r}")
 
     def invoke_structured(self, *, model, system, user, schema, max_tokens, task=""):
@@ -85,12 +94,13 @@ class LangChainLLM:
         from pydantic import ValidationError
 
         chain = self._chat(model, max_tokens).with_structured_output(schema, include_raw=True)
+        xai = self._models[model].provider == "xai"
         try:
             out = chain.invoke([("system", system), ("user", user)])
         except (openai.LengthFinishReasonError, openai.ContentFilterFinishReasonError) as e:
             # Raised by the OpenAI SDK's .parse() on finish_reason length / content_filter; the completion
             # it carries has the real usage.
-            raise LLMParseError(f"{model}: {e}", **_completion_usage(e.completion)) from e
+            raise LLMParseError(f"{model}: {e}", **_completion_usage(e.completion, xai)) from e
         except (ValidationError, OutputParserException, OpenAIRefusalError) as e:
             # The SDK parsed the reply against the schema and failed; the reply and its usage are gone.
             raise LLMParseError(f"{model}: reply did not match {schema.__name__}: {e}", **UNKNOWN_USAGE) from e
@@ -98,10 +108,14 @@ class LangChainLLM:
         if not usage:
             # Can't cost the call; failing makes the meter charge the worst case instead of $0.
             raise RuntimeError(f"{model}: provider response carried no token usage")
+        output = usage.get("output_tokens", 0)
+        if xai:
+            # xAI bills reasoning tokens on top of completion_tokens (OpenAI counts them inside it).
+            output += (usage.get("output_token_details") or {}).get("reasoning", 0) or 0
         tokens = dict(
             input_tokens=usage.get("input_tokens", 0),
             cached_tokens=(usage.get("input_token_details") or {}).get("cache_read", 0),
-            output_tokens=usage.get("output_tokens", 0),
+            output_tokens=output,
         )
         if out["parsing_error"]:
             # Read usage first: a failed parse was still billed and must be metered.
@@ -112,11 +126,15 @@ class LangChainLLM:
         return LLMResult(parsed=out["parsed"], **tokens)
 
 
-def _completion_usage(completion) -> dict:
-    """Token usage from an OpenAI ChatCompletion; unknown if it carries none."""
+def _completion_usage(completion, xai: bool = False) -> dict:
+    """Token usage from an OpenAI ChatCompletion; unknown if it carries none. For xAI, reasoning tokens are
+    billed on top of completion_tokens."""
     usage = getattr(completion, "usage", None)
     if usage is None:
         return dict(UNKNOWN_USAGE)
     details = getattr(usage, "prompt_tokens_details", None)
-    return dict(input_tokens=usage.prompt_tokens, output_tokens=usage.completion_tokens,
+    output = usage.completion_tokens
+    if xai:
+        output += getattr(getattr(usage, "completion_tokens_details", None), "reasoning_tokens", None) or 0
+    return dict(input_tokens=usage.prompt_tokens, output_tokens=output,
                 cached_tokens=(getattr(details, "cached_tokens", None) or 0))

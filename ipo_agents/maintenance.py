@@ -15,11 +15,14 @@ from ipo_agents.budget import BudgetMeter, MeteredLLM, _status
 from ipo_agents.config import Config
 from ipo_agents.advisor import TASK as ADVISOR_TASK
 from ipo_agents.advisor import ledger_id
-from ipo_agents.contracts import Advice, Synthesis, ValuationPlan
+from ipo_agents.contracts import Advice, DemandCheck, Synthesis, ValuationPlan
+from ipo_agents.demand_check import TASK as DEMAND_TASK
 from ipo_agents.llm import LLM, LLMParseError
 from ipo_agents.router import FALLBACK
 from ipo_agents.sections import SECTIONS
 from ipo_agents.sentiment import SentimentPoints, StanceTag
+from ipo_agents.summary_judge import TASK as JUDGE_TASK
+from ipo_agents.summary_judge import SummaryScores
 
 # --- smoke --------------------------------------------------------------------------------------
 
@@ -32,6 +35,11 @@ SMOKE_MAX_TOKENS = 500
 # ~600 in x $2/1M + 1,500 out x $10/1M = ~$0.016; a typical reply costs about $0.01.
 SMOKE_ADVISOR_TASK = "smoke_advisor"
 SMOKE_ADVISOR_MAX_TOKENS = 1_500
+# And one on the summary judge's model (another provider: grok), to check its model ID and strict schema.
+SMOKE_JUDGE_TASK = "smoke_judge"
+SMOKE_JUDGE_MAX_TOKENS = 1_500
+# And one DemandCheck on the closing-day demand check's model, so a schema it rejects shows before a closing day.
+SMOKE_DEMAND_TASK = "smoke_demand"
 SMOKE_SYSTEM = ("This is a connectivity test. Return the smallest valid answer for the schema: empty lists, "
                 "null or not-disclosed values, empty strings, and the most neutral choice where one is required.")
 SMOKE_USER = "[page 1]\nThis page is intentionally blank."
@@ -58,19 +66,27 @@ def _diagnose(e: Exception) -> str:
 
 
 def smoke(config: Config, llm: LLM, today: date, out: Callable[[str], None] = print) -> bool:
-    """One tiny call per schema on Luna, plus one Advice call on the advisor's model (sol) to check its model
-    ID and the strict schema there; all metered under ipo_id SMOKE-<date>. True if every call was OK."""
-    advisor_model = config.routing[ADVISOR_TASK]
+    """One tiny call per schema on Luna, plus one Advice call on the advisor's model (sol) and one
+    SummaryScores call on the summary judge's model (grok) and one DemandCheck call on the demand check's
+    model (grok) to check their model IDs and the strict schema there; all metered under ipo_id
+    SMOKE-<date>. True if every call was OK."""
+    advisor_model, judge_model = config.routing[ADVISOR_TASK], config.routing[JUDGE_TASK]
+    demand_model = config.routing[DEMAND_TASK]
     config = config.model_copy(update={"routing": {**config.routing, SMOKE_TASK: SMOKE_MODEL,
-                                                   SMOKE_ADVISOR_TASK: advisor_model}})
+                                                   SMOKE_ADVISOR_TASK: advisor_model,
+                                                   SMOKE_JUDGE_TASK: judge_model,
+                                                   SMOKE_DEMAND_TASK: demand_model}})
     meter = BudgetMeter(f"SMOKE-{today:%Y-%m-%d}", config)
     metered = MeteredLLM(llm, meter)
     schemas = smoke_schemas()
     calls = [(SMOKE_TASK, schema, schema.__name__, SMOKE_MAX_TOKENS) for schema in schemas]
     calls.append((SMOKE_ADVISOR_TASK, Advice, f"Advice on {advisor_model}", SMOKE_ADVISOR_MAX_TOKENS))
+    calls.append((SMOKE_JUDGE_TASK, SummaryScores, f"Judge on {judge_model}", SMOKE_JUDGE_MAX_TOKENS))
+    calls.append((SMOKE_DEMAND_TASK, DemandCheck, f"Demand on {demand_model}", SMOKE_JUDGE_MAX_TOKENS))
     out(f"Smoke test: {len(schemas)} schemas on {SMOKE_MODEL} ({config.models[SMOKE_MODEL].id}), "
-        f"max_tokens {SMOKE_MAX_TOKENS}, and Advice on {advisor_model} ({config.models[advisor_model].id}), "
-        f"max_tokens {SMOKE_ADVISOR_MAX_TOKENS}; metered as {meter.ipo_id}")
+        f"max_tokens {SMOKE_MAX_TOKENS}, Advice on {advisor_model} ({config.models[advisor_model].id}) and "
+        f"SummaryScores on {judge_model} ({config.models[judge_model].id}) and DemandCheck on {demand_model}, max_tokens "
+        f"{SMOKE_ADVISOR_MAX_TOKENS}; metered as {meter.ipo_id}")
     ok = 0
     for task, schema, name, max_tokens in calls:
         try:

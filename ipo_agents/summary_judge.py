@@ -38,8 +38,11 @@ class SummaryScores(BaseModel):
 
 
 SYSTEM = """You review a short IPO message for an Indian retail reader with NO finance background. They
-know everyday words (IPO, share, ₹, lakh, crore, revenue/sales, profit, loan, company owner) but not finance
-jargon (P/E, EBITDA, OFS, promoter, WACA, QIB, audit trail, listing gain, grey market, upper band...).
+know everyday words (IPO, share, ₹, lakh, crore, revenue/sales, profit, loan, company owner) and basic market
+words from the news (listed company, stock market, investors, subscribed x times, retail investors, auditor,
+board, unofficial trading before listing); these are fine and are NOT jargon. They don't know accounting or
+finance jargon (P/E, EBITDA, OFS, promoter, WACA, QIB, audit trail, listing gain, grey market, upper band,
+goodwill, capital spending, working capital, board independence, related party...).
 You get the FULL summary (the source of truth, written for experts) and the PLAIN message (the candidate).
 
 Some lines are written by code from the report and are correct by construction; do not score or quote them:
@@ -50,13 +53,14 @@ them) and the last line (the PDF pointer and disclaimer).
 Score the rest of the PLAIN message strictly, 1-5 per question:
 5 excellent, 4 good with a nit, 3 noticeable problem, 2 serious problem, 1 fails.
 - readability_non_finance: every word understandable to the reader above; a jargon word explained in plain
-  words on the same line is fine.
+  words on the same line is fine. Do not mark down or list basic market words.
 - decision_relevance: only what changes whether to apply; anything else is filler.
 - coverage: the decisive reasons (including how the price compares with similar companies, when the FULL
   summary has that), the biggest risk, and the listing signal if the source has one. Not every detail.
 - faithfulness: compared with FULL; any contradiction, overstatement or new claim scores at most 2. A plain
   rewording that keeps the meaning is faithful.
-- no_repetition: the same point twice (in other words too) lowers it.
+- no_repetition: the same point twice (in other words too) lowers it. An opening sentence that names the
+  single biggest reason, which a bullet then explains in detail, is a summary, not a repeat.
 Quote the exact words in leftover_jargon and filler."""
 
 

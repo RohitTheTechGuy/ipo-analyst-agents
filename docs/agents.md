@@ -39,7 +39,7 @@ flowchart TD
     REP --> ADV[🤖 Financial Advisor<br/>BUY / NO BUY]
     ADV --> PDF[PDF renderer]
     PDF --> ED[🤖 Summary Editor<br/>plain-English draft]
-    ED --> EV{🤖 Summary Eval<br/>rulebook + Sol judge}
+    ED --> EV{🤖 Summary Eval<br/>rulebook + Grok judge}
     EV -->|failed: feedback, 1 revision| ED
     EV -->|passed, or best faithful draft| TG[Telegram: one summary + PDF]
     EV -->|no faithful draft| FULL[full summary] --> TG
@@ -47,7 +47,8 @@ flowchart TD
 
     PLAN -->|analysed IPO still open| UPD[Daily update<br/>GMP + subscription]
     UPD -->|closing day| ADV2[🤖 Advisor refresh<br/>re-gather sentiment · re-advise]
-    ADV2 --> TG
+    ADV2 --> DC[🤖 Demand check<br/>Grok: the call vs the subscription]
+    DC --> TG
     UPD --> TG
 
     subgraph OFF [Offline regression, run by hand]
@@ -81,9 +82,10 @@ flowchart LR
 | `luna` | `gpt-5.6-luna` (OpenAI) | 0.20 · 1.20 | Bulk reading (map), long or descriptive sections, sentiment aggregate. Reasoning effort `none`: at `low` it spent whole budgets reasoning and returned nothing. |
 | `terra` | `gpt-5.6-terra` (OpenAI) | 2.00 · 12.00 | Steps that drive the decision, and the peer-fit check. Reasoning effort `low`. |
 | `groq` | `openai/gpt-oss-120b` (Groq) | free tier | Small calls (sentiment stance tags). Any Groq failure, or a call over 6k tokens, falls back to Luna. |
-| `sol` | `gpt-6.1-sol` (OpenAI) | 2.00 · 10.00 | Financial Advisor, Peer Valuation's choice of multiples (high reasoning effort), and the Summary Eval judge |
+| `sol` | `gpt-6.1-sol` (OpenAI) | 2.00 · 10.00 | Financial Advisor and Peer Valuation's choice of multiples (high reasoning effort) |
+| `grok` | `grok-4.20-0309-reasoning` (xAI) | 1.25 · 2.50 | The closing-day Demand Check, and the Summary Eval judge: a model from another company than the editor's (Terra, OpenAI), so it never grades its own family's writing. It reasons by default; xAI bills reasoning tokens on top of `completion_tokens`, and the meter adds them. |
 
-Terra also runs the Summary Editor. An xAI key (`XAI_API_KEY`, see `.env.example`) can be added, but no `xai` provider is wired into routing yet.
+Terra also runs the Summary Editor. The `xai` provider goes through the OpenAI client at `https://api.x.ai/v1` and needs `XAI_API_KEY` while a routed model uses it. `evals/advisor_compare.py` runs the Financial Advisor on Sol and on Grok side by side, to decide whether to switch it.
 
 The routing lives in `config.yaml` (`routing:`). Once spend passes 70% of the $4.00 analysis cap, Terra tasks move down to Luna. Models with a reasoning effort are sent no temperature (Sol rejects it).
 
@@ -177,6 +179,14 @@ Two model calls. Neither ever outputs a number.
   - Other daily updates repeat the analysis-day call with no model call.
 - **Fails soft:** if the advisor errors or hits its $1.00 cap, the analysis summary and PDF still go out.
 
+### Demand Check 🤖 (`demand_check.py`): the closing-day call judged against the subscription
+- **Role:** a second opinion on the closing-day call, from another company's model (Grok, `demand_check`). It explains why the subscription is where it is, reads retail demand on its own, and says whether the call still holds against it. It never changes the call.
+- **Python decides the facts:** the demand level from the subscription (`config.advisor`: **high** at total ≥ 10× or retail ≥ 5×; **weak** when total or retail is below 1×; otherwise normal), and a **contradiction** when high demand meets a NO BUY or weak demand meets a BUY.
+- **Input:** the advisor's digest, plus the call being judged (`R:` items) and the demand reading (`K:demand`).
+- **Checks (Python):** the advisor's evidence-ID and number checks. No surviving reason means no check.
+- **Output:** lines after the subscription in the ⏰ closing message, e.g. "🔎 Demand check: HIGH demand", 2–3 reasons, a "Retail:" line, then "⚠️ HIGH demand vs NO BUY: the call still holds. …" or "❗ … the check thinks demand weakens the call. …". Saved as `demand_check_<date>.json`.
+- **Cost and failure:** about $0.05 on the advisor ledger. Without a subscription figure there is no call; if it fails, the normal update goes out.
+
 ### Summary Editor 🤖 (`plain_summary.py`): the Telegram summary in plain English
 - **Role:** rewrites the full summary for a reader with no finance background, keeping only what decides apply or not. The full detail stays in the attached PDF.
 - **Output:**
@@ -209,7 +219,7 @@ Two model calls. Neither ever outputs a number.
   - every number traceable to the full summary
   - no line over 30 words
   - the call shown exactly
-- **Judge (Sol, `summary_judge`):** a different model from the editor, so the editor doesn't grade its own work. It sees the full and the plain text and skips the lines Python writes. It scores five questions from 1 to 5:
+- **Judge (Grok 4.20 from xAI, `summary_judge`):** a model from another company than the editor's, so the editor's family doesn't grade its own work. It sees the full and the plain text and skips the lines Python writes. It scores five questions from 1 to 5:
 
   | Score | Question |
   |---|---|
@@ -229,7 +239,7 @@ Two model calls. Neither ever outputs a number.
   - else, the fully faithful draft (faithfulness 5) with the fewest rule problems and the highest total score
   - else, the full summary
   If the editor or the judge errors or hits the cap, the full summary is sent. A draft is never sent without a judge's score.
-- **Budget:** about $0.03–0.06 per IPO (Terra editor plus Sol judge, 1–2 rounds), billed to the IPO's advisor ledger. The $5 per IPO cap doesn't change.
+- **Budget:** about $0.03–0.06 per IPO (Terra editor plus Grok judge, 1–2 rounds), billed to the IPO's advisor ledger. The $5 per IPO cap doesn't change.
 - **Archive:** in `reports/<ipo_id>/<run>/`:
   - `telegram_summary.txt`: what was sent
   - `telegram_summary_full.txt`: the full summary it came from
@@ -294,7 +304,7 @@ These are files the run reads and writes. All of them are local and gitignored.
 | `data/ipo.db`, table `llm_calls` | Budget meter | Budget meter, router, `--reset-budget` | Every model call: ledger, task, model, tokens, cost. Spend per IPO and Groq's 24-hour usage are summed from here. |
 | `data/ipo.db`, table `telegram_state` | Offer, picks job | Picks job | The latest offer (which IPO each number means) and the next Telegram update to read, so no reply is acted on twice |
 | `data/checkpoints.db` | LangGraph `SqliteSaver` | `analyse_rhp` on resume | Graph state per `ipo_id:rhp_sha256`. Deleted when a run finishes. |
-| `data/work/<ipo_id>/` | Downloader, renderer, advisor | Analysis, closing-day refresh | `rhp.pdf`, `report_<SYMBOL>.pdf`, `report.json` (path also kept in `ipos.report_path`), `advice_<date>.json` |
+| `data/work/<ipo_id>/` | Downloader, renderer, advisor | Analysis, closing-day refresh | `rhp.pdf`, `report_<SYMBOL>.pdf`, `report.json` (path also kept in `ipos.report_path`), `advice_<date>.json`, `demand_check_<date>.json` |
 | `reports/<ipo_id>/` | Archive | You | Every run's report JSON, PDF and Telegram text, plus daily updates. Re-runs get their own folder. |
 | `config.yaml` | You | Everything | Models, prices, routing, caps, thresholds |
 | `.env` | You | `wiring.py`, `cli.py` | API keys and the Telegram bot |
@@ -302,7 +312,7 @@ These are files the run reads and writes. All of them are local and gitignored.
 
 ## Budget across agents (per IPO)
 - **Analysis ledger** (`<ipo_id>`, $4.00): all section agents, sentiment, peer valuation (both calls) and synthesizer. $0.40 is reserved for the verdict. At 70% of the cap it switches Terra steps to Luna. At 100% it sends a partial report and doesn't retry.
-- **Advisor ledger** (`<ipo_id>:advisor`, $1.00): the advisor, its closing-day sentiment refresh, the summary editor and the summary judge.
+- **Advisor ledger** (`<ipo_id>:advisor`, $1.00): the advisor, its closing-day sentiment refresh and demand check, the summary editor and the summary judge.
 - **Eval ledger** (`eval-summary`, $1.00 total): the offline regression run only (`evals/summary_eval.py`); never an IPO's budget.
 - **In all:** $5.00 per IPO at most. Live runs: peer valuation's two calls cost about $0.02–0.05.
 - **Free:** daily GMP and subscription updates, discovery, rendering and all Python steps.

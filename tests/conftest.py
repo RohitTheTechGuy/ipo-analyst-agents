@@ -28,6 +28,7 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "sections(*groups): the section agents analyse_rhp runs (default: offer_objects)")
     config.addinivalue_line("markers", "synthesizer: analyse_rhp makes the synthesizer call (default: it is skipped)")
     config.addinivalue_line("markers", "advisor: the Financial Advisor makes its model call (default: no advice)")
+    config.addinivalue_line("markers", "demand_check: the closing-day demand check makes its model call (default: no check)")
     config.addinivalue_line("markers", "summary_editor: run_daily makes the plain-summary editor and judge calls (default: full summary sent)")
     config.addinivalue_line("markers", "renderer:analyse_rhp renders the real PDF report (default: no PDF)")
 
@@ -68,6 +69,17 @@ def _advisor_under_test(request, monkeypatch):
             return None
         monkeypatch.setattr(analysis, "advise", no_advice)
         monkeypatch.setattr(advisor, "advise", no_advice)
+
+
+@pytest.fixture(autouse=True)
+def _demand_check_under_test(request, monkeypatch):
+    """The closing-day demand check runs after every refresh, but makes its model call only in tests marked
+    `@pytest.mark.demand_check`; elsewhere there is no check, so closing-day tests that count calls or match
+    the update line by line aren't changed by it."""
+    import ipo_agents.notify.reminders as reminders
+
+    if request.node.get_closest_marker("demand_check") is None:
+        monkeypatch.setattr(reminders, "check_demand", lambda *a, **kw: None)
 
 
 @pytest.fixture(autouse=True)

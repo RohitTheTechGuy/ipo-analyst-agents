@@ -38,39 +38,58 @@ FOOTER = "Full analysis in the attached PDF. Not investment advice."
 FLAG_CODE = re.compile(r"\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b")
 # Words a reader with no finance background does not know. Case-sensitive, so "pat" in "path" never matches.
 JARGON = re.compile(r"\b(?:WACA|OFS|EBITDA|EV|P/E|P/B|P/S|PAT|QIBs?|NIIs?|HNIs?|RHP|DRHP|CAGR|RoE|RoNW|ROCE|"
-                    r"GMP|EPS|NAV|Regulation \d|bps|YoY|[Pp]romoters?|[Uu]pper band|[Ll]isting gains?)\b|×")
+                    r"GMP|EPS|NAV|Regulation \d|bps|YoY|[Pp]romoters?|[Uu]pper band|[Ll]isting gains?|"
+                    r"[Gg]oodwill|[Cc]apex|[Cc]apital spending|[Ww]orking capital|[Bb]oard independence|"
+                    r"[Rr]elated[- ]part(?:y|ies)|[Cc]ash generation)\b|×")
+# Basic market words a retail reader picks up from news (listed company, stock market, subscribed, auditor)
+# are fine and deliberately not listed above.
 
 SYSTEM = f"""You rewrite an IPO summary for an Indian retail reader who has never bought a share. They know
-everyday words (IPO, share, ₹, lakh, crore, sales, profit, loan) but no finance jargon. They want to know one
-thing: should I apply, and why. Use only what the summary says.
+everyday words (IPO, share, ₹, lakh, crore, sales, profit, loan) and basic market words from the news
+(listed company, stock market, investors, subscribed x times, auditor, board), but no accounting or finance
+jargon. They want to know one thing: should I apply, and why. Use only what the summary says.
 
 Rules:
 - Keep only points that change the decision to apply or not; drop everything else (it is in the PDF).
 - The comparison with similar listed companies (P/E and other multiples) is shown separately, exactly as in
   the summary. Do not repeat its figures; one plain reason about what it means (cheap, expensive, mixed) is
   fine when it matters to the decision.
-- Never repeat a point: one_line_why gives the overall balance in a few words; the reasons give the detail
-  and must not restate it. Merge points that say the same thing.
+- Never repeat a point. one_line_why names only the single biggest reason, in under 15 words; it must not
+  list or preview the points in the reasons or watch-outs. Merge points that say the same thing.
+- Be specific, never vague: name the risk itself ("all products come from one plant in Pune; the largest
+  customer gives 38.4% of sales"), not a label ("business dependence"). If the price comparison is mixed,
+  say it is mixed; say which way each side goes only if the summary states it. Never call it cheap or
+  expensive overall unless the summary does.
+- A count of news articles is not demand for the shares; leave it out unless the summary draws a
+  conclusion from it.
 - Plain words only. Never write WACA, OFS, EBITDA, EV, P/E, PAT, QIB, RHP, GMP, CAGR, RoE, EPS, "promoter",
   "audit trail", "statutory", "listing gain", "upper band" or a code like OFFER_PRICE_FAR_ABOVE_WACA.
   Say what it means instead, for example:
   "insiders paid ₹72.2 a share on average; you would pay up to ₹289",
   "valued higher than similar listed companies for the profit it makes",
-  "the owners are selling their own shares, so the company gets none of the money",
+  "the owners are selling their own shares, so the company gets none of that part of the money",
   "the company's owners and their firms" (not "promoters"),
   "people trading the shares unofficially before listing expect them to open about 7% above the price" (not
   "grey market" / "listing gain").
 - Keep each fact's exact meaning while making it plain: who did what (a firm linked to the owners is not
   the owners themselves), what is pending vs done, what could not be checked. Plainer, never broader.
-- Explain any market phrase in the same line, e.g. "people who apply" not "retail bids", "cash the business
-  actually brought in" not "cash from operations".
+- Explain any accounting or finance phrase in the same line, or replace it, e.g. "people who apply" not
+  "retail bids", "cash the business actually brought in" not "cash from operations" or "cash generation",
+  "money spent on buildings and machines" not "capital spending", "an amount on the books for past
+  purchases of other companies that could be written down" not "goodwill", "whether the board has enough
+  directors not tied to the owners" not "board independence", "firms linked to the owners" not "related
+  parties", "money tied up in stock and unpaid bills" not "working capital".
 - Write "x times" instead of "×". Keep figures exactly as written; never turn an average into an exact price.
 - Short sentences, under 25 words each.
 - Numbers: only ones written in the summary, exactly as written there. Round nothing, compute nothing.
+- When the summary has them, always include: how much of the IPO is existing owners selling their own
+  shares, and the price you pay against what insiders paid (use the summary's own words for who paid).
+  They can share a line.
 - At most {MAX_REASONS} reasons and {MAX_WATCH_OUTS} watch-outs, most important first. The call is shown
   separately; do not restate it.
 - listing_signal: what unofficial pre-listing trading suggests for the first day and how much demand there is
-  so far; empty if the summary has neither."""
+  so far; empty if the summary has neither. These figures appear only here, never in the reasons or
+  watch-outs."""
 
 
 def plain_summary(report: Report, full_text: str, llm, revise: tuple[str, str] | None = None) -> str | None:

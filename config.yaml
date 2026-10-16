@@ -6,6 +6,7 @@ models:
   terra: { provider: openai, id: gpt-5.6-terra,       price_in: 2.00, price_cached: 0.20, price_out: 12.00, reasoning_effort: low }
   groq:  { provider: groq,   id: openai/gpt-oss-120b, price_in: 0.0,  price_cached: 0.0,  price_out: 0.0 }
   sol:   { provider: openai, id: gpt-6.1-sol,         price_in: 2.00, price_cached: 0.10, price_out: 10.00, reasoning_effort: high }
+  grok:  { provider: xai,    id: grok-4.20-0309-reasoning, price_in: 1.25, price_cached: 0.20, price_out: 2.50 }  # xAI; reasons by default, takes no reasoning_effort. grok-4.7 judged the same but took 129s (over the 120s timeout) vs 46s
 
 routing:
   map_extract:          luna
@@ -25,7 +26,8 @@ routing:
   sentiment_stance_tag: groq
   advisor:              sol
   summary_editor:       terra  # the Telegram summary in plain English, revised once on the judge's feedback (advisor ledger)
-  summary_judge:        sol    # evaluates each plain draft before it is sent (advisor ledger); not the editor's model
+  demand_check:         grok   # closing day: judges the advisor's call against the final subscription (advisor ledger); a second opinion from another company's model
+  summary_judge:        grok   # evaluates each plain draft before it is sent (advisor ledger); another company's model from the editor's, so it never grades its own family's writing
 
 budget:
   cap_usd: 4.00  # analysis ledger; with the advisor's $1.00, $5.00 per IPO in all
@@ -54,6 +56,12 @@ advisor:
   cap_usd: 1.00  # advisor ledger: analysis day + closing-day refresh
   max_tokens: 24000  # reasoning (effort high, billed as output) + the answer
   closing_day_refresh: true  # on close day: re-gather sentiment and re-advise before the last update
+  # Then the demand check (grok) on the same ledger: worst case ~25k in x $1.25/1M + 8,000 out x $2.50/1M
+  # = ~$0.05 reserved; measured ~$0.045 a call (reasoning billed on top), so the refresh stays ~$0.41 of $1.00.
+  demand_hot_total_x: 10    # hot demand: total subscription at or above this...
+  demand_hot_retail_x: 5    # ...or retail at or above this
+  demand_weak_x: 1          # weak demand: total or retail below this (undersubscribed)
+  demand_check_max_tokens: 8000
 
 groq_limits:
   max_call_tokens: 6000

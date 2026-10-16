@@ -767,7 +767,8 @@ class PlainSummary(BaseModel):
     LLM-facing (strict mode: no defaults). Python writes the header and the call; every number must be in
     the full summary it was given (plain_summary.py)."""
 
-    one_line_why: str = Field(description="One plain sentence: why apply or not, the single biggest reason")
+    one_line_why: str = Field(description="One plain sentence under 15 words: the single biggest reason to "
+                                          "apply or not; never a list of the points below")
     reasons: list[str] = Field(description="Up to 3 points that decide buy or not, most important first; no jargon")
     watch_outs: list[str] = Field(description="Up to 2 risks a buyer must know, most serious first; no jargon")
     listing_signal: str = Field(description="One plain line on the grey market price and demand so far; "
@@ -791,6 +792,25 @@ class CheckedAdvice(Advice):
     """An Advice after Python's checks, and the day it was given; what was dropped or downgraded is in `notes`."""
 
     as_of: date
+    notes: list[str] = []
+
+
+class DemandCheck(BaseModel):
+    """The closing-day demand check's answer (demand_check.py). LLM-facing: no defaults (OpenAI strict mode)."""
+
+    demand_reasons: list[EvidencedPoint] = Field(description="2-3 reasons the subscription is at this level, "
+                                                             "most important first")
+    retail_reading: str = Field(description="One or two sentences on what retail demand says; empty if no retail figure")
+    call_holds: bool = Field(description="Does the call still hold against this demand?")
+    verdict_vs_demand: str = Field(description="One or two sentences: why the call holds or why demand weakens it")
+
+
+class CheckedDemand(DemandCheck):
+    """A DemandCheck after Python's checks, with Python's demand reading; what was dropped is in `notes`."""
+
+    level: Literal["hot", "normal", "weak"]
+    call: Call
+    contradicts: bool
     notes: list[str] = []
 
 

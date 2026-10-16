@@ -203,7 +203,7 @@ def main(argv: Sequence[str] | None = None, *, build: Callable[..., Adapters] = 
             select = lambda ipos: []  # noqa: E731
         elif not args.ipo:
             if interactive():
-                select = ask_in_terminal(ask, config.budget.cap_usd)
+                select = ask_in_terminal(ask, config.budget.cap_usd, adapters.notifier.send_message)
             else:
                 select = lambda ipos: offered.extend(ipos) or []  # noqa: E731
         if args.ipo:

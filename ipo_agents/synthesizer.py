@@ -110,7 +110,8 @@ def build_digest(report: Report) -> dict[str, dict]:
             items["S:gmp"] = {**_claimed(s.gmp), "note": "unofficial grey-market premium; never the sole basis"}
         if s.subscription and s.subscription.total.value is not None:
             sub = s.subscription
-            items["S:subscription"] = {name: f.value for name, f in (("total", sub.total), ("qib", sub.qib),
+            # Rounded: sources report e.g. 0.047935391462961906 times, which models then copy into prose.
+            items["S:subscription"] = {name: round(f.value, 2) for name, f in (("total", sub.total), ("qib", sub.qib),
                                                                        ("nii", sub.nii), ("retail", sub.retail))
                                        if f and f.value is not None}
             items["S:subscription"].update(unit="times subscribed", source=sub.total.source_name,

@@ -23,7 +23,7 @@ summary editor (Terra) ──► draft 1
         ▲                     │
         │                     ▼
         │        ┌── 1. Rulebook (Python, free): fixed pass/fail rules
-        │        └── 2. Judge (Sol, a different model): five scores 1–5
+        │        └── 2. Judge (Grok, another company): five scores 1–5
         │                     │
         │          passes? ───┼── yes ──► send draft 1
         │                     │ no
@@ -75,7 +75,7 @@ The rulebook is `plain_summary.problems()`. A message fails if it breaks any of 
 | Rule | Why |
 |---|---|
 | At most 15 non-blank lines | Telegram is read on a phone; detail belongs in the PDF |
-| No jargon (P/E, OFS, PAT, EBITDA, WACA, QIB, GMP, "promoter", "listing gain", "×", …) | the reader doesn't know these words |
+| No jargon (P/E, OFS, PAT, EBITDA, WACA, QIB, GMP, "promoter", "listing gain", goodwill, capital spending, working capital, board independence, related party, cash generation, "×", …) | the reader doesn't know these words. Basic market words from the news (listed company, stock market, subscribed, auditor) are allowed |
 | No flag codes such as `OFFER_PRICE_FAR_ABOVE_WACA` | they are internal labels, not English |
 | Every number appears in the full summary | the model can't invent or compute figures |
 | No line over 30 words | it must be a quick read |
@@ -87,13 +87,13 @@ Two lines are exempt from the jargon rule because the code writes them on purpos
 
 ### 2. Judge: a model scores the message (`ipo_agents/summary_judge.py`)
 
-A **different model** from the editor (Sol, routing `summary_judge`) reads the full summary and the plain message side by side. Using a different model stops the editor grading its own work.
+A **model from another company** than the editor's (Grok 4.20 from xAI, routing `summary_judge`; the editor is OpenAI's Terra) reads the full summary and the plain message side by side. Using another company's model stops the editor's family grading its own work.
 
 The code writes some lines that are correct by construction: the header, the 🧭 call, the 📊 peer line and the footer. The judge ignores them and scores the rest from 1 to 5:
 
 | Score | Question it answers | What lowers it |
 |---|---|---|
-| **readability_non_finance** | Would someone who knows only everyday words (IPO, share, ₹, crore, sales, profit) understand every line? | any unexplained finance term ("cash from operations", "retail bids", "pre-listing trading") |
+| **readability_non_finance** | Would someone who knows everyday words (IPO, share, ₹, crore, sales, profit) and basic market words (listed company, stock market, subscribed, auditor) understand every line? | any unexplained accounting or finance term ("cash from operations", "goodwill", "capital spending") |
 | **decision_relevance** | Does every line help decide "apply or not"? | filler: true but irrelevant lines (business trivia, a bare article count) |
 | **coverage** | Are the decisive points there: the 2–3 main reasons, the biggest risk, price vs similar companies, the listing signal? | a missing point that would change the decision |
 | **faithfulness** | Does it say the same as the full summary, no more and no less? | any contradiction, overstatement or new claim (capped at 2) |
@@ -146,6 +146,8 @@ A draft passes only if all of these hold:
 | 1 | first editor prompt | 2 | 4 | 3–5 | 2 | 3–4 |
 | 2 | judge told which lines the code writes; prompt with plain-word examples | 3 | 4–5 | 3–4 | 2–5 | 3–4 |
 | 4 | peer line kept as is; "plainer, never broader" | 3–4 | 5 | 3–4 | **5** | 3–4 |
+| 2026-10-15, with revision | in-run gate + 1 revision, before tuning: 0/4 pass | 3–4 | 5 | 3–5 | 5 | 3–4 |
+| 2026-10-15, tuned | basic market words allowed; accounting terms in the rulebook; opening line = one reason; listing signal only once; no "cheap/expensive" unless the source says so: 1/4 pass | 3–4 | 4–5 | 4–5 | **5** | 3–5 |
 
 **Still to fix:**
 - **Readability:** phrases like "pre-listing trading" and "listed companies".
@@ -161,5 +163,6 @@ A draft passes only if all of these hold:
 | `ipo_agents/runner.py` | `_plain_text`: runs the loop in the daily job and sends the one chosen summary |
 | `evals/summary_eval.py` | the offline regression: cases, the loop, the report |
 | `tests/test_plain_summary.py` | offline tests for the checks, the loop (revision, faithful-only sending, fallbacks) and the rulebook |
-| `config.yaml` | `summary_editor: terra`, `summary_judge: sol` |
+| `config.yaml` | `summary_editor: terra`, `summary_judge: grok` |
+| `evals/advisor_compare.py` | the Financial Advisor on Sol vs Grok on saved reports, side by side (no routing change) |
 | `evals/results/` | one Markdown report per offline run |

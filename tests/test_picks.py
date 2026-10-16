@@ -226,3 +226,28 @@ def test_an_empty_first_read_still_counts_so_the_next_reply_is_acted_on(acme_don
     assert process_picks(DAY2, acme_done, config, source, CHAT) == []
     source.updates.append({"update_id": 500, "message": {"chat": {"id": int(CHAT)}, "text": "zeta"}})
     assert process_picks(DAY2, acme_done, config, source, CHAT) == [ZETA.ipo_id]
+
+
+def test_a_terminal_choice_is_confirmed_on_telegram(acme_done, config, config_file, tmp_path):
+    run(["--date", "2026-10-14"], acme_done, config_file, tmp_path, interactive=True, answers=["zeta"])
+    # Confirmed before the analysis starts, so it arrives ahead of the report.
+    assert acme_done.notifier.messages[0].startswith("▶️ Starting analysis of ZETA (Zeta Ltd), up to $")
+    acme_done.notifier.messages.clear()
+    other = ZETA.model_copy(update={"ipo_id": "OMEGA-2026-10-14", "name": "Omega Ltd", "symbol": "OMEGA"})
+    acme_done.exchange = FakeExchange([ACME, ZETA, other])
+
+    run(["--date", "2026-10-14", "--updates-only"], acme_done, config_file, tmp_path)  # no prompt, no confirmation
+    run(["--date", "2026-10-14"], acme_done, config_file, tmp_path, interactive=True, answers=[""])
+
+    confirmations = [m for m in acme_done.notifier.messages if m.startswith(("▶️", "OK,"))]
+    assert confirmations == ["OK, nothing will be analysed. GMP/subscription updates for analysed IPOs continue either way."]
+
+
+def test_a_terminal_pick_of_all_lists_every_ipo_in_the_confirmation(acme_done, config, config_file, tmp_path):
+    other = ZETA.model_copy(update={"ipo_id": "OMEGA-2026-10-14", "name": "Omega Ltd", "symbol": "OMEGA"})
+    acme_done.exchange = FakeExchange([ACME, ZETA, other])
+
+    run(["--date", "2026-10-14"], acme_done, config_file, tmp_path, interactive=True, answers=["all"])
+
+    assert acme_done.notifier.messages[0] == ("▶️ Starting analysis of ZETA (Zeta Ltd), OMEGA (Omega Ltd), "
+                                              f"up to ${config.budget.cap_usd:.2f} each. The report arrives here when it is done.")

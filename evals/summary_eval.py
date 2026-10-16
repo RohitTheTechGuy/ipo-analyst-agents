@@ -1,7 +1,7 @@
 """Offline regression run of the summary evaluation (run by hand, not in pytest). See evals/eval.md.
 
 The daily run already evaluates every new summary before sending it (plain_summary.evaluated_summary:
-editor draft -> rulebook + Sol judge -> one revision with the feedback -> send the best faithful draft).
+editor draft -> rulebook + judge (Grok, another company than the editor) -> one revision with the feedback -> send the best faithful draft).
 This script runs that same loop on saved reports and fixtures, so a prompt or model change can be checked
 before it reaches Telegram. Writes evals/results/<date>_<time>.md.
 
@@ -63,12 +63,17 @@ def main(argv=None) -> int:
     for name, report in cases().items():
         full = format_summary(report)
         if args.offline:
-            text, scores, rounds = full, None, 0
+            text, scores, rounds, draft_lines = full, None, 0, []
         else:
             sent, drafts = evaluated_summary(report, full, llm)
             text = sent or full
             chosen = next((d for d in drafts if d.text == sent), None)
             scores, rounds = (chosen.scores if chosen else None), len(drafts)
+            draft_lines = [f"- Draft {n}: {'passed' if d.passed else 'failed'}; "
+                           + (", ".join(f"{k} {getattr(d.scores, k).score}" for k in SCORES) if d.scores else "not scored")
+                           + (f"; faithfulness: {d.scores.faithfulness.reason}" if d.scores and d.scores.faithfulness.score < 5 else "")
+                           + (f"; rules: {'; '.join(d.rules)}" if d.rules else "")
+                           for n, d in enumerate(drafts, 1)]
         rules = problems(text, full, report)
         ok = passed(rules, scores)
         score_cells = [str(getattr(scores, k).score) for k in SCORES] if scores else ["–"] * len(SCORES)
@@ -76,6 +81,8 @@ def main(argv=None) -> int:
         rows.append(f"| {name} | {'✅' if ok else '❌'} | {sent_kind} | {rounds} | {len([l for l in text.splitlines() if l.strip()])} | "
                     + " | ".join(score_cells) + f" | {len(rules)} |")
         detail = [f"## {name}", "", "**Rulebook:** " + ("; ".join(rules) or "clean"), ""]
+        if draft_lines:
+            detail += ["**Drafts:**", *draft_lines, ""]
         if scores:
             detail += [f"- **{k}** {getattr(scores, k).score}: {getattr(scores, k).reason}" for k in SCORES]
             for label, items in (("Leftover jargon", scores.leftover_jargon),
