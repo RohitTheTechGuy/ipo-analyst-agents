@@ -13,6 +13,7 @@ from pathlib import Path
 
 import tiktoken
 
+from ipo_agents import cancel
 from ipo_agents.config import Config, ModelConfig
 from ipo_agents.llm import LLM, LLMParseError
 from ipo_agents.router import FALLBACK, get_model, is_groq
@@ -225,7 +226,9 @@ class MeteredLLM:
         self._sleep = sleep or time.sleep  # looked up at construction so tests can stub it
 
     def invoke_structured(self, *, task, system, user, schema, max_tokens):
-        """Callers name the task; the router picks the model. A failed Groq call is redone on Luna at once."""
+        """Callers name the task; the router picks the model. A failed Groq call is redone on Luna at once.
+        Raises cancel.Cancelled, before anything is sent, once a stop was asked for from Telegram."""
+        cancel.check()
         prompt_tokens = _prompt_tokens(system, user, schema)
         model = get_model(task, prompt_tokens + max_tokens, self.meter)
         call = dict(task=task, system=system, user=user, schema=schema, max_tokens=max_tokens)

@@ -849,4 +849,5 @@ class RunSummary(BaseModel):
     skipped: list[str] = []
     waiting_rhp: list[str] = []
     failed: list[str] = []
+    cancelled: list[str] = []  # stopped from Telegram, or not started because of the stop
     notify_failed: list[str] = []

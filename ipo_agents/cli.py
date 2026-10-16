@@ -23,7 +23,7 @@ from ipo_agents.contracts import Ipo
 from ipo_agents.budget import BudgetMeter
 from ipo_agents.llm import LLM, LangChainLLM
 from ipo_agents.maintenance import reset_budget, smoke
-from ipo_agents.notify.picks import ask_in_terminal, process_picks, send_offer
+from ipo_agents.notify.picks import ask_in_terminal, notice_sender, per_ipo_cap, process_picks, send_offer
 from ipo_agents.runner import plan, run_daily
 from ipo_agents.store import Store
 from ipo_agents.wiring import MissingSecrets, build_adapters
@@ -196,14 +196,15 @@ def main(argv: Sequence[str] | None = None, *, build: Callable[..., Adapters] = 
         if args.telegram_picks:
             process_picks(today, adapters, config, adapters.notifier, os.environ.get("TELEGRAM_CHAT_ID", ""))
             return 0
-        select, offered = None, []
+        select, offered, on_start = None, [], None
         if args.ask_telegram:
             select = lambda ipos: offered.extend(ipos) or []  # noqa: E731
         elif args.updates_only:
             select = lambda ipos: []  # noqa: E731
         elif not args.ipo:
             if interactive():
-                select = ask_in_terminal(ask, config.budget.cap_usd, adapters.notifier.send_message)
+                select = ask_in_terminal(ask, per_ipo_cap(config), adapters.notifier.send_message)
+                on_start = notice_sender(adapters.notifier.send_message, stoppable=False)
             else:
                 select = lambda ipos: offered.extend(ipos) or []  # noqa: E731
         if args.ipo:
@@ -220,7 +221,7 @@ def main(argv: Sequence[str] | None = None, *, build: Callable[..., Adapters] = 
                       f"budget already spent, ${left:.2f} left (spend never resets)")
         log.info("run starting for %s%s", today, f" (only {args.ipo})" if args.ipo else "")
         summary = run_daily(today, adapters, config, force_ipo=args.ipo if args.force else None,
-                            daily_updates=not args.ipo, select=select)
+                            daily_updates=not args.ipo, select=select, on_start=on_start)
         log.info("run finished: %s", summary.model_dump())
         if offered and args.ask_telegram:
             send_offer(today, offered, adapters, config)

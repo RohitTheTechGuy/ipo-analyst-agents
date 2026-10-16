@@ -72,6 +72,16 @@ def _advisor_under_test(request, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_stop_left_over():
+    """A stop requested in one test (cancel.request) never leaks into the next."""
+    from ipo_agents import cancel
+
+    cancel.clear()
+    yield
+    cancel.clear()
+
+
+@pytest.fixture(autouse=True)
 def _demand_check_under_test(request, monkeypatch):
     """The closing-day demand check runs after every refresh, but makes its model call only in tests marked
     `@pytest.mark.demand_check`; elsewhere there is no check, so closing-day tests that count calls or match

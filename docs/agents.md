@@ -6,7 +6,7 @@ Only steps marked 🤖 call a model. Everything else is deterministic Python. Th
 
 ## The run at a glance
 
-`launchd` starts the job at 10:30 IST on weekdays: `run_daily.py --ask-telegram` → `cli.main` → `runner.run_daily`. That run analyses nothing: it sends the daily updates and a numbered Telegram list of new IPOs. A second launchd job runs `run_daily.py --telegram-picks` every 5 minutes (`notify/picks.py`). It reads replies from your chat only and analyses just the IPOs picked. A manual `run_daily.py` asks in the terminal instead (Enter = none), and `--updates-only` analyses none.
+`launchd` starts the job at 10:30 IST on weekdays: `run_daily.py --ask-telegram` → `cli.main` → `runner.run_daily`. That run analyses nothing: it sends the daily updates and a numbered Telegram list of new IPOs. A second launchd job runs `run_daily.py --telegram-picks` every 5 minutes (`notify/picks.py`). It reads replies from your chat only and analyses just the IPOs picked. It confirms the pick ("✅ Got it"), then announces each analysis as it begins ("🚀 Analysis started … Reply "stop" or "cancel" to stop it"). While it analyses, a background thread (`StopWatcher`) checks the chat every 20 seconds without consuming replies. A stop sets a flag (`cancel.py`) that every metered model call checks first. The run then stops at its next call: the IPO is saved as `cancelled`, with its checkpoint kept, and picking it again resumes it. A reply with any word not understood starts nothing. A manual `run_daily.py` asks in the terminal instead (Enter = none), and `--updates-only` analyses none.
 
 ```mermaid
 flowchart TD
@@ -302,7 +302,7 @@ These are files the run reads and writes. All of them are local and gitignored.
 |---|---|---|---|
 | `data/ipo.db`, table `ipos` | Runner, Store | Runner, daily updates, dry run | Each IPO's status (`discovered`, `waiting_rhp`, `analysing`, `done`, `failed`, `failed_budget`), dates, band, symbol, verdict, report path, date of last update |
 | `data/ipo.db`, table `llm_calls` | Budget meter | Budget meter, router, `--reset-budget` | Every model call: ledger, task, model, tokens, cost. Spend per IPO and Groq's 24-hour usage are summed from here. |
-| `data/ipo.db`, table `telegram_state` | Offer, picks job | Picks job | The latest offer (which IPO each number means) and the next Telegram update to read, so no reply is acted on twice |
+| `data/ipo.db`, table `telegram_state` | Offer, picks job | Picks job | The latest offer (which IPO each number means), the next Telegram update to read, and stop replies already acted on, so no reply is acted on twice |
 | `data/checkpoints.db` | LangGraph `SqliteSaver` | `analyse_rhp` on resume | Graph state per `ipo_id:rhp_sha256`. Deleted when a run finishes. |
 | `data/work/<ipo_id>/` | Downloader, renderer, advisor | Analysis, closing-day refresh | `rhp.pdf`, `report_<SYMBOL>.pdf`, `report.json` (path also kept in `ipos.report_path`), `advice_<date>.json`, `demand_check_<date>.json` |
 | `reports/<ipo_id>/` | Archive | You | Every run's report JSON, PDF and Telegram text, plus daily updates. Re-runs get their own folder. |

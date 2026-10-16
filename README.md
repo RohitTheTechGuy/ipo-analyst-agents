@@ -26,10 +26,19 @@ Each weekday at 10:30 IST, a numbered list of the new IPOs ready for analysis. N
 1. TONBO — Tonbo Imaging India Limited (closes 17 Oct)
 2. ZETWERK — Zetwerk Manufacturing Businesses Limited (closes 17 Oct)
 
-Reply "all" for every one, or "none" to skip. GMP/subscription updates for analysed IPOs continue either way.
+Reply "all" for every one, or "none" to skip; "stop" stops an analysis that is running. GMP/subscription updates for analysed IPOs continue either way.
 ```
 
-Reply `1`, `ZETWERK`, `1,2`, `all` or `none`. Within about 5 minutes the bot confirms ("▶️ Starting analysis of …" or "OK, nothing will be analysed"); a choice made at the terminal prompt is confirmed in the chat the same way, and when the analysis is done you get the summary below:
+Reply `1`, `ZETWERK`, `1,2`, `all` or `none`. A choice made at the terminal prompt gets the same messages. Within about 5 minutes the bot replies in three steps:
+
+```
+✅ Got it: analysing ZETWERK (Zetwerk Manufacturing Businesses Limited), up to $5.00 each. The report arrives here when it is done.
+🚀 Analysis started: ZETWERK (Zetwerk Manufacturing Businesses Limited). Reply "stop" or "cancel" to stop it.
+```
+
+- **To stop:** reply `stop` or `cancel` while it runs. The bot checks every 20 seconds and stops at the next model call, usually within a minute: "⏹ Stopped at your request. ZETWERK: stopped part-way, $0.84 spent. Its progress is saved: reply ZETWERK to continue from there." Spend so far is not refunded, and IPOs picked but not yet started are skipped.
+- **A reply the bot doesn't fully understand starts nothing.** "cancel 2" never starts IPO 2.
+- **When the analysis is done,** you get the summary below:
 
 ```
 📄 Fusion CX Ltd. IPO

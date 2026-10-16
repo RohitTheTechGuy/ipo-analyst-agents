@@ -20,6 +20,7 @@ from ipo_agents.notify.reminders import send_daily_updates
 from ipo_agents.plain_summary import evaluated_summary
 from ipo_agents.report.labels import (DISCLAIMER, MARKET_HEADING, VERDICT_LABELS, advice_text, market_read,
                                       subscription_text)
+from ipo_agents import cancel
 from ipo_agents.store import TERMINAL, Store, same_company
 from ipo_agents.valuation import operating_line, peer_lines
 from ipo_agents.valuation import summary_line as valuation_summary_line
@@ -156,6 +157,10 @@ def _plain_text(report: Report, full: str, adapters: Adapters, config: Config) -
     try:
         text, drafts = evaluated_summary(report, full, advisor_llm(adapters.llm, report.ipo.ipo_id, config))
         return text or full, drafts
+    except cancel.Cancelled:
+        # The analysis is done and paid for: a stop now only skips the plain rewrite.
+        log.warning("plain summary for %s skipped: stop requested; sending the full summary", report.ipo.ipo_id)
+        return full, []
     except Exception:
         log.exception("plain summary failed for %s; sending the full summary", report.ipo.ipo_id)
         return full, []
@@ -236,12 +241,14 @@ def _send(ipo: Ipo, text: str, pdf_path: str | None, adapters: Adapters, summary
 
 
 def run_daily(today: date, adapters: Adapters, config: Config, force_ipo: str | None = None,
-              daily_updates: bool = True, select: Callable[[list[Ipo]], list[Ipo]] | None = None) -> RunSummary:
+              daily_updates: bool = True, select: Callable[[list[Ipo]], list[Ipo]] | None = None,
+              on_start: Callable[[Ipo, int, int], object] | None = None) -> RunSummary:
     """`force_ipo` (ipo_id or symbol) re-runs that IPO even if it is done or failed_budget. Spend is
     logged per ipo_id and never resets, so a forced re-run can only spend what is left of the cap.
     `daily_updates=False` skips the GMP/subscription updates for analysed IPOs (a single-IPO run).
     `select` picks which of the IPOs ready for analysis to analyse; the rest are left untouched in the
-    store, so a later run offers them again while they are open."""
+    store, so a later run offers them again while they are open. `on_start(ipo, n, total)` is told as each
+    analysis begins (the "started" message); a failure in it never stops the run."""
     todo = plan(today, adapters, config, force_ipo)
     if select is not None and todo.analyse:
         todo.analyse = select(list(todo.analyse))
@@ -255,7 +262,15 @@ def run_daily(today: date, adapters: Adapters, config: Config, force_ipo: str | 
     for ipo in todo.hold:
         store.upsert(ipo, "waiting_rhp")
         summary.waiting_rhp.append(ipo.ipo_id)
-    for ipo in todo.analyse:
+    for n, ipo in enumerate(todo.analyse):
+        if cancel.requested():
+            summary.cancelled += [i.ipo_id for i in todo.analyse[n:]]  # never started: left untouched
+            break
+        if on_start is not None:
+            try:
+                on_start(ipo, n + 1, len(todo.analyse))
+            except Exception:
+                log.exception("could not send the start notice for %s", ipo.ipo_id)
         store.upsert(ipo, "analysing")
         try:
             rhp = adapters.downloader.download(ipo.rhp_url, Path(config.work_dir) / ipo.ipo_id)
@@ -272,6 +287,12 @@ def run_daily(today: date, adapters: Adapters, config: Config, force_ipo: str | 
                 archive_report(partial, text, config.reports_dir, today, partial=True)
             _send(ipo, text, partial and partial.pdf_path, adapters, summary)
             continue
+        except cancel.Cancelled:
+            # Not terminal: offered again, and picking it resumes from its checkpoint.
+            log.warning("analysis of %s stopped from Telegram", ipo.ipo_id)
+            store.upsert(ipo, "cancelled")
+            summary.cancelled += [i.ipo_id for i in todo.analyse[n:]]
+            break
         except Exception:
             log.exception("analysis failed for %s", ipo.ipo_id)
             store.upsert(ipo, "failed")  # retried on the next run, resuming from its checkpoint
