@@ -42,6 +42,20 @@ def same_company(a: str, b: str) -> bool:
     return norm(a) == norm(b)
 
 
+LISTING_WORKING_DAYS = 3  # SEBI's T+3: an IPO lists on the third working day after it closes
+LISTING_LOOKBACK_DAYS = 10  # wider than any T+3 span, holidays and weekends included
+
+
+def expected_listing(close_date: date) -> date:
+    """The third weekday after `close_date`. Exchange holidays aren't known here, so on a holiday week the
+    real listing is a day or two later than this."""
+    day, left = close_date, LISTING_WORKING_DAYS
+    while left:
+        day += timedelta(days=1)
+        left -= day.weekday() < 5
+    return day
+
+
 class Store:
     def __init__(self, db_path: str | Path):
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
@@ -114,17 +128,30 @@ class Store:
     # --- closing reminders (ticket 05) ---
 
     def due_updates(self, today: date) -> list[tuple[Ipo, str | None]]:
-        """(ipo, verdict) for analysed IPOs still open today (open <= today <= close), not yet updated today."""
+        """(ipo, verdict) for analysed IPOs due an update today and not yet updated today: every day while open
+        (open <= today <= close), then each weekday after close through the expected listing day."""
         rows = self._db.execute(
             """SELECT ipo_id, name, symbol, open_date, close_date, price_band, lot_size, rhp_url, verdict FROM ipos
                WHERE status = 'done' AND open_date <= ? AND close_date >= ?
                  AND (last_reminded_at IS NULL OR last_reminded_at != ?)
                ORDER BY close_date, ipo_id""",
-            (today.isoformat(), today.isoformat(), today.isoformat()),
+            (today.isoformat(), (today - timedelta(days=LISTING_LOOKBACK_DAYS)).isoformat(), today.isoformat()),
         ).fetchall()
-        return [(Ipo(ipo_id=i, name=n, symbol=sym or _symbol_from_id(i), open_date=date.fromisoformat(o),
-                     close_date=date.fromisoformat(c), price_band=band or "", lot_size=lot or 0, rhp_url=url), v)
-                for i, n, sym, o, c, band, lot, url, v in rows]
+        due = [(Ipo(ipo_id=i, name=n, symbol=sym or _symbol_from_id(i), open_date=date.fromisoformat(o),
+                    close_date=date.fromisoformat(c), price_band=band or "", lot_size=lot or 0, rhp_url=url), v)
+               for i, n, sym, o, c, band, lot, url, v in rows]
+        return [(ipo, v) for ipo, v in due if today <= ipo.close_date
+                or (today.weekday() < 5 and today <= expected_listing(ipo.close_date))]
+
+    def not_analysed(self) -> list[tuple[str, str | None, str]]:
+        """(ipo_id, symbol, name) of every IPO in the store that isn't analysed (held, failed, stopped...)."""
+        return self._db.execute(
+            "SELECT ipo_id, symbol, name FROM ipos WHERE status != 'done' ORDER BY open_date, ipo_id").fetchall()
+
+    def analysed(self) -> list[tuple[str, str | None, str]]:
+        """(ipo_id, symbol, name) of every analysed IPO, oldest first (the Telegram RHP questions)."""
+        return self._db.execute(
+            "SELECT ipo_id, symbol, name FROM ipos WHERE status = 'done' ORDER BY open_date, ipo_id").fetchall()
 
     def mark_reminded(self, ipo_id: str, today: date) -> None:
         self._db.execute("UPDATE ipos SET last_reminded_at = ? WHERE ipo_id = ?", (today.isoformat(), ipo_id))

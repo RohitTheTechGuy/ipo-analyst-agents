@@ -1,11 +1,14 @@
-"""Daily updates for analysed IPOs until they close: today's GMP and subscription, plus the closing
-reminder on the last two days (spec story 47), with the analysis-day advisor call.
+"""Daily updates for analysed IPOs until they list: today's GMP and subscription, plus the closing
+reminder on the last two days (spec story 47), with the analysis-day advisor call. After close, an update
+goes out each weekday through the expected listing day (store.expected_listing, T+3): GMP and the final
+subscription, with the latest call (the closing-day refresh when there was one). No model calls.
 
 On the closing day (config.advisor.closing_day_refresh) the advisor's call is refreshed first: the saved
 report.json is reloaded, sentiment re-gathered and the advisor re-run, all on the IPO's advisor ledger
 (ticket 27). Then the demand check (demand_check.py) judges that call against the final subscription, on the
-same ledger. Every other update is third-party numbers only, with no model calls. A failed refresh or check
-sends the normal update."""
+same ledger. An IPO analysed on its closing day gets the demand check right after its summary
+(closing_day_check). Every other update is third-party numbers only, with no model calls. A failed refresh
+or check sends the normal update."""
 from __future__ import annotations
 
 import logging
@@ -19,7 +22,7 @@ from ipo_agents.contracts import CheckedAdvice, CheckedDemand, ClaimedFact, Ipo,
 from ipo_agents.demand_check import check_demand
 from ipo_agents.report.labels import CALL_LABELS, advice_text, subscription_text
 from ipo_agents.archive import archive_update
-from ipo_agents.store import Store
+from ipo_agents.store import Store, expected_listing
 
 log = logging.getLogger(__name__)
 
@@ -88,7 +91,13 @@ def update_text(ipo: Ipo, verdict_label: str, today: date, gmp: ClaimedFact | No
                 sub: SubscriptionStatus | None, advice: CheckedAdvice | None = None,
                 earlier: CheckedAdvice | None = None, demand: CheckedDemand | None = None) -> str:
     """`advice` is today's refreshed call or the analysis-day one; `earlier` the analysis-day call."""
-    if ipo.close_date == today:
+    closed = today > ipo.close_date
+    listing = expected_listing(ipo.close_date)
+    if closed and today >= listing:
+        head = f"🔔 {ipo.name} is expected to list TODAY"
+    elif closed:
+        head = f"📈 {ipo.name} IPO · bidding closed {ipo.close_date:%a %-d %b}, expected to list {listing:%a %-d %b}"
+    elif ipo.close_date == today:
         head = f"⏰ {ipo.name} IPO closes TODAY"
     elif (ipo.close_date - today).days == 1:
         head = f"⏰ {ipo.name} IPO closes TOMORROW"
@@ -100,9 +109,10 @@ def update_text(ipo: Ipo, verdict_label: str, today: date, gmp: ClaimedFact | No
     else:
         lines.append("GMP: not available")
     if sub is not None and sub.total.value is not None:
-        lines.append(f"Subscription: {subscription_text(sub)} as of {sub.total.as_of:%-d %b}")
+        lines.append(f"{'Final subscription' if closed else 'Subscription'}: {subscription_text(sub)} "
+                     f"as of {sub.total.as_of:%-d %b}")
     else:
-        lines.append("Subscription: not available yet")
+        lines.append("Subscription: not available" if closed else "Subscription: not available yet")
     return "\n".join([*lines, *_demand_lines(demand)])
 
 
@@ -118,16 +128,50 @@ def _load_report(store: Store, ipo: Ipo) -> Report | None:
         return None
 
 
+def _latest_advice(config: Config, ipo_id: str, today: date, earlier: CheckedAdvice | None) -> CheckedAdvice | None:
+    """The newest call saved up to today (the closing-day refresh writes advice_<date>.json), else `earlier`."""
+    saved = sorted(p for p in (Path(config.work_dir) / ipo_id).glob("advice_*.json")
+                   if p.stem.removeprefix("advice_") <= f"{today:%Y-%m-%d}")
+    if not saved:
+        return earlier
+    try:
+        return CheckedAdvice.model_validate_json(saved[-1].read_text(encoding="utf-8"))
+    except Exception:
+        log.warning("%s: could not load %s", ipo_id, saved[-1], exc_info=True)
+        return earlier
+
+
+def closing_day_check(report: Report, adapters: Adapters, config: Config, today: date) -> str | None:
+    """For an IPO analysed on its closing day: its summary already has today's call and subscription, so
+    only the demand check is missing. Returns the message, or None without a check (fail-soft)."""
+    ipo = report.ipo
+    sentiment = report.sentiment
+    demand = check_demand(report, report.advice, sentiment, advisor_llm(adapters.llm, ipo.ipo_id, config),
+                          config, today)
+    if demand is None:
+        return None
+    sub = sentiment.subscription
+    text = "\n".join([f"⏰ {ipo.name} IPO closes TODAY",
+                      f"Subscription: {subscription_text(sub)} as of {sub.total.as_of:%-d %b}",
+                      *_demand_lines(demand)])
+    archive_update(ipo.ipo_id, text, config.reports_dir, today)
+    return text
+
+
 def send_daily_updates(today: date, store: Store, adapters: Adapters, config: Config,
-                       verdict_labels: dict[str, str]) -> list[str]:
-    """One update per analysed, still-open IPO per day; returns the ipo_ids whose update failed to send.
-    An IPO analysed today already got its summary (with GMP and subscription), so it is skipped."""
-    failed = []
+                       verdict_labels: dict[str, str]) -> tuple[list[str], list[str]]:
+    """One update per analysed IPO per day, while open and after close until it lists (store.due_updates);
+    returns (ipo_ids updated, ipo_ids whose update failed to send). An IPO analysed today already got its summary (with
+    GMP and subscription), so it is skipped."""
+    sent, failed = [], []
     for ipo, verdict in store.due_updates(today):
         report = _load_report(store, ipo)
         earlier = report.advice if report else None
         advice, market, demand = earlier, None, None
-        if report is not None and ipo.close_date == today and config.advisor.closing_day_refresh:
+        if today > ipo.close_date:
+            advice = _latest_advice(config, ipo.ipo_id, today, earlier)
+            earlier = advice  # nothing refreshed today: shown with its own date
+        elif report is not None and ipo.close_date == today and config.advisor.closing_day_refresh:
             try:
                 fresh, sentiment = refresh_advice(report, adapters, config, today)
                 advice = fresh or earlier  # no fresh call: the analysis-day one stands
@@ -146,4 +190,5 @@ def send_daily_updates(today: date, store: Store, adapters: Adapters, config: Co
             failed.append(ipo.ipo_id)
             continue
         store.mark_reminded(ipo.ipo_id, today)
-    return failed
+        sent.append(ipo.ipo_id)
+    return sent, failed

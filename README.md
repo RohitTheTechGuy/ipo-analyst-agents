@@ -9,7 +9,7 @@
 > - Grey-market premium (GMP) figures are **unofficial**.
 > - **Do your own research and consult a SEBI-registered adviser before investing.** You alone are responsible for your investment decisions and any losses.
 
-A daily multi-agent system for **Indian mainboard IPOs**. Each weekday it lists the IPOs open that day on Telegram, and for each one you pick it reads the prospectus (RHP). It produces a verified analyst report and a **BUY / NO BUY** call, and sends them to Telegram: a short plain-English summary plus a full PDF. It then follows the IPO with daily grey-market (GMP) and subscription updates until the IPO closes.
+A daily multi-agent system for **Indian mainboard IPOs**. Each weekday it lists the IPOs open that day on Telegram, and for each one you pick it reads the prospectus (RHP). It produces a verified analyst report and a **BUY / NO BUY** call, and sends them to Telegram: a short plain-English summary plus a full PDF. It then follows the IPO with daily grey-market (GMP) and subscription updates until it lists, and answers your questions about any analysed RHP right in the chat.
 
 Built with **Python · LangGraph · OpenAI (GPT-5.6 Luna / Terra, GPT-6.1 Sol) · xAI (Grok 4.20) · Groq · Telegram**.
 
@@ -27,9 +27,12 @@ Each weekday at 10:30 IST, a numbered list of the new IPOs ready for analysis. N
 2. ZETWERK — Zetwerk Manufacturing Businesses Limited (closes 17 Oct)
 
 Reply "all" for every one, or "none" to skip; "stop" stops an analysis that is running. GMP/subscription updates for analysed IPOs continue either way.
+Ask anything about an analysed IPO's RHP, e.g. "ZETWERK: how much debt does it have?"
 ```
 
-Reply `1`, `ZETWERK`, `1,2`, `all` or `none`. A choice made at the terminal prompt gets the same messages. Within about 5 minutes the bot replies in three steps:
+On a day with no IPO to offer and no update due, you get one line instead: "😴 No mainboard IPO open today, and no updates due. The daily check ran fine." So no message at all means something is wrong.
+
+Reply `1`, `ZETWERK`, `1,2`, `all` or `none`. A choice made at the terminal prompt gets the same messages. Within about a minute the bot replies in three steps:
 
 ```
 ✅ Got it: analysing ZETWERK (Zetwerk Manufacturing Businesses Limited), up to $5.00 each. The report arrives here when it is done.
@@ -63,7 +66,27 @@ Full analysis in the attached PDF. Not investment advice.
 
 The **PDF report** follows the message. It covers the offer and use of funds, financials, risk factors, legal and governance, business and industry, peer valuation (each peer's numbers, and whether it is really a peer), market sentiment, the analyst view and the advisor's call. Every figure carries its RHP page.
 
-While the IPO is open, a **daily update** reports the GMP and subscription. On the **closing day**, the advisor gathers fresh news and makes its call again, and a **demand check** (Grok) judges that call against the final subscription: why demand is high or low, what retail demand says, and, when demand contradicts the call (a NO BUY on a heavily subscribed IPO, say), why the call still holds or why demand weakens it.
+While the IPO is open, a **daily update** reports the GMP and subscription. On the **closing day**, the advisor gathers fresh news and makes its call again, and a **demand check** (Grok) judges that call against the final subscription: why demand is high or low, what retail demand says, and, when demand contradicts the call (a NO BUY on a heavily subscribed IPO, say), why the call still holds or why demand weakens it. An IPO analysed on its closing day gets the demand check as a message right after its summary.
+
+**After close,** an update goes out each weekday until the expected listing day: GMP, final subscription and the latest call ("📈 Zetwerk IPO · bidding closed Mon 19 Oct, expected to list Thu 22 Oct", then "🔔 … is expected to list TODAY"). The listing day is counted as the third weekday after close (SEBI's T+3); exchange holidays aren't known, so in a holiday week the real listing can be a day or two later. These updates make no model calls.
+
+### Ask about an analysed RHP
+
+Send a question in the chat, e.g. `ZETWERK: how much debt does it have?`, then follow-ups like `and the year before?`. Within about a minute the bot answers from that IPO's RHP only, citing PDF pages:
+
+```
+As at June 30, 2026, the company had total borrowings of ₹19,421.92 million (p. 602). …
+
+💬 From the ZETWERK RHP (Claude, your subscription). Not investment advice.
+```
+
+- **It costs nothing extra.** Answers come from the Claude Code CLI on the Mac, logged in with your Claude subscription; they count against the plan's usage limits. The bot checks `claude auth status` before each answer and refuses unless the login is the subscription one; API-key variables are removed from its environment, so it can never bill an API account.
+- **Only analysed IPOs.** A question naming an IPO that isn't analysed gets "JIO isn't analysed, so there's no RHP to answer from." A question about another company inside an RHP's chat is refused too.
+- **The conversation follows the chat.** Use Telegram's *Reply* on any earlier message (a summary, an update, an answer) and ask, e.g. reply `why?` to a summary: the question is about that message's IPO, and Claude sees the message you replied to. Without a reply, the IPO is the one named, else the chat's current one (the last one answered about, or the last summary sent), else the only one analysed. Otherwise the bot asks which. Follow-ups such as `and the year before?` continue the same conversation per IPO.
+- **What counts as a question:** a reply ending in `?`, starting with `ask`, or of four words or more. A short reply that isn't a pick or a stop (`why`, `more on debt`) is also a question when it replies to an earlier message, or comes within 30 minutes of an answer; otherwise it gets "Didn't recognise" as before. `1` in reply to the offer is still a pick.
+- **Locked down:** the CLI runs in the IPO's folder with read and search tools only (no shell, writes, web or MCP servers), and without your settings, CLAUDE.md files or Claude Code memory. RHP text is treated as data, never as instructions.
+- **Speed:** the first question on an IPO extracts its pages once (about a minute for a 700-page RHP with OCR). After an answer the bot keeps listening for 10 minutes, so follow-ups come back in seconds. Questions sent while an analysis is running are answered when it finishes.
+- **Limits:** answers are not run through the Python number checks that guard the report. Check the cited page when it matters.
 
 ---
 
@@ -72,7 +95,7 @@ While the IPO is open, a **daily update** reports the GMP and subscription. On t
 ```
 launchd 10:30 IST ─► discover open mainboard IPOs (NSE + BSE + Chittorgarh) ─► skip already analysed
      │                 ─► GMP/subscription updates ─► Telegram: numbered list of new IPOs
-     ▼  per IPO you reply with (read every 5 min by a second launchd job)
+     ▼  per IPO you reply with (read every minute by a second launchd job; questions are answered there too)
 download RHP ─► ingest (PDF → 8 section groups, OCR fallback)
      │
      ├─► 8 section agents in parallel: map → reduce → verify → re-ask (max 2)
@@ -169,7 +192,7 @@ Discovery, GMP, subscription and peer prices come from public sites and need no 
 
 ### Keeping it running
 
-`scheduler/install.py install` loads two launchd jobs: the 10:30 weekday run, and the job that reads your Telegram replies every 5 minutes. They run without Claude Code or a terminal open, but only while the Mac is on and logged in. To recover from sleep, shutdowns and power cuts on their own:
+`scheduler/install.py install` loads two launchd jobs: the 10:30 weekday run, and the job that reads your Telegram replies every minute. They run without Claude Code or a terminal open, but only while the Mac is on and logged in. To recover from sleep, shutdowns and power cuts on their own:
 
 ```bash
 sudo pmset repeat wakeorpoweron MTWRF 10:25:00   # wake or power on before the 10:30 run
@@ -185,7 +208,7 @@ After a boot, the jobs start only once you are logged in. Logging in by itself n
 .venv/bin/python run_daily.py                      # the daily run: updates, then asks which new IPOs to analyse (Enter = none)
 .venv/bin/python run_daily.py --updates-only       # analyse no IPO; only GMP/subscription updates for analysed ones
 .venv/bin/python run_daily.py --ask-telegram       # updates, then offer new IPOs on Telegram (the scheduled run)
-.venv/bin/python run_daily.py --telegram-picks     # analyse the IPOs picked by Telegram reply (scheduled every 5 min)
+.venv/bin/python run_daily.py --telegram-picks     # analyse the IPOs picked by Telegram reply, answer RHP questions (scheduled every minute)
 .venv/bin/python run_daily.py --ipo FUSIONCX       # one open IPO only (no daily updates for others)
 .venv/bin/python run_daily.py --ipo FUSIONCX --force   # re-run it, within what is left of its budget
 .venv/bin/python run_daily.py --date 2026-10-14    # run as if on another date

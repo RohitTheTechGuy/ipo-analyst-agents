@@ -16,7 +16,8 @@ from ipo_agents.config import Config
 from ipo_agents.contracts import CheckedAdvice, Fact, Ipo, Report, RunSummary, Sentiment, SubscriptionStatus
 from ipo_agents.discovery import DiscoveryError
 from ipo_agents.flags import summary_line as offer_summary_line
-from ipo_agents.notify.reminders import send_daily_updates
+from ipo_agents.notify.reminders import closing_day_check, send_daily_updates
+from ipo_agents.rhp_qa import LAST_KEY as QA_TOPIC_KEY
 from ipo_agents.plain_summary import evaluated_summary
 from ipo_agents.report.labels import (DISCLAIMER, MARKET_HEADING, VERDICT_LABELS, advice_text, market_read,
                                       subscription_text)
@@ -254,6 +255,7 @@ def run_daily(today: date, adapters: Adapters, config: Config, force_ipo: str | 
         todo.analyse = select(list(todo.analyse))
     summary = RunSummary(skipped=[ipo.ipo_id for ipo, _ in todo.skip])
     if todo.discovery_error is not None:
+        summary.discovery_failed = True
         try:
             adapters.notifier.send_message(f"{NO_SOURCE_ALERT}\n{todo.discovery_error}")
         except Exception:
@@ -309,7 +311,20 @@ def run_daily(today: date, adapters: Adapters, config: Config, force_ipo: str | 
         archive_report(report, text, config.reports_dir, today, full_text=full if text != full else None,
                        review=[d.as_dict() for d in drafts] or None)
         _send(ipo, text, report.pdf_path, adapters, summary)
+        store.set_state(QA_TOPIC_KEY, ipo.ipo_id)  # "why NO BUY?" next in the chat is about this IPO
+        if ipo.close_date == today and config.advisor.closing_day_refresh:
+            # Analysed on its last day: no separate closing-day update, so send its demand check here.
+            try:
+                check = closing_day_check(report, adapters, config, today)
+            except cancel.Cancelled:
+                check = None  # the report is out; the loop stops before the next IPO
+            if check:
+                _send(ipo, check, None, adapters, summary)
     if daily_updates:
-        summary.notify_failed += send_daily_updates(today, store, adapters, config, VERDICT_LABELS)
+        sent, failed = send_daily_updates(today, store, adapters, config, VERDICT_LABELS)
+        summary.updated += sent
+        if len(sent) == 1:
+            store.set_state(QA_TOPIC_KEY, sent[0])  # the chat's last message was about this IPO
+        summary.notify_failed += failed
     store.close()
     return summary

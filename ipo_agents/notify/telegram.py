@@ -37,9 +37,14 @@ class TelegramNotifier:
             self._call("sendDocument", data={"chat_id": self._chat_id, "caption": caption},
                        files={"document": (path.name, f, "application/pdf")})
 
-    def get_updates(self, offset: int | None = None) -> list[dict]:
-        """Updates (incoming messages) after `offset`, oldest first; Telegram keeps them for 24 hours."""
-        params = {"timeout": 0, "allowed_updates": ["message"]}
+    def send_typing(self) -> None:
+        """Shows "typing…" in the chat for a few seconds, before a slow reply."""
+        self._call("sendChatAction", json={"chat_id": self._chat_id, "action": "typing"})
+
+    def get_updates(self, offset: int | None = None, timeout: int = 0) -> list[dict]:
+        """Updates (incoming messages) after `offset`, oldest first; Telegram keeps them for 24 hours.
+        `timeout` > 0 long-polls: waits up to that many seconds for a message (under the client's 60s)."""
+        params = {"timeout": timeout, "allowed_updates": ["message"]}
         if offset is not None:
             params["offset"] = offset
         return self._call("getUpdates", json=params) or []

@@ -851,3 +851,5 @@ class RunSummary(BaseModel):
     failed: list[str] = []
     cancelled: list[str] = []  # stopped from Telegram, or not started because of the stop
     notify_failed: list[str] = []
+    updated: list[str] = []  # daily GMP/subscription updates sent
+    discovery_failed: bool = False  # no source could list today's IPOs (the alert was sent)

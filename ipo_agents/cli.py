@@ -145,6 +145,16 @@ def provider_llm(config: Config) -> LLM:
     return LangChainLLM(config.models)
 
 
+QUIET_DAY = "😴 No mainboard IPO open today, and no updates due. The daily check ran fine."
+
+
+def quiet_day(summary) -> bool:
+    """Nothing to offer, analyse or update, and every source answered: the day's only message is this one,
+    so silence always means something is wrong."""
+    return not (summary.analysed or summary.skipped or summary.waiting_rhp or summary.failed or summary.updated
+                or summary.notify_failed or summary.discovery_failed)
+
+
 def main(argv: Sequence[str] | None = None, *, build: Callable[..., Adapters] = build_adapters,
          smoke_llm: Callable[[Config], LLM] = provider_llm, ask: Callable[[str], str] = input,
          interactive: Callable[[], bool] = lambda: sys.stdin.isatty(),
@@ -225,6 +235,8 @@ def main(argv: Sequence[str] | None = None, *, build: Callable[..., Adapters] = 
         log.info("run finished: %s", summary.model_dump())
         if offered and args.ask_telegram:
             send_offer(today, offered, adapters, config)
+        elif args.ask_telegram and quiet_day(summary):
+            adapters.notifier.send_message(QUIET_DAY)
         elif offered:
             log.info("not analysed (no terminal to ask; use --ipo or --ask-telegram): %s",
                      ", ".join(i.ipo_id for i in offered))

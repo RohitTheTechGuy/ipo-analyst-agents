@@ -57,7 +57,7 @@ def test_uninstall_boots_out_and_removes_the_plist(tmp_path):
     assert not path.exists() and not picks.exists()
 
 
-def test_install_adds_a_five_minute_job_that_reads_telegram_picks(tmp_path):
+def test_install_adds_a_one_minute_job_that_reads_telegram_picks(tmp_path):
     agents, repo, runner = tmp_path / "LaunchAgents", tmp_path / "repo", RecordingRunner()
 
     install.install(repo=repo, agents_dir=agents, runner=runner, uid=501)
@@ -66,7 +66,7 @@ def test_install_adds_a_five_minute_job_that_reads_telegram_picks(tmp_path):
     plist = plistlib.loads(path.read_bytes())
     assert plist["Label"] == "com.ipoagents.picks"
     assert plist["ProgramArguments"][-1] == "--telegram-picks"
-    assert plist["StartInterval"] == 300
+    assert plist["StartInterval"] == 60
     assert "StartCalendarInterval" not in plist
     assert plist["EnvironmentVariables"]["DYLD_FALLBACK_LIBRARY_PATH"] == "/opt/homebrew/lib"
     assert plist["StandardErrorPath"] != plistlib.loads((agents / "com.ipoagents.daily.plist").read_bytes())["StandardErrorPath"]

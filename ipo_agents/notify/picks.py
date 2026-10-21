@@ -6,14 +6,21 @@ replies and analyses the IPOs picked (process_picks). Only messages from TELEGRA
 
 While it analyses, a background thread watches Telegram for "stop" (or "cancel") and stops the run at its
 next model call (cancel.py). A reply with any word not understood starts nothing, so "cancel 2" can never
-start IPO 2."""
+start IPO 2.
+
+A reply that reads as a question (ends in "?", starts with "ask", or runs to four words or more) is answered
+from an analysed IPO's RHP. So is a short reply the job doesn't understand as a pick ("why", "more on debt")
+when it is a Telegram reply to an earlier message, or comes within config.qa.follow_up_s of an answer (rhp_qa.py, on the Claude subscription). After an answer the job keeps
+long-polling for config.qa.window_s, so follow-ups come back in seconds rather than at the next run."""
 from __future__ import annotations
 
 import json
 import logging
 import re
 import threading
+import time
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from datetime import date
 
 from ipo_agents import cancel
@@ -22,6 +29,8 @@ from ipo_agents.advisor import ledger_id
 from ipo_agents.budget import BudgetMeter
 from ipo_agents.config import Config
 from ipo_agents.contracts import Ipo
+from ipo_agents.notify.telegram import TelegramError
+from ipo_agents.rhp_qa import analysed, answer_question, in_conversation
 from ipo_agents.runner import plan, run_daily
 from ipo_agents.store import Store
 
@@ -32,8 +41,11 @@ OFFSET_KEY = "update_offset"  # the next Telegram update_id to read
 STOPS_KEY = "handled_stops"  # update_ids of stop replies already acted on during a run
 NONE_WORDS = {"none", "skip", "no", "nothing"}
 STOP_WORDS = {"stop", "cancel", "abort"}
+QUESTION_STARTS = {"ask", "q"}
+LONG_POLL_S = 50  # one getUpdates wait in the follow-up window; under the HTTP client's 60s timeout
 WATCH_INTERVAL_S = 20  # how often Telegram is checked for a stop while an analysis runs
 UPDATES_CONTINUE = "GMP/subscription updates for analysed IPOs continue either way."
+ASK_HINT = 'Ask anything about an analysed IPO\'s RHP, e.g. "ZETWERK: how much debt does it have?"' 
 
 
 def per_ipo_cap(config: Config) -> float:
@@ -54,7 +66,15 @@ def _words(text: str) -> list[str]:
 
 
 def is_stop(text: str) -> bool:
-    return bool(set(_words(text)) & STOP_WORDS)
+    """A short reply (three words at most) with a stop word: "what if they cancel the issue?" is a question."""
+    words = _words(text)
+    return 0 < len(words) <= 3 and bool(set(words) & STOP_WORDS)
+
+
+def is_question(text: str) -> bool:
+    words = _words(text)
+    return bool(words) and not is_stop(text) and (
+        text.strip().endswith("?") or words[0] in QUESTION_STARTS or len(words) >= 4)
 
 
 def resolve(text: str, offer_ids: Sequence[str], keys: dict[str, str]) -> tuple[list[str], list[str]]:
@@ -76,6 +96,11 @@ def resolve(text: str, offer_ids: Sequence[str], keys: dict[str, str]) -> tuple[
             continue
         picked += [i for i in ids if i not in picked]
     return picked, unknown
+
+
+def _offer_keys(offer_ids: Sequence[str]) -> dict[str, str]:
+    """The offered IPOs by ipo_id and by its symbol prefix, before the exchange is asked (plan)."""
+    return {k: i for i in offer_ids for k in (i.casefold(), i.split("-")[0].casefold())}
 
 
 def _keys(ipos: Sequence[Ipo]) -> dict[str, str]:
@@ -144,6 +169,7 @@ def offer_message(ipos: Sequence[Ipo], cap_usd: float) -> str:
         "",
         f"Reply \"all\" for every one, or \"none\" to skip; \"stop\" stops an analysis that is running. "
         f"{UPDATES_CONTINUE}",
+        ASK_HINT,
     ])
 
 
@@ -157,13 +183,21 @@ def send_offer(today: date, ipos: Sequence[Ipo], adapters: Adapters, config: Con
     adapters.notifier.send_message(offer_message(ipos, per_ipo_cap(config)))
 
 
-def _read_replies(updates_source, chat_id: str, config: Config) -> tuple[list[str], list[str]]:
-    """(texts from our chat, the offered ipo_ids). Saves the new offset before anything is analysed,
-    so a crash part-way never re-runs the same reply."""
+@dataclass(frozen=True)
+class Reply:
+    text: str
+    quoted: str = ""  # the text of the chat message this one is a Telegram reply to
+
+
+def _read_replies(updates_source, chat_id: str, config: Config, wait_s: int = 0) -> tuple[list[Reply], list[str]]:
+    """(replies from our chat, the offered ipo_ids). Saves the new offset before anything is analysed,
+    so a crash part-way never re-runs the same reply. `wait_s` > 0 long-polls for that long."""
     store = Store(config.db_path)
     try:
         offset = store.state(OFFSET_KEY)
-        updates = updates_source.get_updates(int(offset) if offset is not None else None)
+        offset = int(offset) if offset is not None else None
+        updates = (updates_source.get_updates(offset, timeout=wait_s) if wait_s
+                   else updates_source.get_updates(offset))
         if not updates:
             if offset is None:
                 store.set_state(OFFSET_KEY, "0")  # read once: from now on every message is a reply
@@ -184,19 +218,74 @@ def _read_replies(updates_source, chat_id: str, config: Config) -> tuple[list[st
                 log.warning("ignored a Telegram message from another chat")
                 continue
             if msg.get("text"):
-                texts.append(msg["text"])
+                to = msg.get("reply_to_message") or {}
+                texts.append(Reply(msg["text"], to.get("text") or to.get("caption") or ""))
         offer = json.loads(store.state(OFFER_KEY) or "{}")
         return texts, offer.get("ids", [])
     finally:
         store.close()
 
 
+def _asks(reply: Reply, offer_ids: list[str], keys: dict[str, str], talking: bool) -> bool:
+    """A question for the RHP Q&A: it reads as one, or it isn't a stop or a pick and follows the conversation
+    (a Telegram reply to an earlier message, or soon after an answer)."""
+    if is_stop(reply.text):
+        return False
+    if is_question(reply.text):
+        return True
+    picked, unknown = resolve(reply.text, offer_ids, keys)
+    return bool(unknown) and not picked and (talking or bool(reply.quoted))
+
+
+def _answer(reply: Reply, notifier, config: Config, ask: Callable[..., str], offer_ids: list[str]) -> None:
+    """Answers one RHP question; "typing…" (and a note before a first read of the RHP) goes out first."""
+    def before_slow(note: str) -> None:
+        try:
+            if note:
+                notifier.send_message(note)
+            if hasattr(notifier, "send_typing"):
+                notifier.send_typing()
+        except Exception:
+            log.warning("could not send the typing indicator", exc_info=True)
+
+    answer = ask(reply.text, config, before_slow=before_slow, offer_ids=offer_ids, quoted=reply.quoted)
+    try:
+        notifier.send_message(answer)
+    except Exception:
+        log.exception("could not send the answer to an RHP question")
+
+
 def process_picks(today: date, adapters: Adapters, config: Config, updates_source, chat_id: str,
-                  run: Callable = run_daily, watch_interval_s: float = WATCH_INTERVAL_S) -> list[str]:
-    """Reads new replies and analyses the IPOs picked; returns their ipo_ids. Answers every reply."""
-    texts, offer_ids = _read_replies(updates_source, chat_id, config)
-    if not texts:
-        return []
+                  run: Callable = run_daily, watch_interval_s: float = WATCH_INTERVAL_S,
+                  ask: Callable[..., str] = answer_question, clock: Callable[[], float] = time.monotonic) -> list[str]:
+    """Reads new replies: answers questions, then analyses the IPOs picked; returns their ipo_ids. Answers
+    every reply. After a question, keeps listening for config.qa.window_s for follow-ups."""
+    deadline, wait = None, 0
+    while True:
+        try:
+            texts, offer_ids = _read_replies(updates_source, chat_id, config, wait_s=wait)
+        except TelegramError as e:
+            # A network blip: nothing was read or confirmed, so the next run (a minute later) reads the same replies.
+            log.warning("could not read Telegram replies (%s); the next run retries", e)
+            return []
+        talking = in_conversation(config)
+        keys = {**_offer_keys(offer_ids), **{k: i for i, label, _ in analysed(config) for k in (i.casefold(), label.casefold())}}
+        questions = [r for r in texts if _asks(r, offer_ids, keys, talking)]
+        for question in questions:
+            _answer(question, adapters.notifier, config, ask, offer_ids)
+            talking = True
+        texts = [r.text for r in texts if r not in questions]
+        if texts:
+            return _picks(today, adapters, config, updates_source, chat_id, texts, offer_ids, run, watch_interval_s)
+        if questions:
+            deadline = clock() + config.qa.window_s
+        if deadline is None or clock() >= deadline:
+            return []
+        wait = int(max(1, min(LONG_POLL_S, deadline - clock())))
+
+
+def _picks(today: date, adapters: Adapters, config: Config, updates_source, chat_id: str, texts: list[str],
+           offer_ids: list[str], run: Callable, watch_interval_s: float) -> list[str]:
     todo = plan(today, adapters, config)
     ready = {i.ipo_id: i for i in todo.analyse}
     done = {i.ipo_id for i, _ in todo.skip}

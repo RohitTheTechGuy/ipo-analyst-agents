@@ -6,14 +6,16 @@ Only steps marked 🤖 call a model. Everything else is deterministic Python. Th
 
 ## The run at a glance
 
-`launchd` starts the job at 10:30 IST on weekdays: `run_daily.py --ask-telegram` → `cli.main` → `runner.run_daily`. That run analyses nothing: it sends the daily updates and a numbered Telegram list of new IPOs. A second launchd job runs `run_daily.py --telegram-picks` every 5 minutes (`notify/picks.py`). It reads replies from your chat only and analyses just the IPOs picked. It confirms the pick ("✅ Got it"), then announces each analysis as it begins ("🚀 Analysis started … Reply "stop" or "cancel" to stop it"). While it analyses, a background thread (`StopWatcher`) checks the chat every 20 seconds without consuming replies. A stop sets a flag (`cancel.py`) that every metered model call checks first. The run then stops at its next call: the IPO is saved as `cancelled`, with its checkpoint kept, and picking it again resumes it. A reply with any word not understood starts nothing. A manual `run_daily.py` asks in the terminal instead (Enter = none), and `--updates-only` analyses none.
+`launchd` starts the job at 10:30 IST on weekdays: `run_daily.py --ask-telegram` → `cli.main` → `runner.run_daily`. That run analyses nothing: it sends the daily updates and a numbered Telegram list of new IPOs. If there is nothing to offer and no update due, it sends one "😴 No mainboard IPO open today" line, so silence always means a fault. A second launchd job runs `run_daily.py --telegram-picks` every minute (`notify/picks.py`). A reply that reads as a question (ends in "?", starts with "ask", or has four words or more) goes to the RHP Q&A (below); everything else is a pick or a stop. It reads replies from your chat only and analyses just the IPOs picked. It confirms the pick ("✅ Got it"), then announces each analysis as it begins ("🚀 Analysis started … Reply "stop" or "cancel" to stop it"). While it analyses, a background thread (`StopWatcher`) checks the chat every 20 seconds without consuming replies. A stop sets a flag (`cancel.py`) that every metered model call checks first. The run then stops at its next call: the IPO is saved as `cancelled`, with its checkpoint kept, and picking it again resumes it. A reply with any word not understood starts nothing. A manual `run_daily.py` asks in the terminal instead (Enter = none), and `--updates-only` analyses none.
 
 ```mermaid
 flowchart TD
     CRON([launchd 10:30 IST Mon–Fri]) --> PLAN[runner.plan<br/>discover · dedupe · hold · skip]
     PLAN -->|exchange listing| DISC[Discovery<br/>NSE + BSE + Chittorgarh, merged]
     PLAN -->|new IPOs with final RHP| OFFER[Telegram: numbered list<br/>nothing analysed yet]
-    OFFER -.->|your reply| PICKS([launchd every 5 min<br/>--telegram-picks])
+    OFFER -.->|your reply| PICKS([launchd every minute<br/>--telegram-picks])
+    PICKS -->|a question| QA[🤖 RHP Q&A<br/>claude -p on the subscription · read-only]
+    QA --> TG
     PICKS -->|IPO picked| DL[RHP downloader]
     DL --> G
 
@@ -45,7 +47,7 @@ flowchart TD
     EV -->|no faithful draft| FULL[full summary] --> TG
     PDF --> ARC[Archive<br/>reports/&lt;ipo_id&gt;/]
 
-    PLAN -->|analysed IPO still open| UPD[Daily update<br/>GMP + subscription]
+    PLAN -->|analysed IPO, open or not yet listed| UPD[Daily update<br/>GMP + subscription]
     UPD -->|closing day| ADV2[🤖 Advisor refresh<br/>re-gather sentiment · re-advise]
     ADV2 --> DC[🤖 Demand check<br/>Grok: the call vs the subscription]
     DC --> TG
@@ -176,7 +178,7 @@ Two model calls. Neither ever outputs a number.
 - **When it runs:**
   - At the end of `analyse_rhp` on analysis day, so the PDF renders with the advisor box.
   - On closing-day morning, after reloading `report.json` and re-gathering sentiment. The ⏰ message shows "was NO BUY → now BUY" or "Same call".
-  - Other daily updates repeat the analysis-day call with no model call.
+  - Other daily updates repeat the latest call (after close, the closing-day one) with no model call. They go out while the IPO is open, then each weekday until the expected listing day (`store.expected_listing`: third weekday after close, T+3; holidays aren't known).
 - **Fails soft:** if the advisor errors or hits its $1.00 cap, the analysis summary and PDF still go out.
 
 ### Demand Check 🤖 (`demand_check.py`): the closing-day call judged against the subscription
@@ -186,6 +188,15 @@ Two model calls. Neither ever outputs a number.
 - **Checks (Python):** the advisor's evidence-ID and number checks. No surviving reason means no check.
 - **Output:** lines after the subscription in the ⏰ closing message, e.g. "🔎 Demand check: HIGH demand", 2–3 reasons, a "Retail:" line, then "⚠️ HIGH demand vs NO BUY: the call still holds. …" or "❗ … the check thinks demand weakens the call. …". Saved as `demand_check_<date>.json`.
 - **Cost and failure:** about $0.05 a call (measured $0.046) on the advisor ledger. Without a subscription figure there is no call; if it fails, the normal update goes out.
+- **IPO analysed on its closing day:** there is no separate closing update, so `reminders.closing_day_check` runs the check right after the summary (on `report.advice` and `report.sentiment`) and sends it as its own ⏰ message.
+
+### RHP Q&A 🤖 (`rhp_qa.py`): questions on an analysed RHP, from Telegram
+- **Role:** answers a question about one analysed IPO from its RHP only, citing PDF pages, in plain words (≤150 words). Follow-ups resume the IPO's last session (`telegram_state` `qa_sessions`).
+- **Model:** the Claude Code CLI (`claude -p`, `config.qa.model`, default `sonnet`) on the Mac's Claude subscription: $0, not metered. Before each answer `claude auth status` must report a `claude.ai` login, else no answer; `ANTHROPIC_API_KEY` and other provider variables are stripped from its environment. Never a paid fallback.
+- **Input:** it runs in `data/work/<ipo_id>/` with only Read, Grep and Glob, and searches `rhp_pages/page-NNNN.txt` (written once from `rhp.pdf`, OCR for scans) and `report.json`. No shell, writes, web or MCP servers; no user settings, CLAUDE.md files or Claude Code memory (`CLAUDE_CODE_DISABLE_CLAUDE_MDS`, `CLAUDE_CODE_DISABLE_AUTO_MEMORY`); stdin closed.
+- **Context follows the chat:** a Telegram reply to an earlier message picks that message's IPO and sends its text to Claude with the question. Otherwise: the IPO named, else the chat's current IPO (`qa_ipo`: the last answered about; `runner.run_daily` sets it when a summary, or a single daily update, is sent), else the only one analysed; otherwise it asks. A short reply that is neither a pick nor a stop counts as a question when it is a reply to a message or within `qa.follow_up_s` (30 min) of the last answer (`qa_answered_at`). A question naming an IPO in the store or the latest offer that isn't analysed gets "X isn't analysed, so there's no RHP to answer from"; the prompt also refuses questions about another company.
+- **Checks:** none in Python: the page citations are the guard. RHP text is data, never instructions.
+- **Speed:** after an answer the picks job long-polls Telegram for `qa.window_s` (10 min), so follow-ups take seconds. Any failure (logged out, usage limit, timeout) is a "Can't answer right now: …" reply.
 
 ### Summary Editor 🤖 (`plain_summary.py`): the Telegram summary in plain English
 - **Role:** rewrites the full summary for a reader with no finance background, keeping only what decides apply or not. The full detail stays in the attached PDF.
@@ -302,9 +313,9 @@ These are files the run reads and writes. All of them are local and gitignored.
 |---|---|---|---|
 | `data/ipo.db`, table `ipos` | Runner, Store | Runner, daily updates, dry run | Each IPO's status (`discovered`, `waiting_rhp`, `analysing`, `done`, `failed`, `failed_budget`), dates, band, symbol, verdict, report path, date of last update |
 | `data/ipo.db`, table `llm_calls` | Budget meter | Budget meter, router, `--reset-budget` | Every model call: ledger, task, model, tokens, cost. Spend per IPO and Groq's 24-hour usage are summed from here. |
-| `data/ipo.db`, table `telegram_state` | Offer, picks job | Picks job | The latest offer (which IPO each number means), the next Telegram update to read, and stop replies already acted on, so no reply is acted on twice |
+| `data/ipo.db`, table `telegram_state` | Offer, picks job | Picks job | The latest offer (which IPO each number means), the next Telegram update to read, and stop replies already acted on, so no reply is acted on twice; the RHP Q&A's last IPO and its session per IPO |
 | `data/checkpoints.db` | LangGraph `SqliteSaver` | `analyse_rhp` on resume | Graph state per `ipo_id:rhp_sha256`. Deleted when a run finishes. |
-| `data/work/<ipo_id>/` | Downloader, renderer, advisor | Analysis, closing-day refresh | `rhp.pdf`, `report_<SYMBOL>.pdf`, `report.json` (path also kept in `ipos.report_path`), `advice_<date>.json`, `demand_check_<date>.json` |
+| `data/work/<ipo_id>/` | Downloader, renderer, advisor | Analysis, closing-day refresh | `rhp.pdf`, `report_<SYMBOL>.pdf`, `report.json` (path also kept in `ipos.report_path`), `advice_<date>.json`, `demand_check_<date>.json`, `rhp_pages/` (page texts for the RHP Q&A) |
 | `reports/<ipo_id>/` | Archive | You | Every run's report JSON, PDF and Telegram text, plus daily updates. Re-runs get their own folder. |
 | `config.yaml` | You | Everything | Models, prices, routing, caps, thresholds |
 | `.env` | You | `wiring.py`, `cli.py` | API keys and the Telegram bot |

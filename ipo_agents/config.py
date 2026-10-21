@@ -65,6 +65,17 @@ class AdvisorConfig(BaseModel):
     demand_check_max_tokens: int = Field(default=8_000, gt=0)  # reasoning + answer
 
 
+class QaConfig(BaseModel):
+    """Telegram questions on an analysed RHP (rhp_qa.py), answered by the Claude Code CLI on the subscription."""
+
+    model: str = "sonnet"  # a Claude Code model alias
+    timeout_s: float = Field(default=180, gt=0)
+    max_words: int = Field(default=150, gt=0)
+    window_s: float = Field(default=600, ge=0)  # after an answer, keep listening this long for follow-ups
+    # Within this long of the last answer, a short reply the picks job doesn't understand is a follow-up question.
+    follow_up_s: float = Field(default=1800, ge=0)
+
+
 class Config(BaseModel):
     models: dict[str, ModelConfig]
     routing: dict[str, str]
@@ -80,6 +91,7 @@ class Config(BaseModel):
     sentiment: SentimentConfig = SentimentConfig()
     peers: PeersConfig = PeersConfig()
     advisor: AdvisorConfig = AdvisorConfig()
+    qa: QaConfig = QaConfig()
 
     @model_validator(mode="after")
     def _routed_models_are_priced(self):

@@ -130,3 +130,44 @@ def test_no_check_still_sends_the_normal_closing_update(adapters, config, answer
     assert "🔎" not in close
     tasks = [c["task"] for c in llm.calls]
     assert ("demand_check" in tasks) == (close_market.subscription_status is not None)
+
+
+@pytest.mark.advisor
+@pytest.mark.demand_check
+def test_an_ipo_analysed_on_its_closing_day_gets_the_demand_check_after_its_summary(adapters, config):
+    adapters.exchange = FakeExchange([closing_ipo()])
+    adapters.llm = llm = ScriptedLLM({OfferObjects: OFFER_ANSWER, Advice: WAIT, DemandCheck: HOLDS},
+                                     models=config.models)
+    adapters.market = hot_market()
+    run_daily(CLOSE, adapters, config)
+
+    *_, summary, check = adapters.notifier.messages
+    assert "🔎" not in summary
+    assert check.splitlines()[:3] == ["⏰ Acme Ltd IPO closes TODAY",
+                                      "Subscription: 62.4× total (QIB 140.2×, Retail 15.1×) as of 16 Oct",
+                                      "🔎 Demand check: HIGH demand"]
+    assert check.splitlines()[-1].startswith("⚠️ HIGH demand vs NO BUY: the call still holds.")
+    assert [c["task"] for c in llm.calls].count("demand_check") == 1
+
+
+@pytest.mark.advisor
+@pytest.mark.demand_check
+def test_a_failed_check_on_an_ipo_analysed_on_its_closing_day_sends_only_the_summary(adapters, config):
+    adapters.exchange = FakeExchange([closing_ipo()])
+    adapters.llm = ScriptedLLM({OfferObjects: OFFER_ANSWER, Advice: WAIT}, models=config.models)  # no DemandCheck
+    adapters.market = hot_market()
+    summary = run_daily(CLOSE, adapters, config)
+
+    assert summary.analysed == [ACME] and summary.notify_failed == []
+    assert not any("🔎" in m for m in adapters.notifier.messages)
+
+
+@pytest.mark.advisor
+def test_after_close_the_update_shows_the_closing_day_call_not_the_analysis_day_one(adapters, config):
+    from datetime import date
+    close_day(adapters, config, HOLDS, hot_market())  # analysed 13 Oct, refreshed 16 Oct
+    run_daily(date(2026, 10, 19), adapters, config)
+
+    head, advisor, *_ = adapters.notifier.messages[-1].splitlines()
+    assert head.startswith("📈 Acme Ltd IPO · bidding closed Fri 16 Oct")
+    assert advisor.startswith("🧭 Advisor (16 Oct): ")

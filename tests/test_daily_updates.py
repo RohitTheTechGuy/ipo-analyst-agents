@@ -107,3 +107,31 @@ def test_an_ipo_analysed_before_the_symbol_was_stored_still_gets_updates(adapter
 
     assert seen == ["ACME"]
     assert len(updates(adapters.notifier)) == 1
+
+
+def test_after_close_an_update_goes_out_each_weekday_until_the_expected_listing_day(adapters, config):
+    # Closes Fri 16 Oct: T+3 working days is Wed 21 Oct; Sat 17 and Thu 22 send nothing.
+    adapters.exchange = FakeExchange([ipo()])
+    adapters.llm = offer_llm(config)
+    run_daily(OPEN, adapters, config)
+    adapters.exchange = FakeExchange([])
+    for d in (17, 19, 19, 20, 21, 22):
+        adapters.market = market(date(2026, 10, d))
+        run_daily(date(2026, 10, d), adapters, config)
+
+    mon, tue, wed = [m for m in adapters.notifier.messages if m.startswith(("📈", "🔔"))]
+    assert mon.splitlines() == [
+        "📈 Acme Ltd IPO · bidding closed Fri 16 Oct, expected to list Wed 21 Oct",
+        "Verdict was: N/A",
+        "GMP ₹42 (unofficial, InvestorGain, as of 19 Oct)",
+        "Final subscription: 2.3× total (QIB 4.1×, NII 1.8×, Retail 1.2×) as of 19 Oct",
+    ]
+    assert tue.startswith("📈") and wed.splitlines()[0] == "🔔 Acme Ltd is expected to list TODAY"
+    assert len(adapters.llm.calls) == 1  # post-close updates never call a model
+
+
+def test_expected_listing_skips_weekends():
+    from ipo_agents.store import expected_listing
+    assert expected_listing(date(2026, 10, 16)) == date(2026, 10, 21)  # Fri -> Wed
+    assert expected_listing(date(2026, 10, 19)) == date(2026, 10, 22)  # Mon -> Thu
+    assert expected_listing(date(2026, 10, 21)) == date(2026, 10, 26)  # Wed -> Mon
