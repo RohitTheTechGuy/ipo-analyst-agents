@@ -112,6 +112,21 @@ def test_a_question_is_answered_from_the_rhp_on_the_subscription_with_read_only_
     store.close()
 
 
+def test_the_web_is_searched_only_when_the_question_asks_for_it(config, tiny_rhp, claude_cli):
+    analyse(config, tiny_rhp, ACME)
+    fake = FakeClaude()
+
+    web = answer_question("ACME: search the web for broker reviews", config, run=fake)
+    rhp = answer_question("what share of its sales is online?", config, run=fake)
+
+    (first, _), (second, _) = fake.asks
+    assert first[first.index("--tools") + 1] == "Read,Grep,Glob,WebSearch,WebFetch"
+    assert "WebSearch" in first[first.index("--system-prompt") + 1]
+    assert second[second.index("--tools") + 1] == "Read,Grep,Glob"
+    assert "The RHP doesn't say" in second[second.index("--system-prompt") + 1]
+    assert "From the ACME RHP and the web" in web and "From the ACME RHP (" in rhp
+
+
 def test_a_non_analysed_ipo_gets_an_error_never_another_ipos_answer(config, tiny_rhp, claude_cli):
     analyse(config, tiny_rhp, ACME)
     analyse(config, tiny_rhp, ZETA, status="waiting_rhp")
