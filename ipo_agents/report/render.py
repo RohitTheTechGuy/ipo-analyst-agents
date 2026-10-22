@@ -19,8 +19,8 @@ from pydantic import BaseModel
 from ipo_agents.calc import upper_band
 from ipo_agents.contracts import MULTIPLE_LABELS, ClaimedFact, Derived, Fact, Flag, Quote, Report, SentimentSource
 from ipo_agents.report import charts, fmt
-from ipo_agents.report.labels import (CALL_LABELS, DISCLAIMER, HORIZON_LABELS, MARKET_HEADING, VERDICT_LABELS, demand_label,
-                                      demand_lines, market_read)
+from ipo_agents.report.labels import (CALL_LABELS, DISCLAIMER, HORIZON_LABELS, MARKET_HEADING, VERDICT_LABELS, demand_heading,
+                                      demand_label, demand_lines, market_read)
 from ipo_agents.sections import SECTIONS
 from ipo_agents.verifier import COULD_NOT_VERIFY
 
@@ -205,7 +205,7 @@ def _demand(report: Report) -> dict | None:
     if d is None:
         return None
     basis = _basis(report)
-    return {"label": demand_label(d), "call": CALL_LABELS[d.call],
+    return {"label": demand_label(d), "call": CALL_LABELS[d.call], "heading": demand_heading(d),
             "reasons": [{"text": p.text, "basis": basis(p.evidence)} for p in d.demand_reasons],
             "hypotheses": [{"reason": h.reason, "holds": h.holds, "why": h.why} for h in d.hypotheses],
             "verdict": demand_lines(d)[-1].split(" ", 1)[1]}  # without its emoji: the PDF fonts have none

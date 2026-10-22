@@ -824,7 +824,7 @@ class CheckedDemand(DemandCheck):
     """A DemandCheck after Python's checks, with Python's demand reading; what was dropped is in `notes`."""
 
     level: Literal["hot", "normal", "weak"]
-    devils_advocate: bool = False  # a NO BUY against high demand (demand_check.devils_advocate)
+    devils_advocate: bool = False  # the market disagrees with the call (demand_check.devils_advocate)
     call: Call
     contradicts: bool
     hypotheses: list[CheckedHypothesis] = []
@@ -857,7 +857,7 @@ class Report(BaseModel):
     synthesis_error: str | None = None  # the synthesizer raised (not a budget stop): the exception's type name
     # None: the advisor did not run (partial report), failed, hit its cap or kept < 2 reasons ("not reached")
     advice: CheckedAdvice | None = None
-    # None: no demand check (no NO BUY against high demand and not the closing day, no subscription figure, or it failed)
+    # None: no demand check (the market agrees with the call and not the closing day, no subscription figure, or it failed)
     demand: CheckedDemand | None = None
     rhp_sha256: str
     pdf_path: str | None = None

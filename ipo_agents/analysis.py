@@ -276,8 +276,8 @@ def _with_advice(report: Report, provider, config: Config, today: date) -> Repor
 
 
 def _with_demand(report: Report, provider, config: Config, today: date) -> Report:
-    """The report with the demand check, on the advisor ledger, when the call is NO BUY but demand is high
-    (the market as devil's advocate), or on the closing day (config.advisor.closing_day_refresh). Fails soft: no check, never a
+    """The report with the demand check, on the advisor ledger, when the market disagrees with the call
+    (devils_advocate: a NO BUY with high demand, a BUY with low demand), or on the closing day (config.advisor.closing_day_refresh). Fails soft: no check, never a
     lost analysis."""
     closing = report.ipo.close_date == today and config.advisor.closing_day_refresh
     a = report.advice

@@ -6,7 +6,7 @@ subscription, with the latest call (the closing-day refresh when there was one).
 On the closing day (config.advisor.closing_day_refresh) the advisor's call is refreshed first: the saved
 report.json is reloaded, sentiment re-gathered and the advisor re-run, all on the IPO's advisor ledger
 (ticket 27). Then the demand check (demand_check.py) judges that call, and each of its reasons, against the
-final subscription, on the same ledger. When it plays devil's advocate (a NO BUY against high demand) the report is re-rendered with the check
+final subscription, on the same ledger. When the market disagrees with the call (devils_advocate) the report is re-rendered with the check
 and the PDF is sent again after the update. An IPO analysed on its closing day has the check in its summary
 and report already (analysis._with_demand). Every other update is third-party numbers only, with no model
 calls. A failed refresh, check or re-render sends the normal update."""
@@ -140,7 +140,7 @@ def send_daily_updates(today: date, store: Store, adapters: Adapters, config: Co
                 demand = check_demand(report, advice, sentiment, advisor_llm(adapters.llm, ipo.ipo_id, config),
                                       config, today)
                 if demand is not None and demand.devils_advocate:
-                    # The report sent on analysis day doesn't say why demand is high against the NO BUY: re-send it.
+                    # The report sent on analysis day doesn't say why the market disagrees with the call: re-send it.
                     pdf = rerendered(report.model_copy(update={"advice": advice, "demand": demand,
                                                                "sentiment": sentiment}), config).pdf_path
             except Exception:
@@ -156,7 +156,7 @@ def send_daily_updates(today: date, store: Store, adapters: Adapters, config: Co
             continue
         if pdf:
             try:
-                adapters.notifier.send_document(Path(pdf), caption=f"{ipo.name} IPO report (updated: why demand is high)")
+                adapters.notifier.send_document(Path(pdf), caption=f"{ipo.name} IPO report (updated: why the market disagrees)")
             except Exception:
                 log.exception("updated report upload failed for %s", ipo.ipo_id)
                 failed.append(ipo.ipo_id)

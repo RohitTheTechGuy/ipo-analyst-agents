@@ -26,7 +26,7 @@ routing:
   sentiment_stance_tag: groq
   advisor:              sol
   summary_editor:       terra  # the Telegram summary in plain English, revised once on the judge's feedback (advisor ledger)
-  demand_check:         grok   # high demand against a NO BUY, or closing day: the market as devil's advocate, re-testing the advisor's call and each reason (advisor ledger); another company's model from the advisor's
+  demand_check:         grok   # the market disagreeing with the call, or closing day: the market as devil's advocate, re-testing the advisor's call and each reason (advisor ledger); another company's model from the advisor's
   summary_judge:        grok   # evaluates each plain draft before it is sent (advisor ledger); another company's model from the editor's, so it never grades its own family's writing
 
 budget:
@@ -62,9 +62,12 @@ advisor:
   demand_hot_total_x: 10    # hot demand: total subscription at or above this...
   demand_hot_retail_x: 5    # ...or retail at or above this
   demand_weak_x: 1          # weak demand: total or retail below this (undersubscribed)
-  devil_total_x: 2          # devil's advocate on a NO BUY: total subscription at or above this...
-  devil_retail_x: 1         # ...and retail above this, when a retail figure is published...
-  devil_gmp_pct: 10         # ...and GMP at least this % of the upper band (a BUY never triggers it)
+  # Devil's advocate when the market disagrees with the call: a NO BUY with total >= devil_total_x, retail
+  # above devil_retail_x (when published) and GMP >= devil_gmp_pct of the upper band; or a BUY with total
+  # under devil_total_x and GMP under devil_gmp_pct.
+  devil_total_x: 2
+  devil_retail_x: 1
+  devil_gmp_pct: 10
   demand_check_max_tokens: 8000
 
 # Telegram questions on an analysed RHP (rhp_qa.py): the Claude Code CLI on this Mac, logged in with the

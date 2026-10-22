@@ -202,11 +202,15 @@ def sentiment(total, gmp, retail=None):
     ("no_buy", 2.3, 1.0, 42.0, "₹100–₹105", False),       # retail not above 1×
     ("no_buy", 1.9, None, 42.0, "₹100–₹105", False),      # total under 2×
     ("no_buy", 12.0, None, 9.45, "₹100–₹105", False),     # GMP 9%
-    ("buy", 62.4, 15.1, 110.0, "₹100–₹105", False),       # a BUY never
+    ("buy", 62.4, 15.1, 110.0, "₹100–₹105", False),       # a BUY the market wants
+    ("buy", 1.5, 0.4, 5.0, "₹100–₹105", True),            # a BUY the market shuns: under 2× and GMP under 10%
+    ("buy", 1.5, None, 42.0, "₹100–₹105", False),         # low bids but a 40% GMP: not both low
+    ("buy", 3.0, None, 5.0, "₹100–₹105", False),          # low GMP but 3× bids: not both low
+    ("buy", 1.5, None, None, "₹100–₹105", False),         # no GMP
     ("no_buy", 12.0, None, None, "₹100–₹105", False),     # no GMP
     ("no_buy", 12.0, None, 12.6, "to be announced", False),  # no band
 ])
-def test_devils_advocate_needs_a_no_buy_2x_total_retail_over_1x_and_a_gmp_of_10_pct(config, call, total, retail, gmp,
+def test_devils_advocate_when_the_market_disagrees_with_the_call(config, call, total, retail, gmp,
                                                                                    band, devil):
     assert devils_advocate(call, sentiment(total, gmp, retail), band, config) is devil
 
@@ -250,7 +254,7 @@ def test_high_demand_against_a_no_buy_at_analysis_is_explained_in_the_summary_an
 @pytest.mark.advisor
 @pytest.mark.demand_check
 @pytest.mark.parametrize("answer, analysis_market", [(WAIT, quiet_market(OPEN)), (GO, hot_market())])
-def test_no_check_at_analysis_for_low_demand_or_a_buy(adapters, config, answer, analysis_market):
+def test_no_check_at_analysis_when_the_market_agrees_with_the_call(adapters, config, answer, analysis_market):
     adapters.exchange = FakeExchange([closing_ipo().model_copy(update={"close_date": date(2026, 10, 20)})])
     adapters.llm = llm = ScriptedLLM({OfferObjects: OFFER_ANSWER, Advice: answer, DemandCheck: DEVIL}, models=config.models)
     adapters.market = analysis_market
@@ -276,3 +280,27 @@ def _pdf(out_dir):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(b"%PDF-1.4")
     return path
+
+
+@pytest.mark.advisor
+@pytest.mark.demand_check
+def test_low_demand_against_a_buy_at_analysis_is_explained_in_the_summary(adapters, config):
+    adapters.exchange = FakeExchange([closing_ipo().model_copy(update={"close_date": date(2026, 10, 20)})])
+    shunned = DemandCheck(demand_reasons=[EvidencedPoint(text="Bids are only 1.5 times the shares on offer",
+                                                         evidence=["S:subscription"])],
+                          retail_reading="", call_holds=True, verdict_vs_demand="",
+                          hypotheses=[HypothesisCheck(reason_id="R:reason[0]", holds=True,
+                                                      why="Issue size: still big enough to draw institutions later",
+                                                      evidence=["F:offer_objects.issue_size"])])
+    adapters.llm = llm = ScriptedLLM({OfferObjects: OFFER_ANSWER, Advice: GO, DemandCheck: shunned}, models=config.models)
+    adapters.market = FakeMarketData(gmp_fact=claim(5.0, "GMP (unofficial)", OPEN), subscription_status=SubscriptionStatus(
+        total=claim(1.5, "Subscription (total)", OPEN)))
+    run_daily(OPEN, adapters, config)
+
+    [summary] = [m for m in adapters.notifier.messages if m.startswith("📄")]
+    lines = summary.splitlines()
+    assert "🔥 Why demand is low despite the BUY (the market as devil's advocate):" in lines
+    assert "• Bids are only 1.5 times the shares on offer" in lines
+    assert "✅ Holds: Issue size: still big enough to draw institutions later" in lines
+    assert "⚠️ LOW demand vs BUY: the call still holds." in lines
+    assert [c["task"] for c in llm.calls].count("demand_check") == 1

@@ -72,16 +72,24 @@ DEMAND_LABELS = {"hot": "HIGH demand", "normal": "Normal demand", "weak": "WEAK 
 
 
 def demand_label(check: CheckedDemand) -> str:
-    return "HIGH demand" if check.devils_advocate else DEMAND_LABELS[check.level]
+    if check.devils_advocate:
+        return "HIGH demand" if check.call == "no_buy" else "LOW demand"
+    return DEMAND_LABELS[check.level]
+
+
+def demand_heading(check: CheckedDemand) -> str:
+    """e.g. "Why demand is high despite the NO BUY"; only for a check playing devil's advocate."""
+    side = "high" if check.call == "no_buy" else "low"
+    return f"Why demand is {side} despite the {CALL_LABELS[check.call]}"
 
 
 def demand_lines(check: CheckedDemand | None) -> list[str]:
-    """The demand check: why demand is where it is (led by a 🔥 heading when it plays devil's advocate on a NO BUY), the retail reading,
-    each reason of the call re-tested against the market, and the call against the demand; nothing without
+    """The demand check: why demand is where it is (led by a 🔥 heading when the market disagrees with
+    the call), the retail reading, each reason of the call re-tested against the market, and the call against the demand; nothing without
     a check."""
     if check is None:
         return []
-    head = ("🔥 Why demand is high despite the NO BUY (the market as devil's advocate):" if check.devils_advocate
+    head = (f"🔥 {demand_heading(check)} (the market as devil's advocate):" if check.devils_advocate
             else f"🔎 Demand check: {DEMAND_LABELS[check.level]}")
     lines = [head, *(f"• {r.text}" for r in check.demand_reasons)]
     if check.retail_reading:

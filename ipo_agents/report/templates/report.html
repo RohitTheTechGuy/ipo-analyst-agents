@@ -105,7 +105,7 @@
 
 {% if demand %}
 <div class="advisor demand">
-  <div class="verdict"><span class="who">{% if r.demand.devils_advocate %}Why demand is high despite the NO BUY: the market as devil's advocate{% else %}Demand check{% endif %}</span>
+  <div class="verdict"><span class="who">{% if r.demand.devils_advocate %}{{ demand.heading }}: the market as devil's advocate{% else %}Demand check{% endif %}</span>
     <span class="confidence">{{ demand.label }}</span></div>
   <ol class="reasons">{% for p in demand.reasons %}<li>{{ p.text }} <span class="pg">({{ p.basis }})</span></li>{% endfor %}</ol>
   {% if r.demand.retail_reading %}<p><b>Retail:</b> {{ r.demand.retail_reading }}</p>{% endif %}

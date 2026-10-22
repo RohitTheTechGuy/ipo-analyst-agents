@@ -1,14 +1,15 @@
 """Demand check: the market as devil's advocate against the advisor's call.
 
-It runs at analysis when the call is NO BUY but demand is high (devils_advocate: total subscription of at least
-config.advisor.devil_total_x, retail above devil_retail_x and a GMP of at least devil_gmp_pct of the upper band;
-a BUY never triggers it), and
+It runs at analysis when the market disagrees with the call (devils_advocate): a NO BUY with high demand (total
+subscription of at least config.advisor.devil_total_x, retail above devil_retail_x and a GMP of at least
+devil_gmp_pct of the upper band), or a BUY with low demand (total under devil_total_x and GMP under
+devil_gmp_pct), and
 on the closing day, when the subscription is final. Python reads the demand level from it (hot / normal / weak, by
 the thresholds in config.advisor) and flags a contradiction: hot demand against a NO BUY, or weak demand
 against a BUY. One call on another company's model (routing `demand_check`, Grok) then explains why demand is
 where it is, what retail demand in particular says, and whether the call still holds against it. It never
-changes the call. As devil's advocate it also re-tests each reason behind the NO BUY (R:reason[i]) against
-the demand: does it still hold, and why; the summary and the PDF then lead with why demand is high.
+changes the call. As devil's advocate it also re-tests each reason behind the call (R:reason[i]) against the
+demand: does it still hold, and why; the summary and the PDF then lead with why demand is high (or low).
 
 It reads the advisor's digest (advisor.build_advisor_digest) plus the call being judged (R: items) and the
 demand reading (K:demand). Python applies the advisor's checks: a reason citing an unknown ID or a number not
@@ -45,19 +46,20 @@ SYSTEM = (
     "market's demand is now known. Judge the call, and each reason behind it, against the demand. Your only input is a JSON digest; each item has an ID: verified red herring prospectus facts and "
     "checks, the peer valuation read, the offer structure, third-party market signals (S: items: GMP, "
     "subscription by category, dated articles), the call (R:) and K:demand (Python's reading of the "
-    "subscription: level hot / normal / weak, devils_advocate when the market wants a NO BUY IPO, the GMP as a "
-    "percent of the upper price, and whether it contradicts the call).\n"
+    "subscription: level hot / normal / weak, devils_advocate when the market disagrees with the call (wants a NO BUY "
+    "IPO, or shuns a BUY one), the GMP as a percent of the upper price, and whether it contradicts the call).\n"
     "Rules:\n"
     "- demand_reasons: 2-4 reasons the subscription is at this level, most important first. Look past the "
     "numbers to the qualitative drivers the items support: the brand and how well known the business is, the "
     "owners' confidence (how little they sell in the offer, how much they keep), the sector's appeal, pricing "
     "against listed peers, the issue size against the demand, institutional (QIB) or high-net-worth (NII) "
-    "interest, and listing-gain chasing on the GMP. When devils_advocate, these reasons are what the reader "
+    "interest, listing-gain chasing on the GMP; for low demand also a weak market mood, a price the market "
+    "thinks too high, a little-known name or an owners' exit. When devils_advocate, these reasons are what the reader "
     "sees first: make them specific.\n"
     "- hypotheses: only when devils_advocate, else empty. For each R:reason, in order, does it still hold against this demand? Argue the market's "
-    "side honestly: if big institutions bid heavily for a company the call calls overpriced, say what they "
-    "may see. holds is false only when the demand gives a real reason to doubt it, not merely because demand "
-    "is high. why names the reason first in a few words.\n"
+    "side honestly: if big institutions bid heavily for a company the call calls overpriced, or stay away "
+    "from one it calls good value, say what they may see. holds is false only when the demand gives a real "
+    "reason to doubt it, not merely because demand is high or low. why names the reason first in a few words.\n"
     "- retail_reading: what retail demand says, separately from the institutions. Heavy retail demand often "
     "follows the GMP rather than the business. Empty if there is no retail figure.\n"
     "- call_holds: does the call still hold against this demand? Demand predicts the listing day, not the "
@@ -97,16 +99,20 @@ def gmp_pct(sentiment: Sentiment | None, price_band: str) -> float | None:
 
 
 def devils_advocate(call: str | None, sentiment: Sentiment | None, price_band: str, config: Config) -> bool:
-    """A NO BUY the market disagrees with: total subscription of at least config.advisor.devil_total_x, retail
-    above devil_retail_x (when a retail figure is published) and a GMP of at least devil_gmp_pct of the upper
-    band. Never for a BUY."""
+    """The market disagrees with the call. A NO BUY with high demand: total subscription of at least
+    config.advisor.devil_total_x, retail above devil_retail_x (when a retail figure is published) and a GMP of
+    at least devil_gmp_pct of the upper band. A BUY with low demand: total under devil_total_x and a GMP under
+    devil_gmp_pct. Both need a total and a GMP figure."""
     a = config.advisor
     sub = sentiment.subscription if sentiment else None
+    total = sub.total.value if sub else None
     retail = sub.retail.value if sub and sub.retail else None
     pct = gmp_pct(sentiment, price_band)
-    return (call == "no_buy" and sub is not None and sub.total.value is not None and sub.total.value >= a.devil_total_x
-            and (retail is None or retail > a.devil_retail_x)
-            and pct is not None and pct >= a.devil_gmp_pct)
+    if total is None or pct is None:
+        return False
+    if call == "no_buy":
+        return total >= a.devil_total_x and (retail is None or retail > a.devil_retail_x) and pct >= a.devil_gmp_pct
+    return call == "buy" and total < a.devil_total_x and pct < a.devil_gmp_pct
 
 
 def contradicts(level: Level | None, call: str, devil: bool = False) -> bool:
