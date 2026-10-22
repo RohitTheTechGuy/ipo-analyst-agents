@@ -795,22 +795,39 @@ class CheckedAdvice(Advice):
     notes: list[str] = []
 
 
-class DemandCheck(BaseModel):
-    """The closing-day demand check's answer (demand_check.py). LLM-facing: no defaults (OpenAI strict mode)."""
+class HypothesisCheck(BaseModel):
+    """One reason behind the call, re-tested against the market's demand. LLM-facing: no defaults."""
 
-    demand_reasons: list[EvidencedPoint] = Field(description="2-3 reasons the subscription is at this level, "
+    reason_id: str = Field(description="The R:reason[i] item it tests, e.g. 'R:reason[0]'")
+    holds: bool = Field(description="Does this reason still hold against the demand?")
+    why: str = Field(description="One sentence, at most 25 words, naming the reason first; numbers only as in "
+                                 "the cited items")
+    evidence: list[str] = Field(description="IDs of the digest items the judgement rests on")
+
+
+class CheckedHypothesis(HypothesisCheck):
+    reason: str  # the advisor's reason it tests, as the advisor wrote it
+
+
+class DemandCheck(BaseModel):
+    """The demand check's answer (demand_check.py). LLM-facing: no defaults (OpenAI strict mode)."""
+
+    demand_reasons: list[EvidencedPoint] = Field(description="2-4 reasons the subscription is at this level, "
                                                              "most important first")
     retail_reading: str = Field(description="One or two sentences on what retail demand says; empty if no retail figure")
     call_holds: bool = Field(description="Does the call still hold against this demand?")
     verdict_vs_demand: str = Field(description="One or two sentences: why the call holds or why demand weakens it")
+    hypotheses: list[HypothesisCheck] = Field(description="Each R:reason re-tested against the demand, in order")
 
 
 class CheckedDemand(DemandCheck):
     """A DemandCheck after Python's checks, with Python's demand reading; what was dropped is in `notes`."""
 
     level: Literal["hot", "normal", "weak"]
+    devils_advocate: bool = False  # a NO BUY against high demand (demand_check.devils_advocate)
     call: Call
     contradicts: bool
+    hypotheses: list[CheckedHypothesis] = []
     notes: list[str] = []
 
 
@@ -840,6 +857,8 @@ class Report(BaseModel):
     synthesis_error: str | None = None  # the synthesizer raised (not a budget stop): the exception's type name
     # None: the advisor did not run (partial report), failed, hit its cap or kept < 2 reasons ("not reached")
     advice: CheckedAdvice | None = None
+    # None: no demand check (no NO BUY against high demand and not the closing day, no subscription figure, or it failed)
+    demand: CheckedDemand | None = None
     rhp_sha256: str
     pdf_path: str | None = None
 

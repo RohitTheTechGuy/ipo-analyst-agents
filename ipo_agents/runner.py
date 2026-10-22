@@ -16,11 +16,11 @@ from ipo_agents.config import Config
 from ipo_agents.contracts import CheckedAdvice, Fact, Ipo, Report, RunSummary, Sentiment, SubscriptionStatus
 from ipo_agents.discovery import DiscoveryError
 from ipo_agents.flags import summary_line as offer_summary_line
-from ipo_agents.notify.reminders import closing_day_check, send_daily_updates
+from ipo_agents.notify.reminders import send_daily_updates
 from ipo_agents.rhp_qa import LAST_KEY as QA_TOPIC_KEY
-from ipo_agents.plain_summary import evaluated_summary
-from ipo_agents.report.labels import (DISCLAIMER, MARKET_HEADING, VERDICT_LABELS, advice_text, market_read,
-                                      subscription_text)
+from ipo_agents.plain_summary import FOOTER, evaluated_summary
+from ipo_agents.report.labels import (DISCLAIMER, MARKET_HEADING, VERDICT_LABELS, advice_text, demand_lines,
+                                      market_read, subscription_text)
 from ipo_agents import cancel
 from ipo_agents.store import TERMINAL, Store, same_company
 from ipo_agents.valuation import operating_line, peer_lines
@@ -126,6 +126,8 @@ def format_summary(report: Report) -> str:
         *_advice_lines(report.advice),
         "",
     ]
+    if report.demand:
+        lines += [*demand_lines(report.demand), ""]
     if report.offer:
         lines.append(f"Issue: {_fact_text(report.offer.issue_size)} · OFS: {_fact_text(report.offer.ofs_shares)}")
         if offer_line := offer_summary_line(report):
@@ -157,6 +159,9 @@ def _plain_text(report: Report, full: str, adapters: Adapters, config: Config) -
     judge (billed to the IPO's advisor ledger), else the full one. Never fails the run."""
     try:
         text, drafts = evaluated_summary(report, full, advisor_llm(adapters.llm, report.ipo.ipo_id, config))
+        if text and report.demand:
+            # Python's lines, after the judged draft: never rewritten, and outside the editor's line limit.
+            text = text.replace(FOOTER, "\n".join([*demand_lines(report.demand), "", FOOTER]))
         return text or full, drafts
     except cancel.Cancelled:
         # The analysis is done and paid for: a stop now only skips the plain rewrite.
@@ -312,14 +317,6 @@ def run_daily(today: date, adapters: Adapters, config: Config, force_ipo: str | 
                        review=[d.as_dict() for d in drafts] or None)
         _send(ipo, text, report.pdf_path, adapters, summary)
         store.set_state(QA_TOPIC_KEY, ipo.ipo_id)  # "why NO BUY?" next in the chat is about this IPO
-        if ipo.close_date == today and config.advisor.closing_day_refresh:
-            # Analysed on its last day: no separate closing-day update, so send its demand check here.
-            try:
-                check = closing_day_check(report, adapters, config, today)
-            except cancel.Cancelled:
-                check = None  # the report is out; the loop stops before the next IPO
-            if check:
-                _send(ipo, check, None, adapters, summary)
     if daily_updates:
         sent, failed = send_daily_updates(today, store, adapters, config, VERDICT_LABELS)
         summary.updated += sent

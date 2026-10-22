@@ -19,7 +19,8 @@ from pydantic import BaseModel
 from ipo_agents.calc import upper_band
 from ipo_agents.contracts import MULTIPLE_LABELS, ClaimedFact, Derived, Fact, Flag, Quote, Report, SentimentSource
 from ipo_agents.report import charts, fmt
-from ipo_agents.report.labels import CALL_LABELS, DISCLAIMER, HORIZON_LABELS, MARKET_HEADING, VERDICT_LABELS, market_read
+from ipo_agents.report.labels import (CALL_LABELS, DISCLAIMER, HORIZON_LABELS, MARKET_HEADING, VERDICT_LABELS, demand_label,
+                                      demand_lines, market_read)
 from ipo_agents.sections import SECTIONS
 from ipo_agents.verifier import COULD_NOT_VERIFY
 
@@ -167,11 +168,8 @@ def _evidence_pages(report: Report) -> dict[str, int]:
     return out
 
 
-def _advice(report: Report) -> dict | None:
-    """The advisor box: call, horizon, and each reason and risk with what it rests on ("RHP p. 2; computed")."""
-    a = report.advice
-    if a is None:
-        return None
+def _basis(report: Report):
+    """ids -> what they rest on, e.g. "RHP p. 2; computed"."""
     pages = _evidence_pages(report)
 
     def basis(ids: list[str]) -> str:
@@ -185,10 +183,32 @@ def _advice(report: Report) -> dict | None:
                 parts.append(kind)
         return "; ".join(parts) or "RHP"
 
+    return basis
+
+
+def _advice(report: Report) -> dict | None:
+    """The advisor box: call, horizon, and each reason and risk with what it rests on ("RHP p. 2; computed")."""
+    a = report.advice
+    if a is None:
+        return None
+    basis = _basis(report)
     return {"call": CALL_LABELS[a.call], "css": "subscribe" if a.call == "buy" else "avoid",
             "horizon": HORIZON_LABELS.get(a.horizon),
             "reasons": [{"text": p.text, "basis": basis(p.evidence)} for p in a.reasons],
             "risks": [{"text": p.text, "basis": basis(p.evidence)} for p in a.key_risks]}
+
+
+def _demand(report: Report) -> dict | None:
+    """The demand check box: why demand is where it is, each reason of the call re-tested against it, and the
+    call against the demand."""
+    d = report.demand
+    if d is None:
+        return None
+    basis = _basis(report)
+    return {"label": demand_label(d), "call": CALL_LABELS[d.call],
+            "reasons": [{"text": p.text, "basis": basis(p.evidence)} for p in d.demand_reasons],
+            "hypotheses": [{"reason": h.reason, "holds": h.holds, "why": h.why} for h in d.hypotheses],
+            "verdict": demand_lines(d)[-1].split(" ", 1)[1]}  # without its emoji: the PDF fonts have none
 
 
 def _section_flags(report: Report) -> dict[str, list[Flag]]:
@@ -217,6 +237,7 @@ def render_html(report: Report) -> str:
         verdict_label=VERDICT_LABELS[synthesis.verdict] if synthesis else "VERDICT NOT REACHED",
         verdict_class=VERDICT_CLASS[synthesis.verdict] if synthesis else "none",
         advice=_advice(report),
+        demand=_demand(report),
         red_flags=_red_flags(report),
         tiles=_tiles(report),
         min_investment=_min_investment(report),

@@ -1,19 +1,23 @@
-"""Closing-day demand check: the advisor's call judged against the final subscription (seam A, offline).
+"""Demand check: the market as devil's advocate against the advisor's call and its reasons (seam A, offline).
 
 The demand check runs on grok on the advisor ledger. Analysis day 13 Oct, close 16 Oct; the advisor says
 NO BUY both days (test_advisor.WAIT)."""
 import json
 from dataclasses import replace
+from datetime import date
 from pathlib import Path
 
 import pytest
 
 from ipo_agents.advisor import ledger_id
-from ipo_agents.contracts import Advice, CheckedDemand, DemandCheck, EvidencedPoint, OfferObjects, SubscriptionStatus
-from ipo_agents.demand_check import contradicts, demand_level
+from ipo_agents import analysis
+from ipo_agents.contracts import (Advice, CheckedDemand, ClaimedFact, DemandCheck, EvidencedPoint, HypothesisCheck,
+                                  OfferObjects, Sentiment, SubscriptionStatus)
+from ipo_agents.demand_check import contradicts, demand_level, devils_advocate
+from ipo_agents.report.render import render_html
 from ipo_agents.runner import run_daily
 from tests.fakes import FakeExchange, FakeMarketData, ScriptedLLM
-from tests.test_advisor import ACME, CLOSE, OPEN, WAIT, closing_ipo, logged_ledgers
+from tests.test_advisor import ACME, CLOSE, GO, OPEN, WAIT, closing_ipo, logged_ledgers
 from tests.test_daily_updates import claim, market
 from tests.test_synthesizer import OFFER_ANSWER
 
@@ -44,7 +48,15 @@ RETAIL_POINT = EvidencedPoint(text="Retail demand of 15.1 times follows the ₹1
 ISSUE_POINT = EvidencedPoint(text="A ₹1,250 crore issue drew 62.4 times demand",
                              evidence=["F:offer_objects.issue_size", "S:subscription"])
 HOLDS = DemandCheck(demand_reasons=[RETAIL_POINT, ISSUE_POINT], retail_reading="Retail buyers are chasing listing gains",
-                    call_holds=True, verdict_vs_demand="Demand predicts the listing day; too little is verified to apply.")
+                    call_holds=True, verdict_vs_demand="Demand predicts the listing day; too little is verified to apply.",
+                    hypotheses=[])
+# WAIT's reasons: [0] the ₹1,250 crore issue draws institutions, [1] most offer details are not disclosed.
+SIZE_HOLDS = HypothesisCheck(reason_id="R:reason[0]", holds=True, why="Issue size: institutions bid 140.2 times, as expected",
+                             evidence=["S:subscription"])
+OPACITY_WEAKENED = HypothesisCheck(reason_id="R:reason[1]", holds=False,
+                                   why="Opacity: big institutions bid heavily anyway, so they may know more",
+                                   evidence=["S:subscription"])
+DEVIL = HOLDS.model_copy(update={"hypotheses": [OPACITY_WEAKENED, SIZE_HOLDS]})
 
 
 def hot_market():
@@ -53,11 +65,16 @@ def hot_market():
         total=claim(62.4, "Subscription (total)", CLOSE)))
 
 
+def quiet_market(day):
+    """2.3× subscribed but a ₹5 GMP (under 5% of ₹105): demand isn't high enough to argue with a NO BUY."""
+    return replace(market(day), gmp_fact=claim(5.0, "GMP (unofficial)", day))
+
+
 def close_day(adapters, config, answer, close_market):
     adapters.exchange = FakeExchange([closing_ipo()])
     adapters.llm = llm = ScriptedLLM({OfferObjects: OFFER_ANSWER, Advice: WAIT, DemandCheck: answer},
                                      models=config.models)
-    adapters.market = market(OPEN)
+    adapters.market = quiet_market(OPEN)  # no devil's advocate on analysis day: only the closing day's check
     run_daily(OPEN, adapters, config)
     adapters.exchange = FakeExchange([])
     adapters.market = close_market
@@ -71,7 +88,7 @@ def test_hot_demand_against_a_no_buy_is_explained_on_the_closing_update(adapters
     llm, close = close_day(adapters, config, HOLDS, hot_market())
 
     assert close.splitlines()[-5:] == [
-        "🔎 Demand check: HIGH demand",
+        "🔥 Why demand is high despite the NO BUY (the market as devil's advocate):",
         "• Retail demand of 15.1 times follows the ₹110 GMP",
         "• A ₹1,250 crore issue drew 62.4 times demand",
         "Retail: Retail buyers are chasing listing gains",
@@ -81,12 +98,13 @@ def test_hot_demand_against_a_no_buy_is_explained_on_the_closing_update(adapters
     assert call["model"] == "grok"
     items = {i["id"]: i for i in json.loads(call["user"].split("\n", 1)[1])["items"]}
     assert items["K:demand"] == {"id": "K:demand", "level": "hot", "contradicts_call": True, "retail": 15.1,
-                                 "total": 62.4, "unit": "times subscribed"}
+                                 "total": 62.4, "unit": "times subscribed", "devils_advocate": True,
+                                 "gmp_pct_of_upper_band": 104.8}
     assert items["R:call"]["call"] == "no_buy" and items["R:reason[1]"]["text"] == "Most offer details are not disclosed"
     assert ("demand_check", ledger_id(ACME)) in logged_ledgers(config)
     saved = CheckedDemand.model_validate_json(
         (Path(config.work_dir) / ACME / "demand_check_2026-10-16.json").read_text(encoding="utf-8"))
-    assert saved.level == "hot" and saved.contradicts and saved.call_holds
+    assert saved.level == "hot" and saved.devils_advocate and saved.contradicts and saved.call_holds
 
 
 @pytest.mark.advisor
@@ -127,26 +145,24 @@ def test_no_check_still_sends_the_normal_closing_update(adapters, config, answer
     llm, close = close_day(adapters, config, answer, close_market)
 
     assert close.startswith("⏰ Acme Ltd IPO closes TODAY")
-    assert "🔎" not in close
+    assert "🔎" not in close and "🔥" not in close
     tasks = [c["task"] for c in llm.calls]
     assert ("demand_check" in tasks) == (close_market.subscription_status is not None)
 
 
 @pytest.mark.advisor
 @pytest.mark.demand_check
-def test_an_ipo_analysed_on_its_closing_day_gets_the_demand_check_after_its_summary(adapters, config):
+def test_an_ipo_analysed_on_its_closing_day_has_the_demand_check_in_its_summary(adapters, config):
     adapters.exchange = FakeExchange([closing_ipo()])
     adapters.llm = llm = ScriptedLLM({OfferObjects: OFFER_ANSWER, Advice: WAIT, DemandCheck: HOLDS},
                                      models=config.models)
     adapters.market = hot_market()
     run_daily(CLOSE, adapters, config)
 
-    *_, summary, check = adapters.notifier.messages
-    assert "🔎" not in summary
-    assert check.splitlines()[:3] == ["⏰ Acme Ltd IPO closes TODAY",
-                                      "Subscription: 62.4× total (QIB 140.2×, Retail 15.1×) as of 16 Oct",
-                                      "🔎 Demand check: HIGH demand"]
-    assert check.splitlines()[-1].startswith("⚠️ HIGH demand vs NO BUY: the call still holds.")
+    [summary] = [m for m in adapters.notifier.messages if m.startswith("📄")]
+    lines = summary.splitlines()
+    assert "🔥 Why demand is high despite the NO BUY (the market as devil's advocate):" in lines
+    assert any(line.startswith("⚠️ HIGH demand vs NO BUY: the call still holds.") for line in lines)
     assert [c["task"] for c in llm.calls].count("demand_check") == 1
 
 
@@ -159,7 +175,7 @@ def test_a_failed_check_on_an_ipo_analysed_on_its_closing_day_sends_only_the_sum
     summary = run_daily(CLOSE, adapters, config)
 
     assert summary.analysed == [ACME] and summary.notify_failed == []
-    assert not any("🔎" in m for m in adapters.notifier.messages)
+    assert not any("🔎" in m or "🔥" in m for m in adapters.notifier.messages)
 
 
 @pytest.mark.advisor
@@ -171,3 +187,92 @@ def test_after_close_the_update_shows_the_closing_day_call_not_the_analysis_day_
     head, advisor, *_ = adapters.notifier.messages[-1].splitlines()
     assert head.startswith("📈 Acme Ltd IPO · bidding closed Fri 16 Oct")
     assert advisor.startswith("🧭 Advisor (16 Oct): ")
+
+
+# --- high demand against a NO BUY: the market as devil's advocate --------------------------------------------------
+
+def sentiment(total, gmp, retail=None):
+    return Sentiment(available=True, subscription=subscription(total, retail),
+                     gmp=claim(gmp, "GMP (unofficial)", CLOSE) if gmp is not None else None)
+
+
+@pytest.mark.parametrize("call, total, retail, gmp, band, devil", [
+    ("no_buy", 2.0, None, 10.5, "₹100–₹105", True),       # 2× total, GMP 10% of ₹105
+    ("no_buy", 2.3, 1.2, 42.0, "₹100–₹105", True),        # retail above 1×: no higher bar on it
+    ("no_buy", 2.3, 1.0, 42.0, "₹100–₹105", False),       # retail not above 1×
+    ("no_buy", 1.9, None, 42.0, "₹100–₹105", False),      # total under 2×
+    ("no_buy", 12.0, None, 9.45, "₹100–₹105", False),     # GMP 9%
+    ("buy", 62.4, 15.1, 110.0, "₹100–₹105", False),       # a BUY never
+    ("no_buy", 12.0, None, None, "₹100–₹105", False),     # no GMP
+    ("no_buy", 12.0, None, 12.6, "to be announced", False),  # no band
+])
+def test_devils_advocate_needs_a_no_buy_2x_total_retail_over_1x_and_a_gmp_of_10_pct(config, call, total, retail, gmp,
+                                                                                   band, devil):
+    assert devils_advocate(call, sentiment(total, gmp, retail), band, config) is devil
+
+
+@pytest.mark.advisor
+@pytest.mark.demand_check
+def test_each_reason_of_the_call_is_re_tested_and_shown_against_the_market(adapters, config):
+    made_up = HypothesisCheck(reason_id="R:reason[0]", holds=True, why="Issue size: 99 times demand", evidence=["S:subscription"])
+    stray = HypothesisCheck(reason_id="R:reason[7]", holds=True, why="Not a reason of the call", evidence=["S:subscription"])
+    llm, close = close_day(adapters, config, DEVIL.model_copy(update={"hypotheses": [made_up, stray, *DEVIL.hypotheses]}),
+                           hot_market())
+
+    lines = close.splitlines()
+    i = lines.index("Our reasons vs the market:")
+    assert lines[i + 1:i + 3] == ["✅ Holds: Issue size: institutions bid 140.2 times, as expected",
+                                  "⚠️ Weakened: Opacity: big institutions bid heavily anyway, so they may know more"]
+    assert not any("99" in line or "Not a reason" in line for line in lines)
+    saved = CheckedDemand.model_validate_json(
+        (Path(config.work_dir) / ACME / "demand_check_2026-10-16.json").read_text(encoding="utf-8"))
+    assert [h.reason for h in saved.hypotheses] == [WAIT.reasons[0].text, WAIT.reasons[1].text]
+
+
+@pytest.mark.advisor
+@pytest.mark.demand_check
+def test_high_demand_against_a_no_buy_at_analysis_is_explained_in_the_summary_and_the_report(adapters, config, monkeypatch):
+    adapters.exchange = FakeExchange([closing_ipo().model_copy(update={"close_date": date(2026, 10, 20)})])
+    adapters.llm = llm = ScriptedLLM({OfferObjects: OFFER_ANSWER, Advice: WAIT, DemandCheck: DEVIL}, models=config.models)
+    adapters.market = hot_market()
+    html = []
+    monkeypatch.setattr(analysis, "render_pdf", lambda report, out: html.append(render_html(report)) or _pdf(out))
+    run_daily(OPEN, adapters, config)
+
+    [summary] = [m for m in adapters.notifier.messages if m.startswith("📄")]
+    assert "🔥 Why demand is high despite the NO BUY (the market as devil's advocate):" in summary
+    assert "⚠️ Weakened: Opacity: big institutions bid heavily anyway, so they may know more" in summary
+    assert [c["task"] for c in llm.calls].count("demand_check") == 1
+    assert "Why demand is high despite the NO BUY: the market as devil's advocate" in html[0]
+    assert "A ₹1,250 crore issue drew 62.4 times demand" in html[0] and "Weakened:" in html[0]
+
+
+@pytest.mark.advisor
+@pytest.mark.demand_check
+@pytest.mark.parametrize("answer, analysis_market", [(WAIT, quiet_market(OPEN)), (GO, hot_market())])
+def test_no_check_at_analysis_for_low_demand_or_a_buy(adapters, config, answer, analysis_market):
+    adapters.exchange = FakeExchange([closing_ipo().model_copy(update={"close_date": date(2026, 10, 20)})])
+    adapters.llm = llm = ScriptedLLM({OfferObjects: OFFER_ANSWER, Advice: answer, DemandCheck: DEVIL}, models=config.models)
+    adapters.market = analysis_market
+    run_daily(OPEN, adapters, config)
+
+    assert "demand_check" not in [c["task"] for c in llm.calls]
+    assert not any("🔥" in m or "🔎" in m for m in adapters.notifier.messages)
+
+
+@pytest.mark.advisor
+@pytest.mark.demand_check
+@pytest.mark.parametrize("close_market, resent", [(hot_market(), True), (quiet_market(CLOSE), False)])
+def test_high_demand_against_a_no_buy_on_the_closing_day_re_sends_the_report(adapters, config, monkeypatch, close_market, resent):
+    monkeypatch.setattr(analysis, "render_pdf", lambda report, out: _pdf(out))
+    close_day(adapters, config, DEVIL, close_market)
+
+    sent_on_close = adapters.notifier.documents[1:]  # [0] is the analysis-day report
+    assert len(sent_on_close) == (1 if resent else 0)
+
+
+def _pdf(out_dir):
+    path = Path(out_dir) / "report.pdf"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"%PDF-1.4")
+    return path

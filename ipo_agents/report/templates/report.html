@@ -103,6 +103,24 @@
   {% endif %}
 </div>
 
+{% if demand %}
+<div class="advisor demand">
+  <div class="verdict"><span class="who">{% if r.demand.devils_advocate %}Why demand is high despite the NO BUY: the market as devil's advocate{% else %}Demand check{% endif %}</span>
+    <span class="confidence">{{ demand.label }}</span></div>
+  <ol class="reasons">{% for p in demand.reasons %}<li>{{ p.text }} <span class="pg">({{ p.basis }})</span></li>{% endfor %}</ol>
+  {% if r.demand.retail_reading %}<p><b>Retail:</b> {{ r.demand.retail_reading }}</p>{% endif %}
+  {% if demand.hypotheses %}
+  <table class="kv">
+    <tr><th>Reason behind the call</th><th>Against the market</th></tr>
+    {% for h in demand.hypotheses %}<tr><td>{{ h.reason }}</td><td><b>{{ "Holds" if h.holds else "Weakened" }}:</b> {{ h.why }}</td></tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+  <p><b>{{ demand.verdict }}</b></p>
+  <p class="note">The {{ demand.call }} call and its reasons, re-tested by a model from another company than the advisor's against the subscription and GMP{% if r.demand.notes %}; Python's checks: {{ r.demand.notes|join("; ") }}{% endif %}. The call is never changed by demand: demand predicts the listing day, not the company's long-term value. GMP is unofficial.</p>
+</div>
+{% endif %}
+
 <div class="verdict">
   <span class="who">Analyst view</span>
   <span class="badge {{ verdict_class }}">{{ verdict_label }}</span>

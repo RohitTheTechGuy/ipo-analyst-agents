@@ -83,13 +83,15 @@ def _no_stop_left_over():
 
 @pytest.fixture(autouse=True)
 def _demand_check_under_test(request, monkeypatch):
-    """The closing-day demand check runs after every refresh, but makes its model call only in tests marked
-    `@pytest.mark.demand_check`; elsewhere there is no check, so closing-day tests that count calls or match
-    the update line by line aren't changed by it."""
+    """The demand check runs after every closing-day refresh and in an analysis of a NO BUY against high demand or on the
+    closing day, but makes its model call only in tests marked `@pytest.mark.demand_check`; elsewhere there is
+    no check, so tests that count calls or match messages line by line aren't changed by it."""
+    import ipo_agents.analysis as analysis
     import ipo_agents.notify.reminders as reminders
 
     if request.node.get_closest_marker("demand_check") is None:
         monkeypatch.setattr(reminders, "check_demand", lambda *a, **kw: None)
+        monkeypatch.setattr(analysis, "check_demand", lambda *a, **kw: None)
 
 
 @pytest.fixture(autouse=True)

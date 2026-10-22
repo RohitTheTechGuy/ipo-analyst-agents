@@ -62,6 +62,12 @@ class AdvisorConfig(BaseModel):
     demand_hot_total_x: float = Field(default=10.0, gt=0)
     demand_hot_retail_x: float = Field(default=5.0, gt=0)
     demand_weak_x: float = Field(default=1.0, gt=0)
+    # High demand against a NO BUY: total subscription at least devil_total_x, retail above devil_retail_x (when
+    # published) and a GMP at least devil_gmp_pct of the upper band. Then the analysis itself runs the demand check (the market as devil's advocate), and a
+    # closing-day one re-sends the PDF. A BUY never triggers it.
+    devil_total_x: float = Field(default=2.0, gt=0)
+    devil_retail_x: float = Field(default=1.0, ge=0)
+    devil_gmp_pct: float = Field(default=10.0, gt=0)
     demand_check_max_tokens: int = Field(default=8_000, gt=0)  # reasoning + answer
 
 

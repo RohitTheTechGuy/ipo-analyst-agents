@@ -49,7 +49,7 @@ flowchart TD
 
     PLAN -->|analysed IPO, open or not yet listed| UPD[Daily update<br/>GMP + subscription]
     UPD -->|closing day| ADV2[🤖 Advisor refresh<br/>re-gather sentiment · re-advise]
-    ADV2 --> DC[🤖 Demand check<br/>Grok: the call vs the subscription]
+    ADV2 --> DC[🤖 Demand check<br/>Grok: the call and its reasons vs demand]
     DC --> TG
     UPD --> TG
 
@@ -85,7 +85,7 @@ flowchart LR
 | `terra` | `gpt-5.6-terra` (OpenAI) | 2.00 · 12.00 | Steps that drive the decision, and the peer-fit check. Reasoning effort `low`. |
 | `groq` | `openai/gpt-oss-120b` (Groq) | free tier | Small calls (sentiment stance tags). Any Groq failure, or a call over 6k tokens, falls back to Luna. |
 | `sol` | `gpt-6.1-sol` (OpenAI) | 2.00 · 10.00 | Financial Advisor and Peer Valuation's choice of multiples (high reasoning effort) |
-| `grok` | `grok-4.20-0309-reasoning` (xAI) | 1.25 · 2.50 | The closing-day Demand Check, and the Summary Eval judge: a model from another company than the editor's (Terra, OpenAI), so it never grades its own family's writing. It reasons by default; xAI bills reasoning tokens on top of `completion_tokens`, and the meter adds them. |
+| `grok` | `grok-4.20-0309-reasoning` (xAI) | 1.25 · 2.50 | The Demand Check (a NO BUY against high demand, or the closing day), and the Summary Eval judge: a model from another company than the editor's (Terra, OpenAI), so it never grades its own family's writing. It reasons by default; xAI bills reasoning tokens on top of `completion_tokens`, and the meter adds them. |
 
 Terra also runs the Summary Editor. The `xai` provider goes through the OpenAI client at `https://api.x.ai/v1` and needs `XAI_API_KEY` while a routed model uses it. `evals/advisor_compare.py` runs the Financial Advisor on Sol and on Grok side by side, to decide whether to switch it.
 
@@ -181,14 +181,15 @@ Two model calls. Neither ever outputs a number.
   - Other daily updates repeat the latest call (after close, the closing-day one) with no model call. They go out while the IPO is open, then each weekday until the expected listing day (`store.expected_listing`: third weekday after close, T+3; holidays aren't known).
 - **Fails soft:** if the advisor errors or hits its $1.00 cap, the analysis summary and PDF still go out.
 
-### Demand Check 🤖 (`demand_check.py`): the closing-day call judged against the subscription
-- **Role:** a second opinion on the closing-day call, from another company's model (Grok, `demand_check`). It explains why the subscription is where it is, reads retail demand on its own, and says whether the call still holds against it. It never changes the call.
+### Demand Check 🤖 (`demand_check.py`): the market as devil's advocate
+- **Role:** a second opinion on the call, from another company's model than the advisor's (Grok, `demand_check`; the advisor is on `sol`). It explains why the subscription is where it is, looking past the numbers to qualitative drivers (brand, how little the owners sell, sector appeal, price against peers, institutional interest, GMP chasing), reads retail demand on its own, says whether the call still holds, and, as devil's advocate on a NO BUY, re-tests **each reason behind the call** against the demand (holds / weakened, and why). It never changes the call: demand predicts the listing day, not long-term value.
+- **When it runs:** as **devil's advocate** in the analysis itself when the call is **NO BUY** but demand is high (`demand_check.devils_advocate`: total subscription ≥ `advisor.devil_total_x`, 2×; retail above `devil_retail_x`, 1×, when published; GMP ≥ `devil_gmp_pct`, 10%, of the upper band; a BUY never triggers it), or when the IPO closes that day (`analysis._with_demand`, kept as `report.demand`); and on the closing day after the advisor refresh, for any call.
 - **Python decides the facts:** the demand level from the subscription (`config.advisor`: **high** at total ≥ 10× or retail ≥ 5×; **weak** when total or retail is below 1×; otherwise normal), and a **contradiction** when high demand meets a NO BUY or weak demand meets a BUY.
 - **Input:** the advisor's digest, plus the call being judged (`R:` items) and the demand reading (`K:demand`).
 - **Checks (Python):** the advisor's evidence-ID and number checks. No surviving reason means no check.
-- **Output:** lines after the subscription in the ⏰ closing message, e.g. "🔎 Demand check: HIGH demand", 2–3 reasons, a "Retail:" line, then "⚠️ HIGH demand vs NO BUY: the call still holds. …" or "❗ … the check thinks demand weakens the call. …". Saved as `demand_check_<date>.json`.
+- **Output:** as devil's advocate, "🔥 Why demand is high despite the NO BUY (the market as devil's advocate):" then the reasons; otherwise "🔎 Demand check: HIGH demand". Then a "Retail:" line, as devil's advocate "Our reasons vs the market:" with "✅ Holds: …" / "⚠️ Weakened: …" per reason, then "⚠️ HIGH demand vs NO BUY: the call still holds. …" or "❗ … the check thinks demand weakens the call. …". Saved as `demand_check_<date>.json`. In the analysis these lines follow the advisor in the summary (Python appends them to the plain summary after the judge) and a box under the advisor in the PDF; a re-test is dropped if it names no reason of the call or has a number its evidence doesn't.
 - **Cost and failure:** about $0.05 a call (measured $0.046) on the advisor ledger. Without a subscription figure there is no call; if it fails, the normal update goes out.
-- **IPO analysed on its closing day:** there is no separate closing update, so `reminders.closing_day_check` runs the check right after the summary (on `report.advice` and `report.sentiment`) and sends it as its own ⏰ message.
+- **Closing day, NO BUY against high demand:** the report is re-rendered with the refreshed call and the check, and the PDF is sent again after the ⏰ update ("report (updated: why demand is high)"). An IPO analysed on its closing day has the check in its summary and PDF already.
 
 ### RHP Q&A 🤖 (`rhp_qa.py`): questions on an analysed RHP, from Telegram
 - **Role:** answers a question about one analysed IPO from its RHP only, citing PDF pages, in plain words (≤150 words). Follow-ups resume the IPO's last session (`telegram_state` `qa_sessions`).

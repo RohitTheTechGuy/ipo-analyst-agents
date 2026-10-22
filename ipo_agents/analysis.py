@@ -35,6 +35,7 @@ from ipo_agents.budget import BudgetExceeded, BudgetMeter, MeteredLLM
 from ipo_agents.llm import LLMParseError
 from ipo_agents.calc import compute_offer
 from ipo_agents.config import Config
+from ipo_agents.demand_check import check_demand, devils_advocate
 from ipo_agents.contracts import CheckedSynthesis, Ipo, Report, SectionedDocument, Sentiment, Valuation
 from ipo_agents.cross_checks import cross_checks
 from ipo_agents.fin_calc import financial_flags
@@ -252,7 +253,14 @@ def analyse_rhp(ipo: Ipo, rhp_pdf: Path, adapters: Adapters, config: Config, tod
             raise
         # A finished run never resumes; drop its checkpoints so they don't pile up (several MB per IPO).
         saver.delete_thread(thread_id)
-    report = _with_advice(_report(ipo, state, "complete", rhp_sha256), provider, config, today or date.today())
+    today = today or date.today()
+    report = _with_demand(_with_advice(_report(ipo, state, "complete", rhp_sha256), provider, config, today),
+                          provider, config, today)
+    return rerendered(report, config)
+
+
+def rerendered(report: Report, config: Config) -> Report:
+    """The report with its PDF rendered again and its JSON saved (the closing-day update re-sends it)."""
     return _saved(_with_pdf(report, config), config)
 
 
@@ -264,6 +272,23 @@ def _with_advice(report: Report, provider, config: Config, today: date) -> Repor
         return report.model_copy(update={"advice": advise(report, report.sentiment, llm, config, today)})
     except Exception:
         log.exception("%s: advice not reached: the advisor could not start", report.ipo.ipo_id)
+        return report
+
+
+def _with_demand(report: Report, provider, config: Config, today: date) -> Report:
+    """The report with the demand check, on the advisor ledger, when the call is NO BUY but demand is high
+    (the market as devil's advocate), or on the closing day (config.advisor.closing_day_refresh). Fails soft: no check, never a
+    lost analysis."""
+    closing = report.ipo.close_date == today and config.advisor.closing_day_refresh
+    a = report.advice
+    if a is None or not (closing or devils_advocate(a.call, report.sentiment, report.ipo.price_band, config)):
+        return report
+    try:
+        llm = advisor_llm(provider, report.ipo.ipo_id, config)
+        return report.model_copy(update={"demand": check_demand(report, report.advice, report.sentiment, llm,
+                                                                config, today)})
+    except Exception:
+        log.exception("%s: demand check not reached: it could not start", report.ipo.ipo_id)
         return report
 
 

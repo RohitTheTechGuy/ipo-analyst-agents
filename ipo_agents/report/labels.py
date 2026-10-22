@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from ipo_agents.calc import upper_band
-from ipo_agents.contracts import Advice, Sentiment, SubscriptionStatus
+from ipo_agents.contracts import Advice, CheckedDemand, Sentiment, SubscriptionStatus
 
 CALL_LABELS = {"buy": "BUY", "no_buy": "NO BUY"}
 HORIZON_LABELS = {"listing_gains": "listing gains", "long_term": "long term"}
@@ -66,3 +66,37 @@ def advice_text(advice: Advice) -> str:
     if advice.horizon in HORIZON_LABELS:
         parts.append(HORIZON_LABELS[advice.horizon])
     return " · ".join(parts)
+
+
+DEMAND_LABELS = {"hot": "HIGH demand", "normal": "Normal demand", "weak": "WEAK demand"}
+
+
+def demand_label(check: CheckedDemand) -> str:
+    return "HIGH demand" if check.devils_advocate else DEMAND_LABELS[check.level]
+
+
+def demand_lines(check: CheckedDemand | None) -> list[str]:
+    """The demand check: why demand is where it is (led by a 🔥 heading when it plays devil's advocate on a NO BUY), the retail reading,
+    each reason of the call re-tested against the market, and the call against the demand; nothing without
+    a check."""
+    if check is None:
+        return []
+    head = ("🔥 Why demand is high despite the NO BUY (the market as devil's advocate):" if check.devils_advocate
+            else f"🔎 Demand check: {DEMAND_LABELS[check.level]}")
+    lines = [head, *(f"• {r.text}" for r in check.demand_reasons)]
+    if check.retail_reading:
+        lines.append(f"Retail: {check.retail_reading}")
+    if check.hypotheses:
+        lines += ["Our reasons vs the market:",
+                  *(f"{'✅ Holds' if h.holds else '⚠️ Weakened'}: {h.why}" for h in check.hypotheses)]
+    why = f" {check.verdict_vs_demand}" if check.verdict_vs_demand else ""
+    against = f"{demand_label(check)} vs {CALL_LABELS[check.call]}"
+    if check.contradicts and check.call_holds:
+        lines.append(f"⚠️ {against}: the call still holds.{why}")
+    elif check.contradicts:
+        lines.append(f"❗ {against}: the check thinks demand weakens the call.{why}")
+    elif not check.call_holds:
+        lines.append(f"❗ The check questions the call.{why}")
+    else:
+        lines.append(f"✅ Demand fits the call.{why}")
+    return lines

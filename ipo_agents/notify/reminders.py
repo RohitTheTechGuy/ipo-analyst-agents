@@ -5,10 +5,11 @@ subscription, with the latest call (the closing-day refresh when there was one).
 
 On the closing day (config.advisor.closing_day_refresh) the advisor's call is refreshed first: the saved
 report.json is reloaded, sentiment re-gathered and the advisor re-run, all on the IPO's advisor ledger
-(ticket 27). Then the demand check (demand_check.py) judges that call against the final subscription, on the
-same ledger. An IPO analysed on its closing day gets the demand check right after its summary
-(closing_day_check). Every other update is third-party numbers only, with no model calls. A failed refresh
-or check sends the normal update."""
+(ticket 27). Then the demand check (demand_check.py) judges that call, and each of its reasons, against the
+final subscription, on the same ledger. When it plays devil's advocate (a NO BUY against high demand) the report is re-rendered with the check
+and the PDF is sent again after the update. An IPO analysed on its closing day has the check in its summary
+and report already (analysis._with_demand). Every other update is third-party numbers only, with no model
+calls. A failed refresh, check or re-render sends the normal update."""
 from __future__ import annotations
 
 import logging
@@ -17,10 +18,11 @@ from pathlib import Path
 
 from ipo_agents.adapters import Adapters, MarketData
 from ipo_agents.advisor import advisor_llm, refresh_advice
+from ipo_agents.analysis import rerendered
 from ipo_agents.config import Config
 from ipo_agents.contracts import CheckedAdvice, CheckedDemand, ClaimedFact, Ipo, Report, SubscriptionStatus
 from ipo_agents.demand_check import check_demand
-from ipo_agents.report.labels import CALL_LABELS, advice_text, subscription_text
+from ipo_agents.report.labels import CALL_LABELS, advice_text, demand_lines, subscription_text
 from ipo_agents.archive import archive_update
 from ipo_agents.store import Store, expected_listing
 
@@ -63,30 +65,6 @@ def _advice_lines(advice: CheckedAdvice | None, earlier: CheckedAdvice | None) -
     return lines
 
 
-DEMAND_LABELS = {"hot": "HIGH demand", "normal": "Normal demand", "weak": "WEAK demand"}
-
-
-def _demand_lines(check: CheckedDemand | None) -> list[str]:
-    """The demand check's reading of the subscription (on the line above) and of the call; nothing without
-    a check."""
-    if check is None:
-        return []
-    lines = [f"🔎 Demand check: {DEMAND_LABELS[check.level]}", *(f"• {r.text}" for r in check.demand_reasons)]
-    if check.retail_reading:
-        lines.append(f"Retail: {check.retail_reading}")
-    why = f" {check.verdict_vs_demand}" if check.verdict_vs_demand else ""
-    against = f"{DEMAND_LABELS[check.level]} vs {CALL_LABELS[check.call]}"
-    if check.contradicts and check.call_holds:
-        lines.append(f"⚠️ {against}: the call still holds.{why}")
-    elif check.contradicts:
-        lines.append(f"❗ {against}: the check thinks demand weakens the call.{why}")
-    elif not check.call_holds:
-        lines.append(f"❗ The check questions the call.{why}")
-    else:
-        lines.append(f"✅ Demand fits the call.{why}")
-    return lines
-
-
 def update_text(ipo: Ipo, verdict_label: str, today: date, gmp: ClaimedFact | None,
                 sub: SubscriptionStatus | None, advice: CheckedAdvice | None = None,
                 earlier: CheckedAdvice | None = None, demand: CheckedDemand | None = None) -> str:
@@ -113,7 +91,7 @@ def update_text(ipo: Ipo, verdict_label: str, today: date, gmp: ClaimedFact | No
                      f"as of {sub.total.as_of:%-d %b}")
     else:
         lines.append("Subscription: not available" if closed else "Subscription: not available yet")
-    return "\n".join([*lines, *_demand_lines(demand)])
+    return "\n".join([*lines, *demand_lines(demand)])
 
 
 def _load_report(store: Store, ipo: Ipo) -> Report | None:
@@ -141,23 +119,6 @@ def _latest_advice(config: Config, ipo_id: str, today: date, earlier: CheckedAdv
         return earlier
 
 
-def closing_day_check(report: Report, adapters: Adapters, config: Config, today: date) -> str | None:
-    """For an IPO analysed on its closing day: its summary already has today's call and subscription, so
-    only the demand check is missing. Returns the message, or None without a check (fail-soft)."""
-    ipo = report.ipo
-    sentiment = report.sentiment
-    demand = check_demand(report, report.advice, sentiment, advisor_llm(adapters.llm, ipo.ipo_id, config),
-                          config, today)
-    if demand is None:
-        return None
-    sub = sentiment.subscription
-    text = "\n".join([f"⏰ {ipo.name} IPO closes TODAY",
-                      f"Subscription: {subscription_text(sub)} as of {sub.total.as_of:%-d %b}",
-                      *_demand_lines(demand)])
-    archive_update(ipo.ipo_id, text, config.reports_dir, today)
-    return text
-
-
 def send_daily_updates(today: date, store: Store, adapters: Adapters, config: Config,
                        verdict_labels: dict[str, str]) -> tuple[list[str], list[str]]:
     """One update per analysed IPO per day, while open and after close until it lists (store.due_updates);
@@ -167,7 +128,7 @@ def send_daily_updates(today: date, store: Store, adapters: Adapters, config: Co
     for ipo, verdict in store.due_updates(today):
         report = _load_report(store, ipo)
         earlier = report.advice if report else None
-        advice, market, demand = earlier, None, None
+        advice, market, demand, pdf = earlier, None, None, None
         if today > ipo.close_date:
             advice = _latest_advice(config, ipo.ipo_id, today, earlier)
             earlier = advice  # nothing refreshed today: shown with its own date
@@ -178,6 +139,10 @@ def send_daily_updates(today: date, store: Store, adapters: Adapters, config: Co
                 market = sentiment.gmp, sentiment.subscription
                 demand = check_demand(report, advice, sentiment, advisor_llm(adapters.llm, ipo.ipo_id, config),
                                       config, today)
+                if demand is not None and demand.devils_advocate:
+                    # The report sent on analysis day doesn't say why demand is high against the NO BUY: re-send it.
+                    pdf = rerendered(report.model_copy(update={"advice": advice, "demand": demand,
+                                                               "sentiment": sentiment}), config).pdf_path
             except Exception:
                 log.exception("%s: closing-day advisor refresh failed; sending the normal update", ipo.ipo_id)
         gmp, sub = market if market is not None else _market(adapters.market, ipo)
@@ -189,6 +154,12 @@ def send_daily_updates(today: date, store: Store, adapters: Adapters, config: Co
             log.exception("daily update send failed for %s", ipo.ipo_id)
             failed.append(ipo.ipo_id)
             continue
+        if pdf:
+            try:
+                adapters.notifier.send_document(Path(pdf), caption=f"{ipo.name} IPO report (updated: why demand is high)")
+            except Exception:
+                log.exception("updated report upload failed for %s", ipo.ipo_id)
+                failed.append(ipo.ipo_id)
         store.mark_reminded(ipo.ipo_id, today)
         sent.append(ipo.ipo_id)
     return sent, failed
