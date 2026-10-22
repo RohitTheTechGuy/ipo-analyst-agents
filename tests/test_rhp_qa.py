@@ -116,14 +116,17 @@ def test_the_web_is_searched_only_when_the_question_asks_for_it(config, tiny_rhp
     analyse(config, tiny_rhp, ACME)
     fake = FakeClaude()
 
-    web = answer_question("ACME: search the web for broker reviews", config, run=fake)
+    answer_question("ACME: how much debt?", config, run=fake)
+    web = answer_question("search the web for broker reviews", config, run=fake)
     rhp = answer_question("what share of its sales is online?", config, run=fake)
 
-    (first, _), (second, _) = fake.asks
-    assert first[first.index("--tools") + 1] == "Read,Grep,Glob,WebSearch,WebFetch"
-    assert "WebSearch" in first[first.index("--system-prompt") + 1]
-    assert second[second.index("--tools") + 1] == "Read,Grep,Glob"
-    assert "The RHP doesn't say" in second[second.index("--system-prompt") + 1]
+    (first, _), (second, _), (third, _) = fake.asks
+    assert second[second.index("--tools") + 1] == "Read,Grep,Glob,WebSearch,WebFetch"
+    assert "WebSearch" in second[second.index("--system-prompt") + 1]
+    assert "--resume" not in second  # a resumed session refuses the web tools
+    assert third[third.index("--tools") + 1] == "Read,Grep,Glob"
+    assert "The RHP doesn't say" in third[third.index("--system-prompt") + 1]
+    assert third[third.index("--resume") + 1] == "s2"  # the RHP session, not the web one
     assert "From the ACME RHP and the web" in web and "From the ACME RHP (" in rhp
 
 
