@@ -103,6 +103,7 @@ def test_window_dressed_financials_raise_every_flag(dressed_rhp, adapters, confi
         "auditor_remarks": "raised",
         "restatement_adjustments": "clear",  # "Nil"
         "stub_period": "raised",
+        "free_cash_flow": "not_computable",  # no capex disclosed
     }
     details = {f.code: f.detail for f in report.financial_flags}
     assert "80.0%" in details["pre_ipo_profit_jump"] and "25.0%" in details["pre_ipo_profit_jump"]
@@ -152,6 +153,7 @@ def test_healthy_financials_stay_quiet_and_the_stub_is_not_annualised(tmp_path, 
         "auditor_remarks": "clear",
         "restatement_adjustments": "clear",
         "stub_period": "raised",
+        "free_cash_flow": "not_computable",  # no capex disclosed
     }
     [reported_stub] = [p for p in report.financials.periods if p.kind == "stub"]
     assert reported_stub.pat.value == 150.0
@@ -190,6 +192,7 @@ def test_flags_are_not_computable_when_nothing_is_disclosed(dressed_rhp, adapter
         "auditor_remarks": "clear",
         "restatement_adjustments": "not_computable",
         "stub_period": "clear",
+        "free_cash_flow": "not_computable",
     }
 
 

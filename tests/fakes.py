@@ -184,5 +184,6 @@ def found_nothing(schema: type[BaseModel]) -> BaseModel:
 
 def offer_objects(**fields) -> OfferObjects:
     """An OfferObjects with the given fields; every other fact not disclosed and every list empty."""
-    defaults = {name: NOT_DISCLOSED if f.annotation is Fact else [] for name, f in OfferObjects.model_fields.items()}
+    defaults = {name: NOT_DISCLOSED if f.annotation is Fact else [] for name, f in OfferObjects.model_fields.items()
+                if f.is_required()}
     return OfferObjects(**{**defaults, **fields})

@@ -127,7 +127,7 @@ Two model calls. Neither ever outputs a number.
 
 **1. Choosing the multiples** (task `peer_valuation`, Sol at high effort):
 - **Role:** an equity analyst who thinks about how this kind of business is valued, then picks 2 to 4 multiples, most important first, each with a reason.
-- **Standard multiples:** P/E, EV/EBITDA, P/B (read with RoE, for lenders) and P/S (for loss-makers).
+- **Standard multiples:** P/E, EV/EBITDA, EV/EBIT (for depreciation-heavy businesses such as telecom and power), P/B (read with RoE, for lenders) and P/S (for loss-makers).
 - **Business-specific multiples:** market cap or EV divided by a KPI the RHP discloses for the company and at least two peers. Examples: EV per subscriber (telecom), EV per bed (hospitals), EV per MW (power), EV per tonne (cement), market cap / AUM (lenders), EV/GMV (marketplaces), EV per employee (IT and BPO). The model names the KPI exactly as listed. A KPI that is a %, a ratio or days is never divided by.
 - **Operating KPIs:** 3 to 6 KPIs to compare side by side with the peers (e.g. ARPU, attrition, revenue per employee).
 - **Extra peers:** it may suggest up to 3 NSE-listed peers missing from the RHP's table. They are shown separately and set the median only when no RHP peer has data.
@@ -149,8 +149,10 @@ Two model calls. Neither ever outputs a number.
 - `kpis.py` reads the RHP's KPI tables. It finds a KPI by name (footnote markers ignored) and a peer by name (prefix match). It takes the latest full fiscal year, never a stub. Rupee KPIs are converted to ₹ crore; counted ones keep their scale ("million subscribers").
 
 **Calculations (Python):**
-- IPO market cap and EV at the upper band.
-- Every multiple, for the IPO and each peer. A KPI multiple is "×" for a rupee KPI and "₹ per unit" for a counted one.
+- IPO market cap and EV at the upper band. EV is post-issue: market cap + debt − cash − the fresh issue, whose cash the company holds once the new shares exist.
+- Every multiple the model chose, for the IPO and each peer.
+- **Every standard multiple (`Valuation.all_multiples`, digest item `V:multiples`), whether or not the RHP states it or the model chose it.** They are worked out from the RHP's financials. EBIT is PBT + finance costs, and EBITDA, when the RHP doesn't state it, is EBIT + depreciation. The fresh issue counts as shares when the RHP prints only "up to N shares" with the rupee amount blank.
+- RoE against the peers on every report. The peers' RoE is the RHP peer table's RoNW where given, else market data. A KPI multiple is "×" for a rupee KPI and "₹ per unit" for a counted one.
 - Peer median, min, max and the IPO's premium or discount.
 - Each peer's revenue growth, EBITDA margin, PAT margin and RoE, set beside the IPO's own latest full year.
 - For each operating KPI: the IPO's value, each peer's and the peers' median.
@@ -159,7 +161,8 @@ Two model calls. Neither ever outputs a number.
 ### Synthesizer 🤖 (`synthesizer.py`): the analyst view
 - **Role:** gives a verdict (Subscribe long term / Listing gains / Neutral / Avoid) with reasons and red flags.
 - **Model:** Terra, one call.
-- **Sees:** an evidence digest of verified facts and derived numbers, flags, checks, the valuation read and sentiment. Every item carries an ID (`F:` `D:` `G:` `C:` `X:` `V:` `S:` `N:`).
+- **Sees:** an evidence digest of verified facts and derived numbers, flags, checks, the valuation read and multiples table, and sentiment. Every item carries an ID (`F:` `D:` `G:` `C:` `X:` `V:` `S:` `N:`).
+- **Playbook:** the lessons in `ipo_agents/playbook.md` are appended to its prompt, and to the advisor's (see [Playbook](#playbook-the-agents-memory-of-lessons)).
 - **Validation (Python):**
   - Points that cite an unknown ID are dropped, and so are points containing a number not in their cited evidence.
   - A Subscribe verdict backed only by GMP is downgraded to Neutral.
@@ -285,6 +288,18 @@ Two model calls. Neither ever outputs a number.
 | Renderer | `report/` | Report JSON → HTML → PDF with page references. Never calls a model. |
 | Notifier | `notify/` | Telegram summary and PDF, daily GMP and subscription updates, closing reminders. The message sent is the Summary Editor's plain-English one, after the Summary Eval passes it. The full summary (`runner.format_summary`), which the editor works from and which is sent when the editor can't produce a message, carries the advisor's call, reasons and risks in full; the valuation line; an operating-KPI line; a Peers block (one line per peer: verdict, multiples, revenue and growth, PAT margin, what it shares with the IPO); and "What the market is saying" (a Python read of stance tally, GMP and subscription). Messages over Telegram's 4,096 characters are split between lines. |
 | Archive | `archive.py` | Saves each analysis under `reports/<ipo_id>/<date>_<time>[_partial]/` (report JSON, PDF, the exact summary sent) and each daily update under `updates/<date>.txt`. Archiving never stops a send. |
+
+### Playbook: the agents' memory of lessons
+`ipo_agents/playbook.md` lists lessons from past analyses, each naming the digest items to check. The Synthesizer and the Advisor read it in their system prompts.
+- A lesson is never evidence by itself. Points still go through the evidence checks, so one cited without its items is dropped.
+- To teach the agents something new, append one line in the same form: the lesson, `check:` the items, and the source in brackets. If it needs a number the digest lacks, add the calculation in Python first.
+- The first lessons came from comparing our Jio Platforms report with a CFA analyst's note (Oct 2026):
+  - free float and the pre-IPO stake that unlocks after the lock-in (`UNLOCK_OVERHANG`);
+  - a brand licensed from the promoter group (`BRAND_LICENSED`);
+  - free cash flow and capex intensity (`free_cash_flow`);
+  - net debt / EBITDA before and after the issue repays debt;
+  - RoE against peers;
+  - every multiple worked out from the financials.
 
 ## How context is shared
 

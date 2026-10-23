@@ -8,17 +8,21 @@ from __future__ import annotations
 
 import re
 
-from ipo_agents.contracts import Financials, FinancialPeriod, FinancialCheck
+from ipo_agents.calc import to_crore
+from ipo_agents.contracts import CalcInput, Derived, Fact, Financials, FinancialPeriod, FinancialCheck, OfferObjects
+from ipo_agents.verifier import COULD_NOT_VERIFY
 
 DAYS_IN_YEAR = 365
 JUMP_MULTIPLE = 2  # latest PAT growth above this multiple of the prior average growth is a jump
 _YEAR = re.compile(r"(?<!\d)(?:19|20)\d{2}(?!\d)")
+DEBT_REPAYMENT = re.compile(r"repay|prepay|redemption|redeem", re.I)  # an object of the issue that pays down debt
 
 
 def financial_flags(fin: Financials) -> list[FinancialCheck]:
     years, stubs = full_years(fin.periods), [p for p in fin.periods if _is_stub(p)]
     return [
         pat_positive_cfo_negative(years),
+        free_cash_flow(years),
         pre_ipo_profit_jump(years),
         receivable_days_rising(years),
         auditor_remarks(fin),
@@ -103,6 +107,111 @@ def receivable_days_rising(years: list[FinancialPeriod] | None) -> FinancialChec
               f"{days_growth:+.1%} vs revenue {rev_growth:+.1%}")
     raised = days1 > days0 and days_growth > rev_growth
     return FinancialCheck(code=code, status="raised" if raised else "clear", detail=detail)
+
+
+def free_cash_flow(years: list[FinancialPeriod] | None) -> FinancialCheck:
+    """Free cash flow (CFO − capex) and capex as % of revenue for each full year, oldest first: raised when
+    the latest year's FCF is negative. Capex is read as an outflow whatever its printed sign."""
+    code = "free_cash_flow"
+    if not years:
+        return _not_computable(code, "no full fiscal year with a readable year")
+    parts = []
+    for p in years:
+        cfo, capex, rev = p.cfo.value, p.capex.value, p.revenue_from_operations.value
+        if cfo is None or capex is None:
+            parts.append(f"{p.label}: CFO or capex not verified")
+            continue
+        intensity = f", capex {abs(capex) / rev:.1%} of revenue" if rev and rev > 0 else ""
+        parts.append(f"{p.label}: FCF {cfo - abs(capex):,.2f} {p.cfo.unit} (CFO {cfo:,.2f} − capex {abs(capex):,.2f}{intensity})")
+    latest = years[-1]
+    if latest.cfo.value is None or latest.capex.value is None:
+        return _not_computable(code, f"{latest.label}: CFO or capex not verified")
+    raised = latest.cfo.value - abs(latest.capex.value) < 0
+    return FinancialCheck(code=code, status="raised" if raised else "clear", detail="; ".join(parts))
+
+
+class NotDerivable(ValueError):
+    """An input of a derived figure is missing or unverified; the message says which."""
+
+
+def profit_line(fin: Financials, period: FinancialPeriod, kind: str) -> tuple[float, list[CalcInput], str]:
+    """EBIT or EBITDA of a period in ₹ crore, with its inputs and basis. EBIT = PBT + finance costs; EBITDA is
+    the disclosed figure, else EBIT + depreciation. Never guessed: a missing input raises NotDerivable."""
+    i = fin.periods.index(period)
+
+    def crore(field: str) -> tuple[float, CalcInput]:
+        f: Fact | None = getattr(period, field)
+        path = f"financials.periods[{i}].{field}"
+        if f is None or f.value is None:
+            why = COULD_NOT_VERIFY if f is not None and f.not_disclosed_reason == COULD_NOT_VERIFY else "not disclosed"
+            raise NotDerivable(f"{path}: {why}")
+        try:
+            return to_crore(f), CalcInput(field=path, page=f.page)
+        except ValueError as exc:
+            raise NotDerivable(f"{path}: {exc}") from None
+
+    if kind == "ebitda" and period.ebitda.value is not None:
+        value, inp = crore("ebitda")
+        return value, [inp], "EBITDA as disclosed"
+    pbt, pbt_in = crore("pbt")
+    fc, fc_in = crore("finance_costs")
+    if kind == "ebit":
+        return pbt + fc, [pbt_in, fc_in], "EBIT = PBT + finance costs (computed from the RHP)"
+    dep, dep_in = crore("depreciation")
+    return pbt + fc + dep, [pbt_in, fc_in, dep_in], "EBITDA = PBT + finance costs + depreciation (computed from the RHP)"
+
+
+def leverage(fin: Financials | None, offer: OfferObjects | None) -> dict[str, Derived]:
+    """Net debt / EBITDA for the latest full year, and after the fresh issue repays debt as Objects of the Offer
+    says (objects whose purpose names a repayment, prepayment or redemption)."""
+    unit = "times"
+    years = full_years(fin.periods) if fin else None
+    if not years:
+        nc = Derived(value=None, unit=unit, not_computable_reason="financials: no full fiscal year with a readable year")
+        return {"net_debt_to_ebitda": nc, "net_debt_to_ebitda_post": nc}
+    latest, i = years[-1], fin.periods.index(years[-1])
+
+    def amount(field: str) -> tuple[float, CalcInput]:
+        f = getattr(latest, field)
+        path = f"financials.periods[{i}].{field}"
+        if f.value is None:
+            raise NotDerivable(f"{path}: {COULD_NOT_VERIFY if f.not_disclosed_reason == COULD_NOT_VERIFY else 'not disclosed'}")
+        try:
+            return to_crore(f), CalcInput(field=path, page=f.page)
+        except ValueError as exc:
+            raise NotDerivable(f"{path}: {exc}") from None
+
+    try:
+        debt, debt_in = amount("total_borrowings")
+        cash, cash_in = amount("cash_and_equivalents")
+        ebitda, ebitda_in, how = profit_line(fin, latest, "ebitda")
+    except NotDerivable as exc:
+        nc = Derived(value=None, unit=unit, not_computable_reason=str(exc))
+        return {"net_debt_to_ebitda": nc, "net_debt_to_ebitda_post": nc}
+    inputs = [debt_in, cash_in, *ebitda_in]
+    if ebitda <= 0:
+        nc = Derived(value=None, unit=unit, inputs=inputs,
+                     not_computable_reason=f"{latest.label} EBITDA is zero or negative (₹{ebitda:,.2f} crore)")
+        return {"net_debt_to_ebitda": nc, "net_debt_to_ebitda_post": nc}
+    basis = f"{latest.label}: (borrowings ₹{debt:,.2f} crore − cash ₹{cash:,.2f} crore) / EBITDA ₹{ebitda:,.2f} crore; {how}"
+    out = {"net_debt_to_ebitda": Derived(value=(debt - cash) / ebitda, unit=unit, inputs=inputs, basis=basis)}
+    repaid, repaid_in = 0.0, []
+    for k, o in enumerate(offer.objects if offer else []):
+        if DEBT_REPAYMENT.search(o.purpose) and o.amount.value is not None:
+            try:
+                repaid += to_crore(o.amount)
+            except ValueError:
+                continue
+            repaid_in.append(CalcInput(field=f"offer_objects.objects[{k}].amount", page=o.amount.page))
+    if not repaid_in:
+        out["net_debt_to_ebitda_post"] = Derived(value=None, unit=unit,
+                                                 not_computable_reason="offer_objects: no debt repayment among the objects")
+    else:
+        out["net_debt_to_ebitda_post"] = Derived(
+            value=(debt - repaid - cash) / ebitda, unit=unit, inputs=inputs + repaid_in,
+            basis=f"{latest.label}: (borrowings ₹{debt:,.2f} crore − repaid from the issue ₹{repaid:,.2f} crore − cash "
+                  f"₹{cash:,.2f} crore) / EBITDA ₹{ebitda:,.2f} crore")
+    return out
 
 
 def auditor_remarks(fin: Financials) -> FinancialCheck:

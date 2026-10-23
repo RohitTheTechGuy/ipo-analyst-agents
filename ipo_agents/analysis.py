@@ -38,7 +38,7 @@ from ipo_agents.config import Config
 from ipo_agents.demand_check import check_demand, devils_advocate
 from ipo_agents.contracts import CheckedSynthesis, Ipo, Report, SectionedDocument, Sentiment, Valuation
 from ipo_agents.cross_checks import cross_checks
-from ipo_agents.fin_calc import financial_flags
+from ipo_agents.fin_calc import financial_flags, leverage
 from ipo_agents.flags import offer_flags
 from ipo_agents.grounding import ground_section
 from ipo_agents.ingestion import ingest
@@ -204,9 +204,10 @@ def _report(ipo: Ipo, state: dict, status: str, rhp_sha256: str) -> Report:
                                ([], [])) if report.fine_print_legal else ([], [])
     section_calcs, section_flags = soft("sections", lambda: compute_sections(
         ipo, report.business, report.governance, report.price_basis, report.financials), ({}, []))
+    debt = soft("leverage", lambda: leverage(report.financials, report.offer), {})
     v_flags = soft("valuation_flags", lambda: valuation_flags(report.valuation), [])
     x_checks, x_flags = soft("cross_checks", lambda: cross_checks(report), ([], []))
-    return report.model_copy(update={"calculations": {**calcs, **section_calcs}, "legal_checks": checks,
+    return report.model_copy(update={"calculations": {**calcs, **section_calcs, **debt}, "legal_checks": checks,
                                      "cross_checks": x_checks,
                                      "unverified_fields": sorted(state.get("unverified", []) + failed),
                                      "flags": o_flags + section_flags + legal_flags + v_flags + x_flags})

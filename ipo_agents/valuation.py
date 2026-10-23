@@ -6,7 +6,9 @@ RHP discloses for the company and its peers (EV per subscriber, EV per bed, mark
 kpis.py). It also picks operating KPIs to compare and may suggest up to 3 more peers, each with a reason.
 It never outputs a number. Everything numeric is plain Python here:
 - the IPO's market cap at the upper band (calc.py: post-issue shares x upper band),
-- the IPO's multiples on its latest full fiscal year (a stub period is never annualised),
+- the IPO's multiples on its latest full fiscal year (a stub period is never annualised), every standard one
+  (all_multiples) whether or not the RHP states it: EBIT and, when not disclosed, EBITDA are built from the
+  RHP's P&L (fin_calc.profit_line), and EV is post-issue (market cap + debt − cash − the fresh issue's cash),
 - each peer's multiples from the peer-data adapter's ClaimedFacts (each input cites source and date),
 - median / min / max per multiple, and the IPO's premium or discount to the median.
 
@@ -30,7 +32,7 @@ from ipo_agents.contracts import (MULTIPLE_LABELS, BusinessIndustry, CalcInput, 
                                   FinancialPeriod, Financials, Flag, Ipo, MultipleChoice, MultipleStats,
                                   OfferObjects, OfferPriceBasis, PeerFit, PeerFitCheck, PeerQuote, PeerRow, Report,
                                   Valuation, ValuationPlan)
-from ipo_agents.fin_calc import full_years
+from ipo_agents.fin_calc import NotDerivable, full_years, profit_line
 from ipo_agents.grounding import grounded_or_blank
 from ipo_agents.kpis import KpiBook, Missing, operating_metric, per_kpi
 from ipo_agents.peers import name_key
@@ -54,8 +56,9 @@ SYSTEM = (
     "You are an equity analyst valuing an Indian IPO against companies listed on NSE. First think about how "
     "analysts value this kind of business, then choose 2 to 4 valuation multiples, most important first, "
     "each with a one-sentence reason.\n"
-    "Standard multiples: pe, ev_ebitda, pb, ps. Read pb with RoE for banks, NBFCs and other lenders; use ps "
-    "for a loss-maker; ev_ebitda suits capex-heavy businesses.\n"
+    "Standard multiples: pe, ev_ebitda, ev_ebit, pb, ps. Read pb with RoE for banks, NBFCs and other lenders; "
+    "use ps for a loss-maker; ev_ebitda suits capex-heavy businesses, and ev_ebit those with heavy depreciation "
+    "and amortisation (telecom, power, towers), where EBITDA flatters.\n"
     "Where a business is valued on an operating measure, define a business-specific multiple: market_cap "
     "or enterprise_value divided by a KPI, e.g. EV per subscriber (telecom), EV per bed (hospitals), EV per "
     "MW (power), EV per tonne of capacity (cement, steel), market cap / AUM (asset managers, lenders), "
@@ -111,7 +114,7 @@ def run_peer_valuation(ipo: Ipo, adapters: Adapters, *, offer: OfferObjects | No
     stats = []
     for c in chosen:
         ipo_x = (ipo_multiple(c.multiple, mcap, latest, fresh) if c.kpi is None
-                 else _ipo_kpi_multiple(c, mcap, latest, book))
+                 else _ipo_kpi_multiple(c, mcap, latest, book, fresh))
         unit = ipo_x.unit if ipo_x.value is not None else next(
             (r.multiples[c.multiple].unit for r in peers if r.multiples.get(c.multiple) and r.multiples[c.multiple].value
              is not None), ipo_x.unit)
@@ -120,12 +123,13 @@ def run_peer_valuation(ipo: Ipo, adapters: Adapters, *, offer: OfferObjects | No
                                    ipo=ipo_x, median=median, min=low, max=high, premium_pct=_premium(ipo_x, median)))
     operating = [m for name in (plan.operating_metrics or [])[:MAX_OPERATING]
                  if (m := operating_metric(book, name, [r.name for r in peers])) is not None]
-    checks = _checks(latest, prior, peers, pb_chosen=roe)
+    checks = _checks(latest, prior, peers, price_basis)
+    all_multiples = [_all_stats(m, mcap, latest, fresh, peers) for m in STANDARD]
     valuation = Valuation(ipo_market_cap=mcap, multiples=stats, rhp_peers=rhp_rows, suggested_peers=suggested_rows,
                           peer_set=peer_set, checks=checks, ipo_year=latest.period.label if latest else None,
                           ipo_figures={f: _ipo_figure(latest, f) for f in IPO_FIGURES},
                           ipo_ratios={f"{k}_pct": _ipo_ratio(latest, prior, k) for k in PEER_RATIOS},
-                          operating=operating)
+                          operating=operating, all_multiples=all_multiples)
     return valuation.model_copy(update={"read": _read(valuation, ipo)})
 
 
@@ -252,8 +256,20 @@ class _Year:
     """One full fiscal year of the verified financials, with its index for input paths."""
 
     def __init__(self, financials: Financials, period: FinancialPeriod):
+        self.financials = financials
         self.period = period
         self.index = financials.periods.index(period)
+
+    def amount(self, field: str) -> tuple[float, list[CalcInput], str]:
+        """Like crore, for any field, plus "ebit" and "ebitda" built from the P&L when not disclosed
+        (fin_calc.profit_line); the basis says which."""
+        if field in ("ebit", "ebitda"):
+            try:
+                return profit_line(self.financials, self.period, field)
+            except NotDerivable as exc:
+                raise _Missing(str(exc)) from None
+        value, inp = self.crore(field)
+        return value, [inp], ""
 
     def crore(self, field: str) -> tuple[float, CalcInput]:
         """The field in ₹ crore and its input; raises _Missing with the reason."""
@@ -272,8 +288,26 @@ _Missing = Missing
 
 # multiple -> (denominator field on FinancialPeriod / PeerQuote, its name in reasons)
 _DENOMINATOR = {"pe": ("pat", "PAT"), "ps": ("revenue", "revenue"), "pb": ("net_worth", "net worth"),
-                "ev_ebitda": ("ebitda", "EBITDA")}
-_IPO_FIELD = {"pat": "pat", "revenue": "revenue_from_operations", "net_worth": "net_worth", "ebitda": "ebitda"}
+                "ev_ebitda": ("ebitda", "EBITDA"), "ev_ebit": ("ebit", "EBIT")}
+_IPO_FIELD = {"pat": "pat", "revenue": "revenue_from_operations", "net_worth": "net_worth", "ebitda": "ebitda",
+              "ebit": "ebit"}
+STANDARD = ("pe", "ev_ebitda", "ev_ebit", "pb", "ps")  # Valuation.all_multiples, in this order
+EV_MULTIPLES = ("ev_ebitda", "ev_ebit")
+
+
+def _ipo_ev(mcap: Derived, latest: _Year, fresh: Derived | None) -> tuple[float, list[CalcInput], str]:
+    """Post-issue EV in ₹ crore: market cap (post-issue shares at the upper band) + debt − cash − the fresh
+    issue, whose cash the company holds once the new shares are issued (proceeds that repay debt cut debt and
+    cash alike). Pre-issue cash, said so, when the fresh issue is not computable."""
+    debt, debt_in = latest.crore("total_borrowings")
+    cash, cash_in = latest.crore("cash_and_equivalents")
+    inputs = list(mcap.inputs) + [debt_in, cash_in]
+    if fresh is not None and fresh.value is not None:
+        return (mcap.value + debt - cash - fresh.value, inputs + fresh.inputs,
+                f"post-issue EV: market cap ₹{mcap.value:,.2f} crore + debt − cash − fresh issue ₹{fresh.value:,.2f} crore")
+    why = fresh.not_computable_reason if fresh is not None else "not given"
+    return (mcap.value + debt - cash, inputs,
+            f"EV: market cap ₹{mcap.value:,.2f} crore + debt − pre-issue cash (fresh issue not computable: {why})")
 
 
 def ipo_multiple(m: str, mcap: Derived, latest: _Year | None, fresh: Derived | None = None) -> Derived:
@@ -286,16 +320,13 @@ def ipo_multiple(m: str, mcap: Derived, latest: _Year | None, fresh: Derived | N
         return _nc(TIMES, "financials: no full fiscal year with a readable year")
     field, label = _DENOMINATOR[m]
     try:
-        denom, d_in = latest.crore(_IPO_FIELD[field])
-        numerator, inputs = mcap.value, list(mcap.inputs)
-        if m == "ev_ebitda":
-            debt, debt_in = latest.crore("total_borrowings")
-            cash, cash_in = latest.crore("cash_and_equivalents")
-            numerator += debt - cash
-            inputs += [debt_in, cash_in]
+        denom, d_in, how = latest.amount(_IPO_FIELD[field])
+        numerator, inputs, ev_basis = mcap.value, list(mcap.inputs), ""
+        if m in EV_MULTIPLES:
+            numerator, inputs, ev_basis = _ipo_ev(mcap, latest, fresh)
     except _Missing as exc:
         return _nc(TIMES, str(exc))
-    inputs.append(d_in)
+    inputs += d_in
     if denom <= 0:
         return _nc(TIMES, f"{latest.period.label} {label} is {'a loss' if denom < 0 else 'zero'} "
                           f"(₹{denom:,.2f} crore): {MULTIPLE_LABELS[m]} is not meaningful", inputs)
@@ -311,13 +342,13 @@ def ipo_multiple(m: str, mcap: Derived, latest: _Year | None, fresh: Derived | N
         why = fresh.not_computable_reason if fresh is not None else "not given"
         return Derived(value=numerator / denom, unit=TIMES, inputs=inputs,
                        basis=f"pre-issue net worth (fresh issue not computable: {why})")
-    basis = (f"(market cap ₹{mcap.value:,.2f} crore + debt − cash) / " if m == "ev_ebitda"
-             else f"market cap ₹{mcap.value:,.2f} crore at the upper band / ")
+    basis = f"({ev_basis}) / " if m in EV_MULTIPLES else f"market cap ₹{mcap.value:,.2f} crore at the upper band / "
     return Derived(value=numerator / denom, unit=TIMES, inputs=inputs,
-                   basis=basis + f"{latest.period.label} {label} ₹{denom:,.2f} crore")
+                   basis=basis + f"{latest.period.label} {label} ₹{denom:,.2f} crore" + (f"; {how}" if how else ""))
 
 
-def _ipo_kpi_multiple(c: MultipleChoice, mcap: Derived, latest: _Year | None, book: KpiBook) -> Derived:
+def _ipo_kpi_multiple(c: MultipleChoice, mcap: Derived, latest: _Year | None, book: KpiBook,
+                      fresh: Derived | None = None) -> Derived:
     """The IPO's market cap or EV at the upper band per unit of an RHP KPI, latest full fiscal year."""
     if mcap.value is None:
         return _nc(TIMES, f"market cap: {mcap.not_computable_reason}")
@@ -326,9 +357,8 @@ def _ipo_kpi_multiple(c: MultipleChoice, mcap: Derived, latest: _Year | None, bo
         if c.numerator == "enterprise_value":
             if latest is None:
                 raise _Missing("financials: no full fiscal year for debt and cash")
-            debt, debt_in = latest.crore("total_borrowings")
-            cash, cash_in = latest.crore("cash_and_equivalents")
-            numerator, inputs, what = numerator + debt - cash, inputs + [debt_in, cash_in], "EV at the upper band"
+            numerator, inputs, _ = _ipo_ev(mcap, latest, fresh)
+            what = "post-issue EV at the upper band"
         kpi = book.ipo(c.kpi)
     except _Missing as exc:
         return _nc(TIMES, str(exc), inputs)
@@ -370,7 +400,7 @@ def peer_multiple(q: PeerQuote, m: str) -> Derived:
             return Derived(value=100 * pat / nw, unit=unit, inputs=[pat_in, nw_in], basis="PAT / net worth")
         numerator, inputs = _claim(q, "market_cap")
         inputs = [inputs]
-        if m == "ev_ebitda":
+        if m in EV_MULTIPLES:
             debt, debt_in = _claim(q, "debt")
             cash, cash_in = _claim(q, "cash")
             numerator += debt - cash
@@ -412,15 +442,36 @@ def _premium(ipo_x: Derived, median: Derived) -> Derived:
 
 # --- growth and margin (VALUATION_RICH) ----------------------------------------------------------
 
-def _checks(latest: _Year | None, prior: _Year | None, peers: list[PeerRow], pb_chosen: bool) -> dict[str, Derived]:
-    checks = {"ipo_revenue_growth_pct": _ipo_ratio(latest, prior, "growth"),
-              "ipo_pat_margin_pct": _ipo_ratio(latest, None, "margin"),
-              "peer_median_revenue_growth_pct": _peer_median(peers, "growth"),
-              "peer_median_pat_margin_pct": _peer_median(peers, "margin")}
-    if pb_chosen:
-        checks["ipo_roe_pct"] = _ipo_ratio(latest, None, "roe")
-        checks["peer_median_roe_pct"] = _peer_median(peers, "roe")
-    return checks
+def _checks(latest: _Year | None, prior: _Year | None, peers: list[PeerRow],
+            price_basis: OfferPriceBasis | None) -> dict[str, Derived]:
+    """Revenue growth, PAT margin and RoE, the IPO vs its peers' median. The peers' RoE is the RHP's own peer
+    table (RoNW) where it gives one, else market data."""
+    rhp_roe = _rhp_peer_roe(price_basis)
+    return {"ipo_revenue_growth_pct": _ipo_ratio(latest, prior, "growth"),
+            "ipo_pat_margin_pct": _ipo_ratio(latest, None, "margin"),
+            "peer_median_revenue_growth_pct": _peer_median(peers, "growth"),
+            "peer_median_pat_margin_pct": _peer_median(peers, "margin"),
+            "ipo_roe_pct": _ipo_ratio(latest, None, "roe"),
+            "peer_median_roe_pct": rhp_roe if rhp_roe.value is not None else _peer_median(peers, "roe")}
+
+
+def _rhp_peer_roe(pb: OfferPriceBasis | None) -> Derived:
+    got = [p for p in (pb.peers if pb else []) if p.ronw_pct.value is not None]
+    if not got:
+        return _nc(PCT, "the RHP's peer table gives no verified RoNW")
+    return Derived(value=statistics.median(p.ronw_pct.value for p in got), unit=PCT,
+                   inputs=[CalcInput(field=f"offer_price_basis.peers[{p.name}].ronw_pct", page=p.ronw_pct.page) for p in got],
+                   basis=f"median RoNW of {len(got)} peers in the RHP's peer table ({', '.join(p.name for p in got)})")
+
+
+def _all_stats(m: str, mcap: Derived, latest: _Year | None, fresh: Derived | None, peers: list[PeerRow]) -> MultipleStats:
+    """One standard multiple for Valuation.all_multiples: the IPO from its RHP financials against the same
+    peers' median, computed whether or not the model chose it."""
+    ipo_x = ipo_multiple(m, mcap, latest, fresh)
+    rows = [r.model_copy(update={"multiples": {m: peer_multiple(r.quote, m)}}) for r in peers if r.quote]
+    median, low, high = _spread(m, rows, TIMES)
+    return MultipleStats(multiple=m, reason="", unit=TIMES, ipo=ipo_x, median=median, min=low, max=high,
+                         premium_pct=_premium(ipo_x, median))
 
 
 # Valuation.ipo_figures: the IPO's latest full-year figures (FinancialPeriod fields), in ₹ crore
@@ -431,10 +482,11 @@ def _ipo_figure(latest: _Year | None, field: str) -> Derived:
     if latest is None:
         return _nc("₹ crore", "financials: no full fiscal year with a readable year")
     try:
-        value, inp = latest.crore(field)
+        value, inputs, how = latest.amount(field)
     except _Missing as exc:
         return _nc("₹ crore", str(exc))
-    return Derived(value=value, unit="₹ crore", inputs=[inp], basis=f"{latest.period.label} {field.replace('_', ' ')}")
+    return Derived(value=value, unit="₹ crore", inputs=inputs,
+                   basis=f"{latest.period.label} {field.replace('_', ' ')}" + (f"; {how}" if how else ""))
 
 
 def _ipo_ratio(latest: _Year | None, prior: _Year | None, kind: str) -> Derived:

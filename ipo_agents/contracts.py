@@ -108,6 +108,8 @@ class OfferObjects(BaseModel):
 
     issue_size: Fact = Field(description="Total offer size, rupee amount")
     fresh_issue: Fact = Field(description="Fresh issue, rupee amount")
+    fresh_issue_shares: Fact | None = Field(  # None in reports saved before it was read
+        default=None, description="Fresh issue, number of equity shares, e.g. 'up to 270,000,000 Equity Shares'")
     ofs_amount: Fact = Field(description="Offer for sale, rupee amount")
     ofs_shares: Fact = Field(description="Offer for sale, number of equity shares")
     pre_issue_shares: Fact = Field(description="Equity shares outstanding before the offer")
@@ -121,6 +123,9 @@ class OfferObjects(BaseModel):
     nii_pct: Fact = Field(description="Non-institutional portion, % of the offer")
     retail_pct: Fact = Field(description="Retail portion, % of the offer")
     selling_shareholders: list[SellingShareholder]
+    non_promoter_lock_in_months: Fact | None = Field(  # None in reports saved before it was read
+        default=None, description="Lock-in after allotment of the pre-offer shares held by shareholders other "
+                                  "than the promoters, in months, as Capital Structure states it")
 
 
 class Quote(BaseModel):
@@ -151,6 +156,10 @@ class FinancialPeriod(BaseModel):
     trade_payables: Fact = Field(description="Trade payables at period end")
     ronw_pct: Fact = Field(description="Return on net worth / ROE, % as disclosed")
     roce_pct: Fact = Field(description="Return on capital employed, % as disclosed")
+    # None in reports saved before they were read. EBIT and, when not disclosed, EBITDA are built from these.
+    pbt: Fact | None = Field(default=None, description="Restated profit (or loss) before tax; a loss is negative")
+    finance_costs: Fact | None = Field(default=None, description="Finance costs (interest) charged in the P&L")
+    depreciation: Fact | None = Field(default=None, description="Depreciation and amortisation expense in the P&L")
 
 
 class AuditorRemark(BaseModel):
@@ -398,6 +407,17 @@ class Dividend(BaseModel):
     per_share: Fact = Field(description="Dividend per equity share, ₹")
 
 
+class BrandLicence(BaseModel):
+    """Who owns the name and trademark the company trades under, and on what terms it uses them."""
+
+    owner: Literal["company", "promoter_group", "third_party", "not_stated"] = Field(
+        description="company if it owns its trademark; promoter_group if a promoter or group company owns it and "
+                    "licenses it to the company; third_party for anyone else")
+    terminable: bool = Field(description="True if the owner can end or withdraw the licence")
+    royalty: Fact = Field(description="Royalty or brand fee the company pays for the licence, latest full fiscal year")
+    source: Quote = Field(description="The RHP words saying who owns the brand and on what terms it is used")
+
+
 class PromotersGovernance(BaseModel):
     """Promoters & Governance section (Our Management, Our Promoters, Group Companies, History,
     Subsidiaries, Dividend Policy)."""
@@ -413,6 +433,8 @@ class PromotersGovernance(BaseModel):
     dividends: list[Dividend] = Field(description="Dividends declared in the last three fiscal years and the stub period")
     auditor_changes: list[CitedText] = Field(description="Each change of statutory auditor in the last three years")
     kmp_changes: list[CitedText] = Field(description="Each change in key managerial personnel in the last three years")
+    brand: BrandLicence | None = Field(  # None in reports saved before it was read
+        default=None, description="Who owns the company's name and trademark and on what terms it uses them")
 
 
 # --- Offer Price Basis ----------------------------------------------------------------------
@@ -585,8 +607,8 @@ class Flag(BaseModel):
 
 # --- Peer valuation -------------------------------------------------------------------------
 
-Multiple = Literal["pe", "ev_ebitda", "pb", "ps"]  # the standard multiples; the model may define others
-MULTIPLE_LABELS: dict[str, str] = {"pe": "P/E", "ev_ebitda": "EV/EBITDA", "pb": "P/B", "ps": "P/S"}
+Multiple = Literal["pe", "ev_ebitda", "ev_ebit", "pb", "ps"]  # the standard multiples; the model may define others
+MULTIPLE_LABELS: dict[str, str] = {"pe": "P/E", "ev_ebitda": "EV/EBITDA", "ev_ebit": "EV/EBIT", "pb": "P/B", "ps": "P/S"}
 
 
 class PeerQuote(BaseModel):
@@ -601,6 +623,7 @@ class PeerQuote(BaseModel):
     revenue: ClaimedFact | None = None  # latest fiscal year
     revenue_prior_year: ClaimedFact | None = None  # the fiscal year before it, for growth
     ebitda: ClaimedFact | None = None
+    ebit: ClaimedFact | None = None
     pat: ClaimedFact | None = None
     net_worth: ClaimedFact | None = None
     debt: ClaimedFact | None = None
@@ -612,7 +635,7 @@ class PeerQuote(BaseModel):
 
 
 class MultipleChoice(BaseModel):
-    multiple: str = Field(description="pe, ev_ebitda, pb or ps for a standard multiple; for a business-specific "
+    multiple: str = Field(description="pe, ev_ebitda, ev_ebit, pb or ps for a standard multiple; for a business-specific "
                                       "one, a short snake_case key of your own, e.g. ev_per_subscriber")
     reason: str = Field(description="Why this multiple fits this business, in one sentence")
     label: str | None = Field(default=None, description="Business-specific only: the multiple as analysts write it, "
@@ -710,12 +733,15 @@ class Valuation(BaseModel):
     rhp_peers: list[PeerRow] = []
     suggested_peers: list[PeerRow] = []  # shown separately, as "agent-suggested"
     peer_set: Literal["rhp", "agent_suggested"] = "rhp"  # whose multiples the median/min/max use
-    checks: dict[str, Derived] = {}  # revenue growth and PAT margin, IPO vs peer median (VALUATION_RICH)
+    checks: dict[str, Derived] = {}  # revenue growth, PAT margin and RoE, IPO vs peer median (VALUATION_RICH)
     # The IPO's own latest full fiscal year, laid out as PeerRow's are, so the report can set it beside them
     ipo_year: str | None = None
     ipo_figures: dict[str, Derived] = {}  # revenue, ebitda, pat, net_worth in ₹ crore
     ipo_ratios: dict[str, Derived] = {}  # the PeerRow.ratios keys
     operating: list[OperatingMetric] = []  # the KPIs the model chose to compare
+    # Every standard multiple, worked out from the RHP's financials whether or not the RHP states it or the
+    # model chose it, against the same peers' median (reason "")
+    all_multiples: list[MultipleStats] = []
     read: str = ""  # one paragraph, from a Python template
 
     @property

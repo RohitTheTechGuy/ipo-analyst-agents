@@ -218,6 +218,9 @@
   <tr><td>OFS share of issue</td><td>{{ D(r.calculations.get("ofs_pct")) }}</td></tr>
   <tr><td>Dilution</td><td>{{ D(r.calculations.get("dilution_pct")) }}</td></tr>
   <tr><td>Promoter holding change</td><td>{{ D(r.calculations.get("promoter_change_pp")) }}</td></tr>
+  <tr><td>Free float at listing</td><td>{{ D(r.calculations.get("free_float_pct")) }}</td></tr>
+  <tr><td>Pre-IPO stake that unlocks</td><td>{{ D(r.calculations.get("unlockable_pct")) }}; {{ D(r.calculations.get("overhang_x_float")) }}</td></tr>
+  <tr><td>Lock-in of pre-IPO shares</td><td>{{ F(o.non_promoter_lock_in_months) }}</td></tr>
   <tr><td>QIB / NII / retail</td><td>{{ F(o.qib_pct) }} / {{ F(o.nii_pct) }} / {{ F(o.retail_pct) }}</td></tr>
   <tr><td>Anchor portion</td><td>{{ F(o.anchor_pct) }}</td></tr>
 </table>
@@ -302,6 +305,7 @@
 {{ summary_of("financials") }}
 {% if fin.periods %}
 {% set rows = [("Revenue from operations", "revenue_from_operations"), ("Total income", "total_income"), ("EBITDA", "ebitda"),
+               ("Profit before tax", "pbt"), ("Finance costs", "finance_costs"), ("Depreciation and amortisation", "depreciation"),
                ("Profit after tax", "pat"), ("Cash from operations", "cfo"), ("Capex", "capex"),
                ("Total borrowings", "total_borrowings"), ("Cash and equivalents", "cash_and_equivalents"),
                ("Net worth", "net_worth"), ("Trade receivables", "trade_receivables"), ("Inventories", "inventories"),
@@ -313,6 +317,10 @@
   {% endfor %}
 </table>
 {% else %}{{ none_listed([], "No financial periods disclosed.") }}{% endif %}
+<table class="kv">
+  <tr><td>Net debt / EBITDA</td><td>{{ D(r.calculations.get("net_debt_to_ebitda")) }}</td></tr>
+  <tr><td>Net debt / EBITDA after the issue repays debt</td><td>{{ D(r.calculations.get("net_debt_to_ebitda_post")) }}</td></tr>
+</table>
 
 <div class="chart">
 {% if charts.trend %}<img src="{{ charts.trend }}" alt="Revenue, EBITDA and PAT by period"><div class="caption">Revenue, EBITDA and PAT, ₹ crore (verified figures only; page references in the table above).</div>
@@ -350,6 +358,16 @@
   {% endfor %}
 </table>
 {% else %}{{ none_listed([], "No multiple was computed.") }}{% endif %}
+{% if v.all_multiples %}
+<h3>Every multiple, worked out from the RHP financials <span class="note">(at the upper band, whether or not the RHP states it; EV is post-issue)</span></h3>
+<table class="dense">
+  <tr><th>Multiple</th><th class="n">IPO</th><th class="n">Peer median</th><th class="n">Premium / discount</th><th>How</th></tr>
+  {% for m in v.all_multiples %}
+  <tr><td>{{ m.title }}</td><td class="n">{{ DS(m.ipo) }}</td><td class="n">{{ DS(m.median) }}</td><td class="n">{{ DS(m.premium_pct) }}</td>
+    <td class="note">{{ m.ipo.basis if m.ipo.value is not none else m.ipo.not_computable_reason }}</td></tr>
+  {% endfor %}
+</table>
+{% endif %}
 {% if v.operating %}
 <h3>How the business compares <span class="note">(operating KPIs, as the RHP's KPI tables state them)</span></h3>
 {% set cols = [] %}{% for om in v.operating %}{% for p in om.peers %}{% if p not in cols %}{% set _ = cols.append(p) %}{% endif %}{% endfor %}{% endfor %}
@@ -529,6 +547,7 @@
   <tr><td>Independent directors</td><td>{{ F(g.independent_directors) }}</td></tr>
   <tr><td>Promoter shares pledged</td><td>{{ F(g.promoter_shares_pledged) }}</td></tr>
   <tr><td>Promoter pay as % of PAT</td><td>{{ D(r.calculations.get("promoter_pay_pct_of_pat")) }}</td></tr>
+  <tr><td>Brand / trademark</td><td>{% if g.brand is none %}<span class="na">not read</span>{% else %}{{ {"company": "owned by the company", "promoter_group": "licensed from the promoter group", "third_party": "licensed from a third party", "not_stated": "owner not stated"}[g.brand.owner] }}{% if g.brand.terminable %}; the owner can end the licence{% endif %}; royalty {{ F(g.brand.royalty) }} {{ Q(g.brand.source) }}{% endif %}</td></tr>
 </table>
 <h3>Remuneration (latest full year)</h3>
 {% if g.remuneration %}

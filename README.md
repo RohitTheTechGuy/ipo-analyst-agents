@@ -119,6 +119,8 @@ Full agent map, models, context flow and diagrams: **[`docs/agents.md`](docs/age
   - Ratios and multiples are computed in Python from verified facts.
   - Free-text prose that contains an unchecked number is dropped.
 - **Nothing is made up.** A missing value stays "not disclosed" or "could not verify". It is never filled in.
+- **The RHP is the source.** Everything the call needs is in the RHP. Where a figure isn't printed (EBITDA, EBIT, multiples, the free float, net debt after the issue), Python works it out from the RHP's own numbers and says how.
+- **Agents learn from a playbook.** `ipo_agents/playbook.md` holds lessons from past analyses that the analyst and the advisor apply. Append one line to add a lesson.
 - **Agents reason where reasoning matters.** Examples:
   - The peer-valuation agent chooses how this kind of business is valued.
   - The peer-fit check judges whether each listed peer really is one.

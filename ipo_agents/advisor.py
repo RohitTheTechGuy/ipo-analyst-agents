@@ -34,7 +34,7 @@ from ipo_agents.contracts import Advice, CheckedAdvice, Report, Sentiment
 from ipo_agents.grounding import unsupported
 from ipo_agents.llm import LLM
 from ipo_agents.sentiment import gather_sentiment
-from ipo_agents.synthesizer import _keep, _numbers_in, _unsupported, build_digest
+from ipo_agents.synthesizer import PLAYBOOK_RULES, _keep, _numbers_in, _unsupported, build_digest
 
 log = logging.getLogger(__name__)
 
@@ -67,7 +67,7 @@ SYSTEM = (
     "horizon: listing_gains or long_term for a buy, none for no_buy.\n"
     "- Give a one-line headline, 3-5 reasons (most important first), up to 3 key risks, and what would "
     "change your mind. Keep it general: no position sizing and no personal suitability."
-)
+) + PLAYBOOK_RULES
 
 
 def ledger_id(ipo_id: str) -> str:

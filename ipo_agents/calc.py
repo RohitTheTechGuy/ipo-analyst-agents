@@ -62,8 +62,10 @@ class _Calc:
         self.band = upper_band(ipo.price_band)
 
     def fact(self, name: str, convert=None):
-        f: Fact = getattr(self.offer, name)
+        f: Fact | None = getattr(self.offer, name)
         path = f"{PREFIX}.{name}"
+        if f is None:  # a field added after this report was saved
+            raise NotComputable(f"{path}: not read")
         if f.value is None:
             why = COULD_NOT_VERIFY if f.not_disclosed_reason == COULD_NOT_VERIFY else "not disclosed"
             raise NotComputable(f"{path}: {why}")
@@ -101,12 +103,15 @@ class _Calc:
         post, post_in, _ = self.fact("post_issue_shares", _count)
         return post - pre, post_in + pre_in, False
 
+    def fresh_shares_stated(self):
+        return self.first(lambda: self.fact("fresh_issue_shares", _count), self.fresh_shares_from_counts)
+
     def fresh_shares(self):
         def from_rupees():
             cr, inputs, _ = self.fresh_cr_stated()
             band = self.band_input()  # raises before the division if there is no band
             return cr * CRORE / self.band, inputs + band, True
-        return self.first(self.fresh_shares_from_counts, from_rupees)
+        return self.first(self.fresh_shares_stated, from_rupees)
 
     def post_shares(self):
         def from_pre():
@@ -121,7 +126,7 @@ class _Calc:
 
     def fresh_cr(self):
         def at_band():
-            shares, inputs, _ = self.fresh_shares_from_counts()
+            shares, inputs, _ = self.fresh_shares_stated()
             band = self.band_input()  # first: a missing band must not reach the arithmetic
             return shares * self.band / CRORE, inputs + band, True
         return self.first(self.fresh_cr_stated, at_band)
@@ -182,6 +187,55 @@ class _Calc:
         shares, inputs, _ = self.post_shares()
         return shares * self.band / CRORE, inputs + band, True
 
+    def ofs_shares(self):
+        def from_rupees():
+            cr, inputs, _ = self.fact("ofs_amount", to_crore)
+            band = self.band_input()
+            return cr * CRORE / self.band, inputs + band, True
+
+        def none_selling():
+            # The RHP lists no selling shareholder: a fresh issue only, so nothing is sold for sale.
+            if self.offer.selling_shareholders:
+                raise NotComputable(f"{PREFIX}.ofs_shares: not disclosed, though the RHP lists selling shareholders")
+            return 0.0, [], False
+        return self.first(lambda: self.fact("ofs_shares", _count), from_rupees, none_selling)
+
+    def promoter_post_pct(self):
+        """As stated; else, when no promoter sells, the pre-issue holding diluted by the new shares:
+        pre-issue % x pre-issue shares / post-issue shares."""
+        def diluted():
+            if any(s.category == "promoter" for s in self.offer.selling_shareholders):
+                raise NotComputable(f"{PREFIX}.promoter_holding_post_pct: not disclosed, and a promoter sells")
+            pre_pct, pre_pct_in, _ = self.fact("promoter_holding_pre_pct")
+            pre, pre_in, _ = self.fact("pre_issue_shares", _count)
+            post, post_in, upper = self.post_shares()
+            return pre_pct * pre / self.positive(post, "post-issue shares"), pre_pct_in + pre_in + post_in, upper
+        return self.first(lambda: self.fact("promoter_holding_post_pct"), diluted)
+
+    def free_float_pct(self):
+        """Shares sold in the IPO (fresh + OFS) as % of post-issue shares: what trades from listing day."""
+        fresh, fresh_in, fresh_up = self.fresh_shares()
+        ofs, ofs_in, ofs_up = self.ofs_shares()
+        post, post_in, post_up = self.post_shares()
+        if post <= 0:
+            raise NotComputable("offer_objects.post_issue_shares: zero")
+        return 100 * (fresh + ofs) / post, fresh_in + ofs_in + post_in, fresh_up or ofs_up or post_up
+
+    def unlockable_pct(self):
+        """Post-issue stake held neither by the promoters nor by IPO buyers: pre-IPO investors, whose shares
+        unlock when their lock-in ends."""
+        float_pct, float_in, upper = self.free_float_pct()
+        promoter, promoter_in, _ = self.promoter_post_pct()
+        rest = 100 - promoter - float_pct
+        if rest < -0.5:  # rounding in the printed holdings aside, the parts can't exceed 100%
+            raise NotComputable(f"promoter {promoter:g}% + float {float_pct:.1f}% exceed 100%")
+        return max(rest, 0.0), float_in + promoter_in, upper
+
+    def overhang_x_float(self):
+        unlock, unlock_in, upper = self.unlockable_pct()
+        float_pct, _, _ = self.free_float_pct()
+        return unlock / self.positive(float_pct, "free float"), unlock_in, upper
+
     def gcp_pct_of_fresh(self):
         gcp, gcp_in, _ = self.fact("gcp_amount", to_crore)
         fresh, fresh_in, upper = self.fresh_cr()
@@ -201,6 +255,9 @@ _DERIVED = {
     "promoter_change_pp": ("promoter_change_pp", "percentage points"),
     "gcp_pct_of_fresh": ("gcp_pct_of_fresh", "% of fresh issue"),
     "market_cap_cr": ("market_cap_cr", "₹ crore"),
+    "free_float_pct": ("free_float_pct", "% of post-issue shares"),
+    "unlockable_pct": ("unlockable_pct", "% of post-issue shares"),
+    "overhang_x_float": ("overhang_x_float", "times the free float"),
 }
 
 

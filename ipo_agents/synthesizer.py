@@ -12,6 +12,7 @@ has a stable evidence ID:
   C:<code>                    a Financials or Fine Print check, e.g. C:pat_positive_cfo_negative
   X:<code>                    a cross-section check, e.g. X:debt_repayment_vs_borrowings
   V:read                      the peer valuation read
+  V:multiples                 every standard multiple from the RHP financials vs the peer median
   S:tally, S:gmp, S:subscription   sentiment tally; GMP and subscription (third-party, unofficial)
 
 The model makes one call. Python then keeps only the points whose IDs are all in the digest and whose
@@ -23,6 +24,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from pathlib import Path
 
 from pydantic import BaseModel
 
@@ -64,6 +66,11 @@ SYSTEM = (
 )
 
 # A: (analyst view) and K: (context) are the advisor's own items (advisor.py).
+PLAYBOOK = Path(__file__).with_name("playbook.md").read_text(encoding="utf-8").strip()
+PLAYBOOK_RULES = ("\nPlaybook (lessons from past analyses; apply each one the digest supports, citing its items):\n"
+                  + PLAYBOOK)
+SYSTEM += PLAYBOOK_RULES
+
 _ID = re.compile(r"\b[AEFQNDGCXSVK]:[\w.\[\]#-]+")
 
 
@@ -104,6 +111,12 @@ def build_digest(report: Report) -> dict[str, dict]:
         items[key] = {"severity": f.severity, "message": f.message, "pages": f.evidence_pages}
     if report.valuation and report.valuation.read:
         items["V:read"] = {"text": report.valuation.read}
+        table = {m.title: {"ipo": round(m.ipo.value, 1), "unit": m.unit, "basis": m.ipo.basis,
+                           **({"peer_median": round(m.median.value, 1)} if m.median.value is not None else {}),
+                           **({"premium_pct": round(m.premium_pct.value)} if m.premium_pct.value is not None else {})}
+                 for m in report.valuation.all_multiples if m.ipo.value is not None}
+        if table:
+            items["V:multiples"] = table
     if s := report.sentiment:
         items["S:tally"] = {"available": s.available, "tally": {k: v for k, v in s.tally.items() if v}}
         if s.gmp and s.gmp.value is not None:

@@ -35,7 +35,7 @@ NSE_QUOTE = (f"{nse.BASE}/api/NextApi/apiClient/GetQuoteApi?functionName=getSymb
 YAHOO_PAGE = "https://finance.yahoo.com/quote/{ticker}/financials"
 NSE_NAME, YAHOO_NAME = "NSE", "Yahoo Finance"
 # yfinance rows for each PeerQuote field, first one present wins. Income statement, then balance sheet.
-INCOME_ROWS = {"revenue": ("Total Revenue", "Operating Revenue"), "ebitda": ("EBITDA",),
+INCOME_ROWS = {"revenue": ("Total Revenue", "Operating Revenue"), "ebitda": ("EBITDA",), "ebit": ("EBIT", "Operating Income"),
                "pat": ("Net Income Common Stockholders", "Net Income")}
 BALANCE_ROWS = {"net_worth": ("Stockholders Equity", "Common Stock Equity"), "debt": ("Total Debt",),
                 "cash": ("Cash And Cash Equivalents",)}

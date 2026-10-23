@@ -126,6 +126,15 @@ def governance_flags(g: PromotersGovernance, pay: Derived) -> list[Flag]:
         flags.append(Flag(code="PROMOTER_PLEDGE", severity="warning", section=GOVERNANCE,
                           message=f"Promoter shares pledged: {pledged.value:,g} {pledged.unit}",
                           evidence_pages=_pages(pledged)))
+    brand = g.brand
+    if brand and brand.owner == "promoter_group" and _verified(brand.source):
+        terms = ["the owner can end the licence"] if brand.terminable else []
+        if brand.royalty.value:
+            terms.append(f"royalty {brand.royalty.value:,g} {brand.royalty.unit}")
+        if terms:
+            flags.append(Flag(code="BRAND_LICENSED", severity="warning", section=GOVERNANCE,
+                              message="The brand belongs to the promoter group, not the company: " + "; ".join(terms),
+                              evidence_pages=sorted({brand.source.page, *_pages(brand.royalty)})))
     for code, severity, label, changes, limit in (
             ("FREQUENT_AUDITOR_CHANGES", "warning", "statutory auditor", g.auditor_changes, MAX_AUDITOR_CHANGES),
             ("FREQUENT_KMP_CHANGES", "info", "KMP", g.kmp_changes, MAX_KMP_CHANGES)):
