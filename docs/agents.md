@@ -278,7 +278,7 @@ Two model calls. Neither ever outputs a number.
 | Step | Module | Does |
 |---|---|---|
 | Discovery | `discovery/` | Open mainboard IPOs from NSE, BSE and Chittorgarh. Every source is asked and the answers merged, the first source winning on duplicates. Filters out SME issues and holds DRHP-only IPOs. |
-| RHP downloader | `discovery/download.py` | Streams the PDF from an https allowlist of hosts, with size and zip-bomb guards. |
+| RHP downloader | `discovery/download.py` | Streams the PDF from an https allowlist (NSE, BSE, SEBI), with size and zip-bomb guards. SEBI links a filing from an HTML page, so a page that isn't a document is read for the `.pdf` it links — same allowlist, every redirect hop re-checked, one level only. |
 | Ingestion | `ingestion.py` | Maps ToC pages to 8 groups, guarantees 100% page coverage, OCRs scanned pages. |
 | Verifier | `verifier.py` | Checks each value and unit appear in its quote, and the quote is on the cited page (exactly, else a fuzzy match scoring 90+ whose matched text still holds the value). A zero printed as "Nil" or "-" counts. |
 | Prose grounding | `grounding.py` | Strips or replaces model-written text that contains unchecked numbers. |
@@ -288,6 +288,7 @@ Two model calls. Neither ever outputs a number.
 | Renderer | `report/` | Report JSON → HTML → PDF with page references. Never calls a model. |
 | Notifier | `notify/` | Telegram summary and PDF, daily GMP and subscription updates, closing reminders. The message sent is the Summary Editor's plain-English one, after the Summary Eval passes it. The full summary (`runner.format_summary`), which the editor works from and which is sent when the editor can't produce a message, carries the advisor's call, reasons and risks in full; the valuation line; an operating-KPI line; a Peers block (one line per peer: verdict, multiples, revenue and growth, PAT margin, what it shares with the IPO); and "What the market is saying" (a Python read of stance tally, GMP and subscription). Messages over Telegram's 4,096 characters are split between lines. |
 | Archive | `archive.py` | Saves each analysis under `reports/<ipo_id>/<date>_<time>[_partial]/` (report JSON, PDF, the exact summary sent) and each daily update under `updates/<date>.txt`. Archiving never stops a send. |
+| Watch list | `watch.py` | `config.yaml`'s `watch:` names companies with no public offer document yet. Once per daily run (never the picks job) the sources are asked; one Telegram line goes out when the state changes (on the calendar, draft filed, final RHP public) and the same news is never repeated. No model call, no spend, and a watched IPO is never analysed without being named. |
 
 ### Playbook: the agents' memory of lessons
 `ipo_agents/playbook.md` lists lessons from past analyses, each naming the digest items to check. The Synthesizer and the Advisor read it in their system prompts.

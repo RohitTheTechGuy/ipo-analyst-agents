@@ -26,6 +26,7 @@ from ipo_agents.maintenance import reset_budget, smoke
 from ipo_agents.notify.picks import ask_in_terminal, notice_sender, per_ipo_cap, process_picks, send_offer
 from ipo_agents.runner import plan, run_daily
 from ipo_agents.store import Store
+from ipo_agents.watch import best as best_watch, state_text as watch_state_text
 from ipo_agents.wiring import MissingSecrets, build_adapters
 
 log = logging.getLogger("ipo_agents.cli")
@@ -104,6 +105,14 @@ def dry_run(today: date, adapters: Adapters, config: Config, only: str | None = 
         print(f"  analyse: {ipo.ipo_id}  {ipo.name}")
     for ipo, _ in todo.remind:
         print(f"  update (GMP + subscription, closes {ipo.close_date:%d %b}): {ipo.ipo_id}  {ipo.name}")
+    listed = getattr(adapters.exchange, "listed", None)
+    for item in config.watch if listed else []:
+        try:
+            hit = best_watch(listed([item.name, *item.aliases], today))
+        except Exception as exc:  # a watch check never fails the dry run
+            print(f"  watch: {item.name}: check failed ({exc})")
+            continue
+        print(f"  watch: {item.name}: {watch_state_text(hit)}")
 
 
 def remaining_budget(ipo: Ipo, config: Config) -> tuple[float, float]:
@@ -146,13 +155,23 @@ def provider_llm(config: Config) -> LLM:
 
 
 QUIET_DAY = "😴 No mainboard IPO open today, and no updates due. The daily check ran fine."
+WATCH_FAILED_NOTE = "⚠️ The watch-list check failed for {names}; it tries again on the next daily run."
+
+
+def quiet_day_text(summary) -> str:
+    """The quiet-day line, plus a note when the watch check failed: it still goes out, so silence keeps
+    meaning something is wrong, but it doesn't claim a check ran fine when one didn't."""
+    if not summary.watch_failed:
+        return QUIET_DAY
+    note = WATCH_FAILED_NOTE.format(names=", ".join(summary.watch_failed))
+    return f"{QUIET_DAY.removesuffix(' The daily check ran fine.')}\n{note}"
 
 
 def quiet_day(summary) -> bool:
     """Nothing to offer, analyse or update, and every source answered: the day's only message is this one,
     so silence always means something is wrong."""
     return not (summary.analysed or summary.skipped or summary.waiting_rhp or summary.failed or summary.updated
-                or summary.notify_failed or summary.discovery_failed)
+                or summary.watched or summary.notify_failed or summary.discovery_failed)
 
 
 def main(argv: Sequence[str] | None = None, *, build: Callable[..., Adapters] = build_adapters,
@@ -236,7 +255,7 @@ def main(argv: Sequence[str] | None = None, *, build: Callable[..., Adapters] = 
         if offered and args.ask_telegram:
             send_offer(today, offered, adapters, config)
         elif args.ask_telegram and quiet_day(summary):
-            adapters.notifier.send_message(QUIET_DAY)
+            adapters.notifier.send_message(quiet_day_text(summary))
         elif offered:
             log.info("not analysed (no terminal to ask; use --ipo or --ask-telegram): %s",
                      ", ".join(i.ipo_id for i in offered))

@@ -62,13 +62,16 @@ class FlakyNotifier:
         pass
 
 
-def test_failed_analysis_sends_nothing_and_is_retried_next_run(adapters, config):
+def test_failed_analysis_is_reported_on_telegram_and_retried_next_run(adapters, config):
     adapters.exchange = FakeExchange([make_ipo()])
     adapters.llm = BrokenLLM()
 
     first = run_daily(TODAY, adapters, config)
     assert first.failed == ["ACME-2026-10-13"]
-    assert adapters.notifier.messages == []
+    [msg] = adapters.notifier.messages
+    assert msg.startswith("❌ Analysis failed: ACME (Acme Ltd).")
+    assert "RuntimeError: provider down" in msg
+    assert "Reply ACME to try again." in msg
 
     adapters.llm = offer_llm(config)
     second = run_daily(TODAY, adapters, config)

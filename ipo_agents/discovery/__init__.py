@@ -11,13 +11,13 @@ import httpx
 from ipo_agents.contracts import Ipo
 from ipo_agents.discovery.bse import BseSource
 from ipo_agents.discovery.chittorgarh import ChittorgarhSource
-from ipo_agents.discovery.common import SOURCE_BUDGET_S, Source, describe, make_client
+from ipo_agents.discovery.common import SOURCE_BUDGET_S, ListedIssue, Source, describe, make_client
 from ipo_agents.discovery.download import HttpRhpDownloader, RhpDownloadError
 from ipo_agents.discovery.nse import NseSource
 from ipo_agents.store import same_company
 
 __all__ = ["BseSource", "ChittorgarhSource", "DiscoveryError", "FallbackExchange", "HttpRhpDownloader",
-           "NseSource", "RhpDownloadError", "default_exchange", "make_client"]
+           "ListedIssue", "NseSource", "RhpDownloadError", "default_exchange", "make_client"]
 
 log = logging.getLogger(__name__)
 
@@ -51,6 +51,24 @@ class FallbackExchange:
         if answered:
             return found
         raise DiscoveryError("; ".join(errors))
+
+    def listed(self, names: list[str], today: date) -> list[ListedIssue]:
+        """What every source that supports it says about watched companies. Raises DiscoveryError if any
+        of them fails: a partial answer would read as "not listed" and overwrite what was last reported,
+        so the same news would go out again once the source recovered. The caller skips that day."""
+        found, errors = [], []
+        for source in self._sources:
+            find = getattr(source, "listed", None)
+            if find is None:
+                continue
+            try:
+                found += find(names, today)
+            except Exception as exc:
+                log.warning("watch source %s failed: %r", source.name, exc)
+                errors.append(f"{source.name}: {describe(exc)}")
+        if errors:
+            raise DiscoveryError("; ".join(errors))
+        return found
 
 
 def _same_issue(a: Ipo, b: Ipo) -> bool:

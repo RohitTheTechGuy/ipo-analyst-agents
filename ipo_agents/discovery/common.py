@@ -5,6 +5,7 @@ import logging
 import re
 import time
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from datetime import date
 from urllib.parse import urlsplit
 
@@ -70,6 +71,23 @@ def final_rhp(url: str | None) -> str | None:
         return None
     filename = urlsplit(url).path.rsplit("/", 1)[-1]
     return None if DRAFT.search(filename) else url
+
+
+@dataclass(frozen=True)
+class ListedIssue:
+    """A company a source already lists, whether or not its issue is open yet: the watch list's record.
+
+    Only the final RHP is analysable. `draft_url` is kept so the watch can say a draft is filed while
+    `rhp_url` stays None, and the dates are None until the source announces them.
+    """
+
+    name: str
+    source: str
+    open_date: date | None = None
+    close_date: date | None = None
+    rhp_url: str | None = None
+    draft_url: str | None = None
+    page_url: str | None = None
 
 
 def price_band(text: str) -> str:

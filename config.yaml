@@ -103,3 +103,11 @@ peers:
     # NSE's search finds neither by its full name (HD Fire RHP, Oct 2026).
     Elgi Equipment Limited: ELGIEQUIP
     Ingersoll-Rand (India) Limited: INGERRAND
+
+# Companies with no public offer document yet. The daily run checks once a day and says nothing until
+# something changes: listed on the calendar, a draft filed, or the final RHP published. No model call,
+# no spend, and the IPO is never analysed on its own (that still needs you to name it).
+# Example: Razorpay pre-filed confidentially on 12 Jun 2026; SEBI issued observations on 3 Nov 2026.
+watch:
+  - name: Razorpay Software Limited
+    aliases: [Razorpay]

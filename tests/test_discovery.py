@@ -11,10 +11,15 @@ import zipfile
 from datetime import date
 from pathlib import Path
 
+from urllib.parse import quote
+
 import httpx
+import pytest
 
 from ipo_agents.contracts import Fact, OfferObjects
-from ipo_agents.discovery import HttpRhpDownloader, default_exchange
+from ipo_agents.discovery import ChittorgarhSource, HttpRhpDownloader, default_exchange
+from ipo_agents.discovery.common import SourceError
+from ipo_agents.discovery.download import _document_links
 from ipo_agents.runner import run_daily
 from tests.fakes import ScriptedLLM, offer_objects
 
@@ -260,14 +265,15 @@ def test_done_ipo_is_not_reanalysed_when_next_run_finds_it_on_bse(adapters, conf
     assert len(adapters.notifier.messages) == 1
 
 
-def test_rhp_link_that_is_not_a_pdf_fails_the_ipo_and_sends_nothing(adapters, config, tiny_rhp):
+def test_rhp_link_that_is_not_a_pdf_fails_the_ipo_and_sends_only_a_failure_notice(adapters, config, tiny_rhp):
     wire(adapters, Web(nse_routes(tiny_rhp) | {NSE_RHP: b"<html>Access Denied</html>"}))
 
     summary = run_daily(OPEN_DAY, adapters, config)
 
     assert summary.failed == ["HDFIRE-2026-10-13"]
     assert adapters.llm.calls == []
-    assert adapters.notifier.messages == []
+    [msg] = adapters.notifier.messages
+    assert msg.startswith("❌ Analysis failed:") and "RhpDownloadError" in msg
 
 
 def test_bse_is_used_when_nse_blocks(adapters, config, tiny_rhp):
@@ -491,6 +497,65 @@ def test_rhp_redirect_to_a_host_outside_the_allowlist_is_not_followed(adapters, 
     assert evil not in web.requests
 
 
+def test_rhp_on_the_sebi_host_is_fetched(adapters, config, tiny_rhp):
+    # Chittorgarh sometimes links SEBI's filing page instead of the exchange archive.
+    sebi = "https://www.sebi.gov.in/filings/public-issues/oct-2026/hd-fire-protect-rhp_123456.pdf"
+    web = Web(nse_blocked() | bse_routes(tiny_rhp) | {BSE_DETAIL: bse_detail_with(Prospectus_GID=sebi),
+                                                      sebi: tiny_rhp.read_bytes()})
+    wire(adapters, web)
+
+    summary = run_daily(OPEN_DAY, adapters, config)
+
+    assert summary.analysed == ["HDFIRE-2026-10-13"]
+    assert sebi in web.requests
+
+
+SEBI_PAGE = "https://www.sebi.gov.in/filings/public-issues/oct-2026/hd-fire-protect-rhp_123456.html"
+SEBI_PDF = "https://www.sebi.gov.in/sebi_data/commondocs/oct-2026/HDFireProtect-RHP_p.pdf"
+
+
+def sebi_page(*links: str) -> bytes:
+    """A SEBI filing page: the document sits behind a viewer link, as it does live."""
+    body = "".join(f'<iframe src="/web/?file={link}"></iframe>' for link in links)
+    return f"<!DOCTYPE html><html><body>{body}</body></html>".encode()
+
+
+def test_pdf_behind_a_sebi_filing_page_is_downloaded(adapters, config, tiny_rhp):
+    web = Web(nse_blocked() | bse_routes(tiny_rhp) | {BSE_DETAIL: bse_detail_with(Prospectus_GID=SEBI_PAGE),
+                                                      SEBI_PAGE: sebi_page(SEBI_PDF),
+                                                      SEBI_PDF: tiny_rhp.read_bytes()})
+    wire(adapters, web)
+
+    summary = run_daily(OPEN_DAY, adapters, config)
+
+    assert summary.analysed == ["HDFIRE-2026-10-13"]
+    assert SEBI_PDF in web.requests
+
+
+def test_filing_page_linking_a_pdf_on_another_host_is_not_followed(adapters, config, tiny_rhp):
+    evil = "https://evil.example/HDFireRHP.pdf"
+    web = Web(nse_blocked() | bse_routes(tiny_rhp) | {BSE_DETAIL: bse_detail_with(Prospectus_GID=SEBI_PAGE),
+                                                      SEBI_PAGE: sebi_page(evil),
+                                                      evil: tiny_rhp.read_bytes()})
+    wire(adapters, web)
+
+    summary = run_daily(OPEN_DAY, adapters, config)
+
+    assert summary.failed == ["HDFIRE-2026-10-13"]
+    assert evil not in web.requests
+
+
+def test_filing_page_without_a_pdf_link_fails_the_ipo(adapters, config, tiny_rhp):
+    web = Web(nse_blocked() | bse_routes(tiny_rhp) | {BSE_DETAIL: bse_detail_with(Prospectus_GID=SEBI_PAGE),
+                                                      SEBI_PAGE: b"<!DOCTYPE html><html><body>No document</body></html>"})
+    wire(adapters, web)
+
+    summary = run_daily(OPEN_DAY, adapters, config)
+
+    assert summary.failed == ["HDFIRE-2026-10-13"]
+    assert adapters.llm.calls == []
+
+
 def test_chittorgarh_name_with_a_parenthetical_is_the_same_company_as_nse(adapters, config, tiny_rhp):
     renamed = chittorgarh_list_with(Company='<a href="https://www.chittorgarh.com/ipo/hd-fire-protect-ipo/2628/">'
                                             'HD Fire Protect Pvt. Ltd. (HD Fire IPO)</a>')
@@ -591,3 +656,52 @@ def test_an_ipo_every_source_lists_is_kept_once_as_the_first_source_has_it(adapt
     ipos = adapters.exchange.open_ipos(OPEN_DAY)
 
     assert [i.ipo_id for i in ipos] == ["HDFIRE-2026-10-13"]
+
+
+def _chittorgarh(tiny_rhp, **row_fields):
+    routes = chittorgarh_routes(tiny_rhp)
+    if row_fields:
+        routes = routes | {CG_LIST: chittorgarh_list_with(**row_fields)}
+    return ChittorgarhSource(httpx.Client(transport=httpx.MockTransport(Web(routes)), follow_redirects=True))
+
+
+def test_a_watched_company_is_found_before_its_dates_are_announced(tiny_rhp):
+    # Razorpay's shape: on the report, dates and price band not announced, so open_ipos skips it.
+    source = _chittorgarh(tiny_rhp, **{"Opening Date": "", "Closing Date": ""})
+
+    [hit] = source.listed(["HD Fire"], OPEN_DAY)
+
+    assert hit.name == "HD Fire Protect Ltd."
+    assert hit.open_date is None and hit.close_date is None
+    assert hit.rhp_url == CG_RHP
+    assert hit.page_url == CG_DETAIL
+
+
+def test_a_company_the_report_does_not_list_is_not_a_watch_hit(tiny_rhp):
+    source = _chittorgarh(tiny_rhp)
+
+    assert source.listed(["Razorpay"], OPEN_DAY) == []
+
+
+def test_an_unreadable_company_page_fails_the_watch_lookup(tiny_rhp):
+    # Reporting the company without its documents would read as "no RHP yet" and repeat the RHP news later.
+    routes = chittorgarh_routes(tiny_rhp) | {CG_DETAIL: b"<html>page changed</html>"}
+    source = ChittorgarhSource(httpx.Client(transport=httpx.MockTransport(Web(routes)), follow_redirects=True))
+
+    with pytest.raises(SourceError, match="no record"):
+        source.listed(["HD Fire"], OPEN_DAY)
+
+
+def test_pdf_behind_an_absolute_or_encoded_sebi_viewer_link_is_found():
+    pdf = "https://www.sebi.gov.in/sebi_data/attachdocs/x.pdf"
+    for src in (f"https://www.sebi.gov.in/web/?file={pdf}", f"/web/?file={quote(pdf, safe='')}"):
+        assert _document_links(f'<iframe src="{src}"></iframe>', SEBI_PAGE) == [pdf]
+
+
+def test_the_watch_lookup_reads_no_company_page_when_nothing_matches(tiny_rhp):
+    web = Web(chittorgarh_routes(tiny_rhp))
+    source = ChittorgarhSource(httpx.Client(transport=httpx.MockTransport(web), follow_redirects=True))
+
+    source.listed(["Razorpay"], OPEN_DAY)
+
+    assert web.requests == [CG_LIST]

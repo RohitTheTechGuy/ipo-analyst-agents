@@ -181,6 +181,8 @@ def config(tmp_path):
         "default_max_tokens": 4000, "map_max_tokens": 8000,
         "budget": cfg.budget.model_copy(update={"cap_usd": 1.50, "synth_reserve_usd": 0.15}),
         "advisor": cfg.advisor.model_copy(update={"cap_usd": 0.50, "max_tokens": 12000}),
+        # The watch list is production config for a real company: tests stay offline and opt in explicitly.
+        "watch": [],
     })
 
 

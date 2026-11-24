@@ -171,7 +171,8 @@ def test_crashed_ipo_resumes_on_the_next_run_and_is_reported_once(adapters, conf
     assert first.failed == ["ACME-2026-10-13"]
     assert second.analysed == ["ACME-2026-10-13"]
     assert tasks(llm) == {"offer_objects": 2, "sentiment_stance_tag": 1, "sentiment_agent": 1}
-    [msg] = adapters.notifier.messages
+    failure, msg = adapters.notifier.messages  # the crash is reported, then the report once
+    assert failure.startswith("❌ Analysis failed:") and "connection dropped mid-call" in failure
     assert "Issue: ₹1,250 crore (p. 2)" in msg
     assert "Sentiment: 1 avoid" in msg
 

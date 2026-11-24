@@ -121,9 +121,14 @@ class FakePeerData:
 @dataclass
 class FakeExchange:
     ipos: list[Ipo]
+    listed_issues: list = field(default_factory=list)  # the watch list's source (ListedIssue)
 
     def open_ipos(self, today):
         return list(self.ipos)
+
+    def listed(self, names, today):
+        terms = [n.casefold() for n in names]
+        return [i for i in self.listed_issues if any(t in i.name.casefold() for t in terms)]
 
 
 @dataclass

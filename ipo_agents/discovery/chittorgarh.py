@@ -6,13 +6,16 @@ derived from the page slug. The ipo_id can then differ from NSE's; Store.known_i
 from __future__ import annotations
 
 import json
+import logging
 import re
 from datetime import date, datetime
 
 from ipo_agents.contracts import Ipo
 from ipo_agents.discovery.common import (
-    Source, SourceError, expect_list, final_rhp, ipo_id, is_open, price_band,
+    ListedIssue, Source, SourceError, describe, expect_list, final_rhp, ipo_id, is_open, price_band,
 )
+
+log = logging.getLogger(__name__)
 
 LIST_API = "https://webnodejs.chittorgarh.com/cloud/report/data-read/82/1/{month}/{year}/{fy}/0/mainboard/0?search="
 HEADERS = {"Referer": "https://www.chittorgarh.com/", "Origin": "https://www.chittorgarh.com"}
@@ -87,3 +90,39 @@ class ChittorgarhSource(Source):
             rhp_url=rhp,
             is_draft=not rhp and bool(_optional(record, "prospectus_drhp")),
         )
+
+    def listed(self, names: list[str], today: date) -> list[ListedIssue]:
+        """Watched companies in this report, open or not: dates and the final RHP may still be missing.
+
+        The report carries the year's mainboard issues, including ones with no dates announced, so this
+        finds a company from the day Chittorgarh adds it. Reads the company page only for a match.
+        No model call."""
+        self._deadline = self._clock() + self._budget_s
+        wanted = [n.casefold() for n in names if n]
+        found = []
+        for row in self._rows(today):
+            company = row.get("Company", "")
+            name = re.sub(r"<[^>]+>", "", company).strip()
+            if not any(term in name.casefold() for term in wanted):
+                continue
+            match = re.search(r'href="(https://www\.chittorgarh\.com/ipo/[^"]+)"', company)
+            page, slug = (match.group(1) if match else None), row.get("~URLRewrite_Folder_Name")
+            record: dict = {}
+            if page and slug:
+                try:
+                    record = _record(self._get(page, HEADERS).text, slug)
+                except (KeyError, IndexError, TypeError, ValueError, AttributeError) as exc:
+                    # Fail the check rather than report the company without its documents: that would
+                    # read as "no RHP yet" today and repeat "the final RHP is public" tomorrow.
+                    raise SourceError(f"no record on {page} ({describe(exc)})") from exc
+            found.append(ListedIssue(
+                name=name,
+                source=self.name,
+                open_date=_date(row["Opening Date"]) if row.get("Opening Date") else None,
+                close_date=_date(row["Closing Date"]) if row.get("Closing Date") else None,
+                rhp_url=final_rhp(_optional(record, "prospectus_rhp")),
+                draft_url=_optional(record, "prospectus_drhp"),
+                page_url=page,
+            ))
+        return found
+

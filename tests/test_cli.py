@@ -1,4 +1,5 @@
 """run_daily.py CLI and adapter wiring (ticket 23). Offline: adapters are fakes."""
+import json
 import sqlite3
 from contextlib import closing
 from datetime import date
@@ -14,6 +15,7 @@ from ipo_agents.advisor import ledger_id
 from ipo_agents.analysis import CHECKPOINT_DB
 from ipo_agents.budget import BudgetMeter
 from ipo_agents.contracts import Advice, DemandCheck, RiskFactors, Synthesis, ValuationPlan
+from ipo_agents.discovery.common import ListedIssue
 from ipo_agents.maintenance import smoke_schemas
 from ipo_agents.sentiment import SentimentPoints, StanceTag
 from ipo_agents.summary_judge import SummaryScores
@@ -57,6 +59,22 @@ def test_dry_run_lists_the_plan_without_model_or_telegram_calls(adapters, config
     out = capsys.readouterr().out
     assert "analyse: ACME-2026-10-13" in out
     assert "hold (waiting for RHP): HOLD-2026-10-13" in out
+
+
+def test_dry_run_shows_the_watch_list_without_sending(adapters, config_file, tmp_path, capsys):
+    adapters.exchange = FakeExchange([], listed_issues=[
+        ListedIssue(name="Razorpay Software Limited", source="Chittorgarh",
+                    rhp_url="https://www.sebi.gov.in/sebi_data/commondocs/dec-2026/Razorpay-RHP_p.pdf")])
+    raw = json.loads(config_file.read_text())
+    raw["watch"] = [{"name": "Razorpay Software Limited", "aliases": ["Razorpay"]}]
+    config_file.write_text(json.dumps(raw))
+
+    code, _ = run(["--dry-run", "--date", "2026-10-13"], adapters, config_file, tmp_path)
+
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "watch: Razorpay Software Limited: final RHP public:" in out
+    assert adapters.notifier.messages == []  # a dry run never sends
 
 
 def test_single_ipo_by_symbol_analyses_only_that_ipo(adapters, config_file, tmp_path, monkeypatch):

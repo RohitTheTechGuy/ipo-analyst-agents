@@ -83,6 +83,17 @@ class QaConfig(BaseModel):
     follow_up_s: float = Field(default=1800, ge=0)
 
 
+class WatchItem(BaseModel):
+    """A company watched for a public offer document: no analysis and no spend until its final RHP exists.
+
+    `aliases` are other spellings the sources may use; `name` itself is always matched too.
+    """
+
+    name: str = Field(min_length=1)
+    aliases: list[str] = []
+
+
+
 class Config(BaseModel):
     models: dict[str, ModelConfig]
     routing: dict[str, str]
@@ -99,6 +110,7 @@ class Config(BaseModel):
     peers: PeersConfig = PeersConfig()
     advisor: AdvisorConfig = AdvisorConfig()
     qa: QaConfig = QaConfig()
+    watch: list[WatchItem] = []  # companies to watch for a public offer document (never analysed unasked)
 
     @model_validator(mode="after")
     def _routed_models_are_priced(self):

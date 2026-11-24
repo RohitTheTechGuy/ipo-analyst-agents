@@ -26,6 +26,7 @@ from ipo_agents.store import TERMINAL, Store, same_company
 from ipo_agents.valuation import operating_line, peer_lines
 from ipo_agents.valuation import summary_line as valuation_summary_line
 from ipo_agents.verifier import COULD_NOT_VERIFY
+from ipo_agents.watch import check as check_watch
 
 log = logging.getLogger(__name__)
 
@@ -230,6 +231,19 @@ def plan(today: date, adapters: Adapters, config: Config, force_ipo: str | None 
     return result
 
 
+FAILURE_REASON_CHARS = 300
+
+
+def _failure_text(ipo: Ipo, exc: Exception) -> str:
+    """The Telegram notice for an analysis that raised: which IPO, the error in one line, what next."""
+    reason = " ".join(str(exc).split()) or type(exc).__name__
+    if len(reason) > FAILURE_REASON_CHARS:
+        reason = reason[:FAILURE_REASON_CHARS - 1] + "…"
+    return (f"❌ Analysis failed: {ipo.symbol} ({ipo.name}). No report was made.\n"
+            f"Reason: {type(exc).__name__}: {reason}\n"
+            f"Details are in logs/ipo-agents.log. Reply {ipo.symbol} to try again.")
+
+
 def _send(ipo: Ipo, text: str, pdf_path: str | None, adapters: Adapters, summary: RunSummary) -> None:
     """Sends the summary, then the PDF if one was rendered; a failed send is recorded, never raised."""
     try:
@@ -300,10 +314,11 @@ def run_daily(today: date, adapters: Adapters, config: Config, force_ipo: str | 
             store.upsert(ipo, "cancelled")
             summary.cancelled += [i.ipo_id for i in todo.analyse[n:]]
             break
-        except Exception:
+        except Exception as exc:
             log.exception("analysis failed for %s", ipo.ipo_id)
             store.upsert(ipo, "failed")  # retried on the next run, resuming from its checkpoint
             summary.failed.append(ipo.ipo_id)
+            _send(ipo, _failure_text(ipo, exc), None, adapters, summary)  # never fail silently
             continue
         store.mark_done(ipo.ipo_id, report.verdict, report.rhp_sha256)
         if (saved := report_json_path(config, ipo.ipo_id)).exists():
@@ -318,6 +333,10 @@ def run_daily(today: date, adapters: Adapters, config: Config, force_ipo: str | 
         _send(ipo, text, report.pdf_path, adapters, summary)
         store.set_state(QA_TOPIC_KEY, ipo.ipo_id)  # "why NO BUY?" next in the chat is about this IPO
     if daily_updates:
+        watched, watch_failed, watch_unsent = check_watch(today, adapters, config, store)
+        summary.watched += watched
+        summary.watch_failed += watch_failed  # a check that failed is not a failed send
+        summary.notify_failed += watch_unsent
         sent, failed = send_daily_updates(today, store, adapters, config, VERDICT_LABELS)
         summary.updated += sent
         if len(sent) == 1:
